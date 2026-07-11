@@ -1,0 +1,110 @@
+/*
+ * Copyright (c) 2003-2008 The University of Wroclaw.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *    1. Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *    2. Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *    3. The name of the University may not be used to endorse or promote
+ *       products derived from this software without specific prior
+ *       written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE UNIVERSITY ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
+ * NO EVENT SHALL THE UNIVERSITY BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+using System;
+using System.IO;
+using System.Reflection;
+
+namespace Nemerle.Compiler
+{
+  /**
+   * Bridge to Nemerle.CoreEmit.dll -- the CoreCLR-only emission helper assembly.
+   *
+   * ncc's sources are compiled by the net4-era bootstrap compiler against the net4
+   * BCL only, so this file (like the rest of ncc) can never reference
+   * System.Reflection.Emit.PersistedAssemblyBuilder, System.Reflection.Metadata, or
+   * any other CoreCLR-only type directly -- doing so would fail to *compile*, not
+   * merely fail at run time. All such CoreCLR-only logic instead lives in
+   * Nemerle.CoreEmit.dll (dotnet-port\Nemerle.CoreEmit, built separately for
+   * net10.0) and is loaded + invoked purely through reflection, and only when
+   * actually running on CoreCLR.
+   *
+   * IsCoreClr is the single runtime-detection point used throughout the emission
+   * layer (HierarchyEmitter.n) to pick between the original .NET-Framework-only
+   * Reflection.Emit backend and this bridge.
+   */
+  internal module CoreEmitBridge
+  {
+    public IsCoreClr : bool =
+      System.Type.GetType ("System.Reflection.Emit.PersistedAssemblyBuilder, System.Reflection.Emit", false) != null;
+
+    private mutable helper_type          : System.Type;
+    private mutable create_builder_mi     : MethodInfo;
+    private mutable create_run_builder_mi : MethodInfo;
+    private mutable save_mi               : MethodInfo;
+
+    private EnsureLoaded () : void
+    {
+      when (helper_type == null)
+      {
+        def compilerDir = Path.GetDirectoryName (Assembly.GetExecutingAssembly ().Location);
+        def helperPath  = Path.Combine (compilerDir, "Nemerle.CoreEmit.dll");
+        def asm =
+          try { Assembly.LoadFrom (helperPath) }
+          catch {
+            | e => Message.FatalError ($"could not load the CoreCLR emission helper `$helperPath': $(e.Message)")
+          };
+        helper_type            = asm.GetType ("Nemerle.CoreEmit.Emitter", true);
+        create_builder_mi      = helper_type.GetMethod ("CreateBuilder");
+        create_run_builder_mi  = helper_type.GetMethod ("CreateRunBuilder");
+        save_mi                = helper_type.GetMethod ("Save");
+      }
+    }
+
+    /** Persisted (savable) dynamic assembly builder -- replaces
+        AppDomain.DefineDynamicAssembly(..., AssemblyBuilderAccess.Save, ...). */
+    public CreateBuilder (name : AssemblyName) : System.Reflection.Emit.AssemblyBuilder
+    {
+      EnsureLoaded ();
+      create_builder_mi.Invoke (null, array [name : object]) :> System.Reflection.Emit.AssemblyBuilder
+    }
+
+    /** Run-only dynamic assembly builder -- used for -compile-to-memory. */
+    public CreateRunBuilder (name : AssemblyName) : System.Reflection.Emit.AssemblyBuilder
+    {
+      EnsureLoaded ();
+      create_run_builder_mi.Invoke (null, array [name : object]) :> System.Reflection.Emit.AssemblyBuilder
+    }
+
+    /** Saves a builder created by CreateBuilder to disk (GenerateMetadata + ManagedPEBuilder
+        recipe); see Nemerle.CoreEmit.Emitter.Save for the exact contract. */
+    public Save (ab : System.Reflection.Emit.AssemblyBuilder, outputPath : string, entryPoint : MethodInfo,
+                 isWinexe : bool, embeddedResources : array [string], emitRuntimeConfig : bool) : void
+    {
+      EnsureLoaded ();
+      _ = save_mi.Invoke (null, array [ab : object, outputPath, entryPoint, isWinexe, embeddedResources, emitRuntimeConfig]);
+    }
+
+    // NOTE: public-key-from-.snk extraction (formerly GetPublicKeyFromSnk here, invoked
+    // via reflection into Nemerle.CoreEmit.dll) moved to ncc\misc\SnkUtils.n as plain
+    // Nemerle code: the CAPI blob parse needs no CoreCLR-only API (just byte manipulation
+    // + SHA1, both available unchanged on CLR4), so it runs identically on both runtimes
+    // and needs no CoreEmitBridge/reflection indirection at all. See LibraryReference.n's
+    // GetIsFriend and CustomAttribute.n's set_assembly_key_core.
+  }
+}

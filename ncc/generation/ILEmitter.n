@@ -166,17 +166,27 @@ namespace Nemerle.Compiler
     [Nemerle.Memoize(Scope=Instance, Synchronized=true)]
     private DefineDebugDocument (fileIndex : int) : ISymbolDocumentWriter
     {
+#if NET_4_0
       if (fileIndex != 0) // not Location.Default
-        _module_builder.DefineDocument (Path.GetFullPath (Location.GetFileName(fileIndex)), 
+        _module_builder.DefineDocument (Path.GetFullPath (Location.GetFileName(fileIndex)),
           SymDocumentType.Text, SymLanguageType.ILAssembly, SymLanguageVendor.Microsoft);
       else {
-        Message.Warning ("missing debug location, this is probably some internal compiler error"); 
+        Message.Warning ("missing debug location, this is probably some internal compiler error");
         def loc = LocationStack.Top();
         if (loc != Location.Default)
           DefineDebugDocument (loc.FileIndex);
         else
           _debug_doc;
       }
+#else
+      // dotnet-port WP-D: System.Diagnostics.SymbolStore.SymDocumentType/SymLanguageType/
+      // SymLanguageVendor do not exist on CoreCLR (ISymbolDocumentWriter itself does, via
+      // ModuleBuilder.DefineDocument(url, Guid) -- see 03-dotnet-runtime-facts.md fact 4 --
+      // but wiring that up is out of scope here). -debug is warn-and-skipped on CoreCLR in
+      // HierarchyEmitter.CreateModuleCore, so this is not reachable at run time there.
+      ignore (fileIndex);
+      null
+#endif
     }
 
     public SetDocument (loc : Location) : void
@@ -236,12 +246,38 @@ namespace Nemerle.Compiler
     }
 
     #region HACKS FOR MS.NET BUGS
-    static GetHackishConstructor (_from_type : System.Type, ctr : ConstructorInfo) : ConstructorInfo 
+    // NOTE on the *TokenClr4 split below: on CoreCLR, ConstructorBuilder/MethodBuilder/
+    // FieldBuilder.GetToken() do not exist -- and merely containing a call to a missing
+    // API anywhere in a method's IL (even along a branch never taken at run time) throws
+    // MissingMethodException when CoreCLR JITs that method (see 00-PLAN.md / 03-dotnet-
+    // runtime-facts.md). So the original "GetToken() for *Builder, else MetadataToken"
+    // logic can no longer live directly inside GetHackish*; it is isolated into a
+    // ...Clr4 method that is only ever called (and hence only ever JITted) when NOT
+    // running on CoreCLR. On CoreCLR, MetadataToken alone is used, which is what the
+    // hackish path actually needs there: it only fires when the generic *definition* is
+    // a plain RuntimeType (imported, tokens always valid) -- see fact 6.
+    static GetHackishConstructorToken (ctr : ConstructorInfo) : int
     {
-      def curtok = match(ctr) {
+      if (CoreEmitBridge.IsCoreClr) ctr.MetadataToken else GetHackishConstructorTokenClr4 (ctr)
+    }
+
+    static GetHackishConstructorTokenClr4 (ctr : ConstructorInfo) : int
+    {
+#if NET_4_0
+      match(ctr) {
         | ctr is ConstructorBuilder => ctr.GetToken().Token
         | _ => ctr.MetadataToken;
       }
+#else
+      // dotnet-port WP-D: ConstructorBuilder.GetToken() does not exist on CoreCLR; dead
+      // code when this assembly is compiled for CoreCLR (see GetHackishConstructorToken).
+      ctr.MetadataToken
+#endif
+    }
+
+    static GetHackishConstructor (_from_type : System.Type, ctr : ConstructorInfo) : ConstructorInfo
+    {
+      def curtok = GetHackishConstructorToken (ctr);
 
       res: {
         foreach (c in _from_type.GetConstructors (BindingFlags.NonPublic | BindingFlags.Public |
@@ -253,12 +289,28 @@ namespace Nemerle.Compiler
       }
     }
 
-    static GetHackishMethod (_from_type : System.Type, meth : MethodInfo) : MethodInfo 
+    static GetHackishMethodToken (meth : MethodInfo) : int
     {
-      def curtok = match(meth) {
+      if (CoreEmitBridge.IsCoreClr) meth.MetadataToken else GetHackishMethodTokenClr4 (meth)
+    }
+
+    static GetHackishMethodTokenClr4 (meth : MethodInfo) : int
+    {
+#if NET_4_0
+      match(meth) {
         | meth is Emit.MethodBuilder => meth.GetToken().Token
         | _ => meth.MetadataToken;
       }
+#else
+      // dotnet-port WP-D: MethodBuilder.GetToken() does not exist on CoreCLR; dead code
+      // when this assembly is compiled for CoreCLR (see GetHackishMethodToken).
+      meth.MetadataToken
+#endif
+    }
+
+    static GetHackishMethod (_from_type : System.Type, meth : MethodInfo) : MethodInfo
+    {
+      def curtok = GetHackishMethodToken (meth);
 
       res: {
         foreach (m in _from_type.GetMethods (BindingFlags.NonPublic | BindingFlags.Public |
@@ -270,12 +322,28 @@ namespace Nemerle.Compiler
       }
     }
 
-    static GetHackishField (_from_type : System.Type, fld : FieldInfo) : FieldInfo 
+    static GetHackishFieldToken (fld : FieldInfo) : int
     {
-      def curtok = match(fld) {
+      if (CoreEmitBridge.IsCoreClr) fld.MetadataToken else GetHackishFieldTokenClr4 (fld)
+    }
+
+    static GetHackishFieldTokenClr4 (fld : FieldInfo) : int
+    {
+#if NET_4_0
+      match(fld) {
         | fld is Emit.FieldBuilder => fld.GetToken().Token
         | _ => fld.MetadataToken;
       }
+#else
+      // dotnet-port WP-D: FieldBuilder.GetToken() does not exist on CoreCLR; dead code
+      // when this assembly is compiled for CoreCLR (see GetHackishFieldToken).
+      fld.MetadataToken
+#endif
+    }
+
+    static GetHackishField (_from_type : System.Type, fld : FieldInfo) : FieldInfo
+    {
+      def curtok = GetHackishFieldToken (fld);
 
       res: {
         foreach (f in _from_type.GetFields (BindingFlags.NonPublic | BindingFlags.Public |

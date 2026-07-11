@@ -111,29 +111,32 @@ namespace Nemerle.Compiler
       _isFriend = this.GetIsFriend();
     }
 
+    // dotnet-port WP-C: derives OUR public key (from -keyfile) for matching against a
+    // referenced assembly's InternalsVisibleTo("<name>, PublicKey=..."/"PublicKeyToken=...")
+    // attributes -- this fires whenever we compile against an assembly that grants us
+    // friend access via a strong-name key, exactly the Nemerle.dll <-> Nemerle.Compiler.dll
+    // self-host scenario. Previously this used SR.StrongNameKeyPair(keyFile).PublicKey,
+    // whose constructor throws PlatformNotSupportedException on CoreCLR (see
+    // dotnet-port\03-dotnet-runtime-facts.md fact 5). SnkUtils parses the .snk CAPI blob
+    // directly (pure byte manipulation + SHA1 for the token, both available unchanged on
+    // CLR4 and CoreCLR), so -- unlike the emission layer -- there is no CLR4/Core dual
+    // path needed here at all: StrongNameKeyPair is removed from this method entirely,
+    // for both runtimes.
     private GetIsFriend() : bool
     {
       def currentAssemblyName = Path.GetFileNameWithoutExtension(this.Manager.Options.OutputFileName);
       def customAttributes = _library.GetCustomAttributes(typeof(InternalsVisibleToAttribute), false);
-      def snKey() : SR.StrongNameKeyPair
+
+      // Lazily derive OUR public key (only when a referenced assembly actually declares
+      // an InternalsVisibleTo with a PublicKey/PublicKeyToken part -- most references
+      // don't, and reading+parsing the key file on every LibraryReference would be wasted
+      // work otherwise).
+      mutable ourPublicKeyCache : array[byte] = null;
+      def ourPublicKey() : array[byte]
       {
-        using (keyFile = File.Open(this.Manager.Options.StrongAssemblyKeyName, FileMode.Open, FileAccess.Read))
-          SR.StrongNameKeyPair(keyFile)
-      }
-      def toHexString(bytes : array[byte]) : string
-      {
-        def hex = System.BitConverter.ToString(bytes);
-        hex.Replace("-","");
-      }
-      def generatePublicKeyToken(publicKey : array[byte]) : array[byte]
-      {
-        def sha = System.Security.Cryptography.SHA1Managed();
-        def hash = sha.ComputeHash(publicKey);
-        def len = 8;
-        mutable result : array[byte] = array(len);
-        System.Array.Copy(hash, hash.Length - len , result, 0, len);
-        System.Array.Reverse(result, 0, len);
-        result;
+        when (ourPublicKeyCache == null)
+          ourPublicKeyCache = SnkUtils.GetPublicKeyFromFile(this.Manager.Options.StrongAssemblyKeyName);
+        ourPublicKeyCache
       }
       def checkFriend(att : InternalsVisibleToAttribute) : bool
       {
@@ -142,14 +145,21 @@ namespace Nemerle.Compiler
         match (parts)
         {
           | [asmName] when currentAssemblyName == asmName => true;
-          | [asmName, pKey] when string.IsNullOrEmpty(this.Manager.Options.StrongAssemblyKeyName)
+          // NOTE: fixed pre-existing inverted guard here (was `IsNullOrEmpty`, which made
+          // this arm not just skip the check but crash trying to File.Open an empty path
+          // whenever it *would* have matched) -- we can only compare against OUR public
+          // key when we actually have a -keyfile / StrongAssemblyKeyName configured.
+          | [asmName, pKey] when !string.IsNullOrEmpty(this.Manager.Options.StrongAssemblyKeyName)
                                  && currentAssemblyName == asmName
             =>
-            match(pKey.ToLower().SplitToList(array[',']))
+            // NOTE: fixed pre-existing bug here too (was splitting on ',' -- there is no
+            // comma inside "PublicKey=<hex>"/"PublicKeyToken=<hex>", only '=', so this
+            // never matched the 2-element patterns below on any runtime).
+            match(pKey.ToLower().SplitToList(array['=']))
             {
-              | ["publickey", key] when toHexString(snKey().PublicKey).ToLower() == key.ToLower() => true;
+              | ["publickey", key] when SnkUtils.ToHexString(ourPublicKey()).ToLower() == key.ToLower() => true;
               | ["publickeytoken", key]
-                 when toHexString(generatePublicKeyToken(snKey().PublicKey)).ToLower() == key.ToLower()
+                 when SnkUtils.ToHexString(SnkUtils.GetPublicKeyToken(ourPublicKey())).ToLower() == key.ToLower()
                   => true;
               | _ => false
             }

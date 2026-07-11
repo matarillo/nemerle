@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Nemerle.CoreEmit</AssemblyName>
+    <RootNamespace>Nemerle.CoreEmit</RootNamespace>
+    <!-- Loaded via reflection (Assembly.LoadFrom) from a net4-flavored ncc.exe running
+         on CoreCLR; never referenced at compile time by any .n source. -->
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultItems>true</EnableDefaultItems>
+  </PropertyGroup>
+
+</Project>

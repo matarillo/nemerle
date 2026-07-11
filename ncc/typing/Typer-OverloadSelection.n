@@ -628,6 +628,21 @@ namespace Nemerle.Compiler
       ! o.IsGeneric
     }
 
+    // dotnet-port WP-D: modern .NET BCL methods increasingly ship an overload whose
+    // trailing parameter(s) have a default value purely to support an interpolated-string-
+    // handler sibling overload (e.g. `Debug.Assert(bool)` alongside a newer
+    // `Debug.Assert(bool, string message = null)`). Real C# disambiguates these via
+    // `System.Runtime.CompilerServices.OverloadResolutionPriorityAttribute`, which this
+    // reflection-based overload resolver does not read. Absent that, prefer whichever
+    // candidate(s) matched the call site's actual argument count exactly (no default
+    // parameters filled in) over ones that needed defaults, when both exist among an
+    // otherwise-ambiguous candidate set. This is a pure tie-breaker: it only narrows the
+    // set when a strict subset already has UsedDefaultParms = false.
+    static AintUsingDefaultParms (o : OverloadPossibility) : bool
+    {
+      ! o.UsedDefaultParms
+    }
+
     static RemoveExtensionMethods (parms : list [OverloadPossibility]) : list [OverloadPossibility]
     {
       if (NList.Exists (parms, AintExtension))
@@ -660,10 +675,11 @@ namespace Nemerle.Compiler
           def res0 = RemoveOverloadsWithTupleConvertion(parms);
           def res1 = RemoveExtensionMethods(res0);
           def res2 = GetMinimal(res1, IsBetterOverload);
-          def res3 = res2.FilterIfExists(AintVarArgs);
+          def res2b = res2.FilterIfExists(AintUsingDefaultParms);
+          def res3 = res2b.FilterIfExists(AintVarArgs);
           def res4 = res3.FilterIfExists(DidntMamboJumbo);
           def res5 = res4.FilterIfExists(AintGeneric);
-            
+
           // Message.Debug ($"gbo: $parms ---> $res5");
 
           res5

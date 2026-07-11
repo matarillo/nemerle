@@ -170,7 +170,15 @@ namespace Nemerle.Compiler
 
         when (is_security_attribute (tc)) {
           match (create_instance (env, tc, parms)) {
+            // dotnet-port WP-D: System.Security.Permissions.PermissionSetAttribute does not
+            // exist on CoreCLR (unlike SecurityAttribute/PermissionSet/SecurityAction, which
+            // are present, just obsolete). is_security_attribute already returns false
+            // unconditionally when CoreEmitBridge.IsCoreClr, so this whole `when` body is
+            // dead code on CoreCLR at run time -- but the arm below still has to be excluded
+            // from compilation there, since the type itself is unresolvable.
+#if NET_4_0
             | ps is SSP.PermissionSetAttribute => result ::= (ps.Action, ps.CreatePermissionSet ())
+#endif
             | sa is SSP.SecurityAttribute =>
                 def perm_set = SS.PermissionSet (SSP.PermissionState.None);
                 _ = perm_set.AddPermission (sa.CreatePermission ());
@@ -417,7 +425,21 @@ namespace Nemerle.Compiler
       }
     }
 
+    /**
+     * Dispatcher kept free of any System.Security.Permissions reference so that it
+     * (unlike is_security_attribute_clr4) is always safe to JIT-compile on CoreCLR --
+     * this is called from CompileAttribute/GetCompiledAssemblyAttributes/GetPermissionSets,
+     * all of which are on the hot attribute-compiling path exercised for every source file.
+     * CoreCLR has no Code-Access-Security, so no attribute is ever treated as a security
+     * attribute there.
+     */
     private static is_security_attribute(ti : TypeInfo) : bool
+    {
+      !CoreEmitBridge.IsCoreClr && is_security_attribute_clr4 (ti)
+    }
+
+    /** CLR4-only: System.Security.Permissions is not part of the CoreCLR shared framework. */
+    private static is_security_attribute_clr4(ti : TypeInfo) : bool
     {
       // A security attribute must be imported from an external assembly,
       // so using LibraryReference.ExternalTypeInfo is good enought here.
@@ -624,7 +646,14 @@ namespace Nemerle.Compiler
 
   public partial class TypesManager
   {
-    static read_keypair (loc : Location, name : string) : SR.StrongNameKeyPair
+    /**
+     * CLR4-only: real strong-name signing via StrongNameKeyPair. Must never run on
+     * CoreCLR -- constructing StrongNameKeyPair throws PlatformNotSupportedException
+     * there (dotnet-port\03-dotnet-runtime-facts.md fact 5); isolated into its own
+     * method so it is only ever JIT-compiled/invoked when actually called, i.e. never
+     * on CoreCLR (same isolation pattern as the rest of the WP-B/WP-C emission port).
+     */
+    static read_keypair_clr4 (loc : Location, name : string) : SR.StrongNameKeyPair
     {
       try {
         SR.StrongNameKeyPair(File.Open(name, FileMode.Open, FileAccess.Read))
@@ -635,6 +664,67 @@ namespace Nemerle.Compiler
         | _ is FileNotFoundException =>
           Message.FatalError (loc, "could not find file `" + name + "' with key pair for assembly")
       }
+    }
+
+    /**
+     * CLR4-only: assigns an.KeyPair, which triggers real strong-name signing when the
+     * assembly is later saved (SaveAssemblyClr4 in HierarchyEmitter.n). Unchanged
+     * behavior from before this work package.
+     */
+    static set_assembly_key_clr4 (an : SR.AssemblyName, loc : Location, name : string) : void
+    {
+      an.KeyPair = read_keypair_clr4 (loc, name);
+    }
+
+    /**
+     * CoreCLR-only: there is no strong-name signing API on CoreCLR (StrongNameKeyPair /
+     * AssemblyName.KeyPair both throw PlatformNotSupportedException -- fact 5) and
+     * CoreCLR never verifies strong-name signatures anyway, so we embed just the
+     * PUBLIC key (delay-sign equivalent: AssemblyName.SetPublicKey +
+     * AssemblyNameFlags.PublicKey) via SnkUtils, which parses the .snk file directly
+     * without StrongNameKeyPair. This is enough for GetIsFriend-style
+     * InternalsVisibleTo(PublicKey=...) matching and for producing an assembly whose
+     * identity (incl. PublicKeyToken) matches what real CLR4 signing would have
+     * produced -- just without an actual cryptographic signature over the image.
+     */
+    static set_assembly_key_core (an : SR.AssemblyName, loc : Location, name : string) : void
+    {
+      def publicKey =
+        try { SnkUtils.GetPublicKeyFromFile (name) }
+        catch {
+          | _ is DirectoryNotFoundException =>
+            Message.FatalError (loc, "could not find directory of `" + name + "' with key pair for assembly")
+          | _ is FileNotFoundException =>
+            Message.FatalError (loc, "could not find file `" + name + "' with key pair for assembly")
+        };
+      an.SetPublicKey (publicKey);
+      an.Flags = an.Flags | SR.AssemblyNameFlags.PublicKey;
+      warn_public_key_only_once ();
+    }
+
+    private static mutable _warned_public_key_only : bool = false;
+
+    /** One-time warning: on CoreCLR the produced assembly carries the public key (so
+        strong-name-based friend/reference checks keep working) but is NOT actually
+        strong-name signed, because CoreCLR neither creates nor verifies strong-name
+        signatures (fact 5 in 03-dotnet-runtime-facts.md). */
+    private static warn_public_key_only_once () : void
+    {
+      unless (_warned_public_key_only)
+      {
+        _warned_public_key_only = true;
+        Message.Warning ("running on CoreCLR: the output assembly's public key (from -keyfile / " +
+                          "AssemblyKeyFile) is embedded in its identity, but the assembly is NOT " +
+                          "strong-name signed (CoreCLR does not create or verify strong-name signatures)");
+      }
+    }
+
+    static set_assembly_key (an : SR.AssemblyName, loc : Location, name : string) : void
+    {
+      if (CoreEmitBridge.IsCoreClr)
+        set_assembly_key_core (an, loc, name)
+      else
+        set_assembly_key_clr4 (an, loc, name);
     }
 
     public AddAssemblyAttribute ([NotNull] env : GlobalEnv, [NotNull] attr : Parsetree.PExpr) : void {
@@ -790,8 +880,14 @@ namespace Nemerle.Compiler
       def an = SR.AssemblyName ();
       an.CodeBase = string.Concat("file:///", Directory.GetCurrentDirectory());
 
+      // Tracks whether a key was already assigned, without ever reading back
+      // an.KeyPair: that getter also throws PlatformNotSupportedException on CoreCLR
+      // (fact 5), so it cannot be used as an "already have a key?" check there.
+      mutable has_key = false;
+
       when (Manager.Options.StrongAssemblyKeyName != null) {
-        an.KeyPair = read_keypair (Location.Default, Manager.Options.StrongAssemblyKeyName);
+        set_assembly_key (an, Location.Default, Manager.Options.StrongAssemblyKeyName);
+        has_key = true;
       }
 
       foreach ((env, attr) in assembly_attributes)
@@ -811,10 +907,10 @@ namespace Nemerle.Compiler
         else if (tc.Equals (InternalType.AssemblyKeyFileAttribute_tc))
              {
                def key = take_string (parms);
-               if (an.KeyPair != null)
+               if (has_key)
                  Message.Warning (attr.Location, "AssemblyKeyFile attribute will be ignored, as key file was already specified")
                else
-                 when (key != "") an.KeyPair = read_keypair (attr.Location, key);
+                 when (key != "") { set_assembly_key (an, attr.Location, key); has_key = true; }
              }
              else when (tc.Equals (InternalType.AssemblyCultureAttribute_tc))
                     an.CultureInfo = SY.Globalization.CultureInfo (take_string (parms));

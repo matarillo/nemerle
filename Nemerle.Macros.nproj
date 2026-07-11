@@ -78,6 +78,6 @@
       </Token>
     </ItemGroup>
     <TemplateFile Template="macros\policy.1.2.$(AssemblyName).config.template" OutputFilename="$(OutputPath)\policy.1.2.$(AssemblyName).config" Tokens="@(Token)" />
-    <AL ToolPath="$(SDKBin)" LinkResources="$(OutputPath)\policy.1.2.$(AssemblyName).config" OutputAssembly="$(OutputPath)\policy.1.2.$(AssemblyName).dll" KeyFile="$(KeyOriginatorFile)" Platform="$(Platform)" />
+    <AL Condition="Exists('$(SDKBin)/al.exe')" ToolPath="$(SDKBin)" LinkResources="$(OutputPath)\policy.1.2.$(AssemblyName).config" OutputAssembly="$(OutputPath)\policy.1.2.$(AssemblyName).dll" KeyFile="$(KeyOriginatorFile)" Platform="$(Platform)" />
   </Target>
 </Project>

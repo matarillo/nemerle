@@ -8,7 +8,14 @@ using System.IO.File;
 using System.IO.Path;
 using System.IO.Directory;
 using DictionaryEntry = System.Collections.DictionaryEntry;
+// dotnet-port WP-D: System.Resources.ResXResourceReader does not exist on CoreCLR (it
+// shipped in System.Windows.Forms on .NET Framework; no shared-framework or NuGet
+// equivalent is referenced by this build). The [Resource] macro below is opt-in
+// (assembly-level attribute), so this is guarded out rather than blocking the whole
+// Nemerle.Macros.dll self-host build; see the matching #if in ResourceImpl.Build.
+#if NET_4_0
 using ResXReader = System.Resources.ResXResourceReader;
+#endif
 
 namespace Nemerle.Macro
 {
@@ -62,6 +69,12 @@ namespace Nemerle.Macro
 
         try
         {
+#if !NET_4_0
+          ignore (resource);
+          Message.Error("the [Resource] macro (.resx wrapper generation) is not supported "
+                        "when the compiler is running on CoreCLR: System.Resources.ResXResourceReader "
+                        "does not exist there");
+#else
           using (def reader = ResXReader(StringReader(resource.GetText())))
           {
             def rootNamespace = typer.Manager.Options.RootNamespace;
@@ -137,6 +150,7 @@ namespace Nemerle.Macro
 
             builder.Compile();
           }
+#endif
         }
         catch { | e => Message.Error(e.Message); }
       }

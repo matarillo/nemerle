@@ -71,9 +71,12 @@
     <Compile Include="ncc\parsing\*.n">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="ncc\codedom\*.n">
-      <SubType>Code</SubType>
-    </Compile>
+    <!-- dotnet-port WP-C: ncc\codedom\*.n excluded from the build (see dotnet-port\12-selfhost-blockers-log.md).
+         It is a public CodeDom-provider service for external hosts; nothing under ncc\, lib\ or macros\
+         calls into it, and it pulls in System.CodeDom/System.Configuration, which are not part of
+         the .NET 10 shared framework. Removing it narrows Nemerle.Compiler.dll's public API surface
+         (NemerleCodeProvider/NemerleCodeGenerator/NemerleCodeCompiler/NemerleMemberAttributeConverter
+         are no longer shipped); accepted trade-off for self-host on CoreCLR. -->
     <Compile Include="ncc\CompilerMessage\*.n">
       <SubType>Code</SubType>
     </Compile>
@@ -137,6 +140,6 @@
       </Token>
     </ItemGroup>
     <TemplateFile Template="ncc\policy.1.2.$(AssemblyName).config.template" OutputFilename="$(OutputPath)\policy.1.2.$(AssemblyName).config" Tokens="@(Token)" />
-    <AL ToolPath="$(SDKBin)" LinkResources="$(OutputPath)\policy.1.2.$(AssemblyName).config" OutputAssembly="$(OutputPath)\policy.1.2.$(AssemblyName).dll" KeyFile="$(KeyOriginatorFile)" Platform="$(Platform)" />
+    <AL Condition="Exists('$(SDKBin)/al.exe')" ToolPath="$(SDKBin)" LinkResources="$(OutputPath)\policy.1.2.$(AssemblyName).config" OutputAssembly="$(OutputPath)\policy.1.2.$(AssemblyName).dll" KeyFile="$(KeyOriginatorFile)" Platform="$(Platform)" />
   </Target>
 </Project>

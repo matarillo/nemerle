@@ -1,0 +1,143 @@
+/*
+ * Copyright (c) 2026 The Nemerle Team.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *    1. Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *    2. Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *    3. The name of the University may not be used to endorse or promote
+ *       products derived from this software without specific prior
+ *       written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE UNIVERSITY ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
+ * NO EVENT SHALL THE UNIVERSITY BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+using System;
+using System.IO;
+
+namespace Nemerle.Compiler
+{
+  /// Runtime-neutral (CLR4 *and* CoreCLR) parsing of .snk strong-name key files.
+  ///
+  /// Used to derive the RSA public key blob -- and, from it, the public key token
+  /// -- without going through System.Reflection.StrongNameKeyPair, whose
+  /// constructors throw PlatformNotSupportedException when run on CoreCLR (see
+  /// dotnet-port\03-dotnet-runtime-facts.md fact 5). The .snk file is just a CAPI
+  /// PRIVATEKEYBLOB; parsing it out is pure byte manipulation and needs no crypto
+  /// API beyond SHA1 (only for the 8-byte token), which exists unchanged on both
+  /// runtimes. Because of that, unlike the rest of the CoreCLR emission port, this
+  /// module needs **no runtime dispatch** (no CoreEmitBridge involved) -- the exact
+  /// same code path runs on CLR4 and CoreCLR and produces byte-identical output to
+  /// what StrongNameKeyPair.PublicKey used to return on CLR4 (cross-checked against
+  /// RSACryptoServiceProvider.ImportCspBlob/ExportCspBlob in 03-dotnet-runtime-facts.md).
+  ///
+  /// NOTE: this module only derives the PUBLIC key. It cannot be used to actually
+  /// *sign* an assembly (that still requires the private key material and, on
+  /// CLR4, StrongNameKeyPair/AssemblyName.KeyPair -- see
+  /// ncc\hierarchy\CustomAttribute.n's Clr4/Core dual path for that).
+  public module SnkUtils
+  {
+    /// Reads `name` from disk and extracts a strong-name PUBLIC key blob suitable
+    /// for AssemblyName.SetPublicKey. If the file already holds a public key blob
+    /// (e.g. produced by "sn -p"), it is returned unchanged.
+    public GetPublicKeyFromFile (name : string) : array [byte]
+    {
+      GetPublicKeyFromBytes (File.ReadAllBytes (name))
+    }
+
+    /// Same as GetPublicKeyFromFile, but starting from bytes already in memory.
+    public GetPublicKeyFromBytes (snk : array [byte]) : array [byte]
+    {
+      unless (snk.Length >= 20 + 8)
+        throw System.ArgumentException ("key blob too short to be a .snk key pair or public key blob");
+
+      if (snk[0] != 0x07) // not a CAPI PRIVATEKEYBLOB (bType 0x07)
+      {
+        if (snk.Length > 12 && System.BitConverter.ToUInt32 (snk, 0) == 0x2400u)
+          snk // already a strong-name public key blob (e.g. produced by "sn -p")
+        else
+          throw System.ArgumentException ($"not a CAPI private key blob (bType=$(snk[0]))")
+      }
+      else
+      {
+        def magic = System.BitConverter.ToUInt32 (snk, 8);
+        unless (magic == 0x32415352u) // 'RSA2'
+          throw System.ArgumentException ("not an RSA private key blob (magic != RSA2)");
+
+        def bitlen  = System.BitConverter.ToInt32 (snk, 12);
+        def pubexp  = System.BitConverter.ToUInt32 (snk, 16);
+        def modLen  = bitlen / 8;
+        def modulus : array [byte] = array (modLen);
+        System.Array.Copy (snk, 20, modulus, 0, modLen);
+
+        // strong-name public key blob = SNK_PUBLIC_KEY_BLOB header (12 bytes) ++
+        // PUBLICKEYBLOB (BLOBHEADER (8 bytes) ++ RSAPUBKEY (12 bytes) ++ modulus).
+        def cb  = 8 + 12 + modLen;
+        def res : array [byte] = array (12 + cb);
+
+        // NOTE: these constants MUST be explicitly typed `uint` locals, not passed as
+        // bare `0x...u` literals to BinaryWriter.Write: Nemerle's numeric-literal
+        // overload resolution (unlike C#'s) picks the *narrowest* Write overload the
+        // constant's value fits in regardless of the `u` suffix -- 0x00002400u (9216)
+        // and 0x00008004u (32772) both fit `ushort`, so `w.Write (0x00002400u)` silently
+        // bound to Write(UInt16) (2 bytes) instead of Write(UInt32) (4 bytes), corrupting
+        // the blob. Caught by the acceptance test in this WP (CoreCLR rejected the
+        // resulting key with "Invalid assembly public key" when loading a referencing
+        // assembly) -- verify byte-for-byte if this code is ever touched again.
+        def sigAlgId  : uint = 0x00002400;  // CALG_RSA_SIGN
+        def hashAlgId : uint = 0x00008004;  // CALG_SHA1
+        def aiKeyAlg  : uint = 0x00002400;
+        def rsaMagic  : uint = 0x31415352;  // 'RSA1'
+
+        using (w = BinaryWriter (MemoryStream (res)))
+        {
+          w.Write (sigAlgId);
+          w.Write (hashAlgId);
+          w.Write (cb);
+          w.Write (0x06 :> byte); w.Write (0x02 :> byte); w.Write (0 :> ushort); // PUBLICKEYBLOB header
+          w.Write (aiKeyAlg);
+          w.Write (rsaMagic);
+          w.Write (bitlen);
+          w.Write (pubexp);
+          w.Write (modulus);
+        }
+        res
+      }
+    }
+
+    /// Strong-name public key token: last 8 bytes of SHA1(publicKeyBlob), reversed.
+    public GetPublicKeyToken (publicKey : array [byte]) : array [byte]
+    {
+      def hash =
+        using (sha = System.Security.Cryptography.SHA1.Create())
+          sha.ComputeHash (publicKey);
+      def len = 8;
+      mutable result : array [byte] = array (len);
+      System.Array.Copy (hash, hash.Length - len, result, 0, len);
+      System.Array.Reverse (result, 0, len);
+      result
+    }
+
+    /// Uppercase, no-dashes hex encoding, e.g. for comparing against
+    /// InternalsVisibleTo's "Name, PublicKey=..." / "PublicKeyToken=..." parts
+    /// (which are matched case-insensitively by the callers).
+    public ToHexString (bytes : array [byte]) : string
+    {
+      System.BitConverter.ToString (bytes).Replace ("-", "")
+    }
+  }
+}

@@ -616,6 +616,68 @@ namespace Nemerle.Compiler
         GetMembers (bindingAttr).FoldLeft ([], constrain_with_membertype (MemberKinds.Constructor))
       }
 
+      // Modern BCL (.NET Core) support: detect types that cannot be represented
+      // in the Nemerle type system (byref-like structs such as Span[T]).
+      // On .NET Framework 4.x the IsByRefLikeAttribute type does not exist, so
+      // this always returns false there and behavior is unchanged.
+      private static byref_like_attribute : System.Type =
+        System.Type.GetType ("System.Runtime.CompilerServices.IsByRefLikeAttribute", false);
+
+      private static is_byref_like (t : System.Type) : bool
+      {
+        def t = if (t.IsGenericType && !t.IsGenericTypeDefinition) t.GetGenericTypeDefinition () else t;
+        t.IsValueType && !t.IsPrimitive && !t.IsEnum && t.IsDefined (byref_like_attribute, false)
+      }
+
+      private static contains_unsupported_type (t : System.Type) : bool
+      {
+        if (t.IsByRef || t.IsPointer || t.IsArray)
+          contains_unsupported_type (t.GetElementType ())
+        else if (t.IsGenericParameter)
+          false
+        else if (is_byref_like (t))
+          true
+        else if (t.IsGenericType)
+          t.GetGenericArguments ().Exists (contains_unsupported_type)
+        else
+          false
+      }
+
+      /// Returns true for members whose signature mentions a type shape that
+      /// cannot be represented in Nemerle: byref (ref) return types, ref fields,
+      /// ref properties or byref-like structs (Span[T] & co) anywhere in the
+      /// signature. Such members are skipped during import. This can only
+      /// trigger when running on a modern (.NET Core based) runtime.
+      private static is_unsupported (m : SR.MemberInfo) : bool
+      {
+        def x = m.MemberType;
+
+        if (byref_like_attribute == null) false // .NET Framework: no such shapes
+        else if (x %&& (SR.MemberTypes.Constructor | SR.MemberTypes.Method))
+        {
+          def meth = m :> SR.MethodBase;
+          def unsupported_ret =
+            match (meth)
+            {
+              | mi is SR.MethodInfo => mi.ReturnType.IsByRef || contains_unsupported_type (mi.ReturnType)
+              | _ => false
+            };
+          unsupported_ret || meth.GetParameters ().Exists (p => contains_unsupported_type (p.ParameterType))
+        }
+        else if (x %&& SR.MemberTypes.Field)
+        {
+          def field = m :> SR.FieldInfo;
+          field.FieldType.IsByRef || contains_unsupported_type (field.FieldType)
+        }
+        else if (x %&& SR.MemberTypes.Property)
+        {
+          def prop = m :> SR.PropertyInfo;
+          prop.PropertyType.IsByRef || contains_unsupported_type (prop.PropertyType)
+            || prop.GetIndexParameters ().Exists (p => contains_unsupported_type (p.ParameterType))
+        }
+        else false
+      }
+
       private static is_internal (m : SR.MemberInfo) : bool
       {
         def x = m.MemberType;
@@ -690,7 +752,7 @@ namespace Nemerle.Compiler
           def m = member_array [i];
 
 //          Message.Debug ($"adding $m from $this $(this.GetHashCode ())");
-          unless (is_internal(m) && !this.library.IsFriend)
+          unless ((is_internal(m) && !this.library.IsFriend) || is_unsupported(m))
           {
 //            Message.Debug ($ "add_member: $m to $(this) [$(GetHashCode ())]");
             match (imember_of_memberinfo (m))

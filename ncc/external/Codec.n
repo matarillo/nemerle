@@ -155,10 +155,17 @@ module TyCodec
 
     def set_constraints (t, tv : StaticTypeVar)
     {
-      def constraints = t.GetGenericParameterConstraints ();
+      // dotnet-port WP-D: modern (CoreCLR) reflection can report a generic
+      // parameter's transitive base-type chain in full (e.g. `where T : struct, Enum`
+      // yields constraints [System.Enum, System.ValueType], whereas .NET Framework's
+      // reflection only reported the most-derived class, System.Enum). Collapse to the
+      // minimal (most-derived) set here, same technique already used for interfaces in
+      // ReflectTypeBuilder above, so StaticTypeVar.check_class_constraints doesn't see
+      // spurious "multiple non-interface constraints" for a single real constraint.
+      def constraints = Typer.GetMinimal (NList.FromArray (t.GetGenericParameterConstraints ()),
+                                           (t1, t2) => t2.IsAssignableFrom (t1));
       tv.SetConstraints (t.GenericParameterAttributes,
-            NList.MapFromArray (constraints, 
-              t => if (t.Equals(sys_type)) self_type else _lib.TypeOfType (tenv, t)))
+            constraints.Map (t => if (t.Equals(sys_type)) self_type else _lib.TypeOfType (tenv, t)))
     }
     vars.Iter2(tyvars, set_constraints);
   }
@@ -253,7 +260,9 @@ module TyCodec
       
       def set_constraints (t, tv : StaticTypeVar)
       {
-        def constraints = t.GetGenericParameterConstraints ();
+        // dotnet-port WP-D: see the identical comment in ReflectConstraints above.
+        def constraints = Typer.GetMinimal (NList.FromArray (t.GetGenericParameterConstraints ()),
+                                             (t1, t2) => t2.IsAssignableFrom (t1));
         tv.SetConstraints (t.GenericParameterAttributes, constraints.Map(t => lib.TypeOfType(tenv, t)))
       }
 

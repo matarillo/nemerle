@@ -87,15 +87,42 @@ namespace Nemerle.Compiler
 
       _assembly_name.Name = Path.GetFileNameWithoutExtension (_OutputFileName);
 
+      def dir = Path.GetDirectoryName(Path.GetFullPath (_OutputFileName));
+      unless (Directory.Exists (dir))
+        Message.FatalError ($"specified output directory `$dir' does not exist");
+
+      if (CoreEmitBridge.IsCoreClr)
+        CreateAssemblyCore ()
+      else
+        CreateAssemblyClr4 (dir);
+
+      GetInformationalAssemblyAttributes().Iter(this._assembly_builder.SetCustomAttribute);
+
+      when (_assembly_name.Name == "") Message.FatalError ("name of output assembly cannot be empty");
+
+      /* create a dynamic module */
+      this._module_builder =
+        if (CoreEmitBridge.IsCoreClr)
+          CreateModuleCore ()
+        else
+          CreateModuleClr4 ();
+    }
+
+    /**
+     * CLR4-only: legacy AppDomain-based dynamic assembly creation, including the
+     * Code-Access-Security (PermissionSet) handling. Must NEVER be invoked on
+     * CoreCLR: System.Security.Permissions is not part of the CoreCLR shared
+     * framework, so this method (unlike its caller) would fail to even be
+     * JIT-compiled there because of the PermissionSet locals below.
+     */
+    private CreateAssemblyClr4 (dir : string) : void
+    {
+#if NET_4_0
       def assembly_requirements =
         if (Manager.Options.CompileToMemory)
           Emit.AssemblyBuilderAccess.Run
         else
           Emit.AssemblyBuilderAccess.Save;
-
-      def dir = Path.GetDirectoryName(Path.GetFullPath (_OutputFileName));
-      unless (Directory.Exists (dir))
-        Message.FatalError ($"specified output directory `$dir' does not exist");
 
 #pragma warning disable 618
 
@@ -118,30 +145,76 @@ namespace Nemerle.Compiler
           (this._assembly_name,
            assembly_requirements,
            dir, required, optional, refused);
-
-      GetInformationalAssemblyAttributes().Iter(this._assembly_builder.SetCustomAttribute);
 #pragma warning restore 618
+#else
+      // dotnet-port WP-D: AssemblyBuilderAccess.Save and the 6-arg
+      // AppDomain.DefineDynamicAssembly do not exist on CoreCLR. This method is only
+      // ever called from CreateAssembly's `unless (CoreEmitBridge.IsCoreClr)` branch, so
+      // it is dead code whenever this assembly itself is compiled for CoreCLR (NET_4_0
+      // undefined) -- guarded out here so the containing *type* still compiles.
+      ignore (dir);
+      Util.ice ("CreateAssemblyClr4 must never be called on CoreCLR")
+#endif
+    }
 
-      when (_assembly_name.Name == "") Message.FatalError ("name of output assembly cannot be empty");
+    /**
+     * CoreCLR-only: PersistedAssemblyBuilder (disk output) / AssemblyBuilderAccess.RunAndCollect
+     * (compile-to-memory) via Nemerle.CoreEmit.dll. CoreCLR has no Code-Access-Security, so there
+     * is no equivalent of the required/optional/refused PermissionSet handling here -- security
+     * attributes are simply not turned into declarative security (see is_security_attribute).
+     */
+    private CreateAssemblyCore () : void
+    {
+      this._assembly_builder =
+        if (Manager.Options.CompileToMemory)
+          CoreEmitBridge.CreateRunBuilder (this._assembly_name)
+        else
+          CoreEmitBridge.CreateBuilder (this._assembly_name);
+    }
 
+    private CreateModuleClr4 () : Emit.ModuleBuilder
+    {
+#if NET_4_0
       /* create a dynamic module */
-      this._module_builder =
+      def mb =
         if (Manager.Options.CompileToMemory)
           // we cannot give output filename if we are compiling only to Run
-          this._assembly_builder.DefineDynamicModule (_assembly_name.Name, Manager.Options.EmitDebug);
+          this._assembly_builder.DefineDynamicModule (_assembly_name.Name, Manager.Options.EmitDebug)
         else
           this._assembly_builder.DefineDynamicModule (_assembly_name.Name,
                                                       Path.GetFileName (_OutputFileName),
                                                       Manager.Options.EmitDebug);
-    
-      when (Manager.Options.EmitDebug) _debug_emit = _module_builder.GetSymWriter ();
+
+      when (Manager.Options.EmitDebug) _debug_emit = mb.GetSymWriter ();
+      mb
+#else
+      // dotnet-port WP-D: the 2-/3-arg DefineDynamicModule overloads and GetSymWriter()
+      // do not exist on CoreCLR; dead code when this assembly is compiled for CoreCLR.
+      Util.ice ("CreateModuleClr4 must never be called on CoreCLR")
+#endif
+    }
+
+    private CreateModuleCore () : Emit.ModuleBuilder
+    {
+      when (Manager.Options.EmitDebug)
+        Message.Warning ("debug symbols are not yet supported when running the compiler on CoreCLR; compiling without -debug");
+
+      // only the 1-arg overload exists on CoreCLR; the whole (single) module is
+      // written out as part of Save(path) later, there is no per-module file name.
+      this._assembly_builder.DefineDynamicModule (_assembly_name.Name)
     }
 
     public IsEmitting : bool {
       get { _assembly_builder != null }
     }
 
-    add_resources_to_assembly () : void
+    /**
+     * CLR4-only. Directly references AssemblyBuilder.AddResourceFile /
+     * ModuleBuilder.DefineUnmanagedResource / AssemblyBuilder.DefineVersionInfoResource,
+     * none of which exist on CoreCLR -- must never be invoked there (merely JITting a
+     * method containing these calls fails on CoreCLR even along a branch not taken).
+     */
+    add_resources_to_assembly_clr4 () : void
     {
       def escape_resource (x : string) {
         def cp = x.IndexOf (',');
@@ -196,6 +269,11 @@ namespace Nemerle.Compiler
         }
       }
 
+#if NET_4_0
+      // dotnet-port WP-D: AssemblyBuilder.AddResourceFile / ModuleBuilder.DefineUnmanagedResource /
+      // AssemblyBuilder.DefineVersionInfoResource do not exist on CoreCLR. This whole method is
+      // CLR4-only (see doc comment above) so this is dead code whenever this assembly is compiled
+      // for CoreCLR (NET_4_0 undefined).
       foreach (element in Manager.Options.LinkedResources) {
         def (file, name) = escape_resource (element);
         try {
@@ -223,9 +301,47 @@ namespace Nemerle.Compiler
      }
    else
    {
-     this._assembly_builder.DefineVersionInfoResource();  
+     this._assembly_builder.DefineVersionInfoResource();
      }
+#endif
+    }
 
+    /**
+     * CoreCLR-only resource collection. None of ModuleBuilder.DefineManifestResource /
+     * AssemblyBuilder.AddResourceFile / AssemblyBuilder.DefineVersionInfoResource /
+     * ModuleBuilder.DefineUnmanagedResource exist on CoreCLR (see 03-dotnet-runtime-facts.md
+     * fact 3); embedded managed resources instead go through CoreEmitBridge.Save's
+     * managed-resources parameter (collected here as "name|absoluteFilePath" pairs).
+     * Linked resources / Win32 resources / version info are not yet supported when
+     * running on CoreCLR and are skipped (with a warning for the first two; version
+     * info has no user-visible switch so it is skipped silently).
+     */
+    add_resources_to_assembly_core () : array [string]
+    {
+      def escape_resource (x : string) {
+        def cp = x.IndexOf (',');
+        if (cp != -1)
+          (x.Substring (0, cp), x.Substring (cp + 1))
+        else
+          (x, Path.GetFileName (x));
+      }
+
+      mutable pairs = [];
+      foreach (element in Manager.Options.EmbeddedResources) {
+        def (file, name) = escape_resource (element);
+        if (File.Exists (file))
+          pairs ::= name + "|" + Path.GetFullPath (file);
+        else
+          Message.Error ("Could not find resource " + file);
+      }
+
+      unless (Manager.Options.LinkedResources.IsEmpty)
+        Message.Warning ("linked resources (-linkres) are not yet supported when running the compiler on CoreCLR; ignoring");
+
+      when (Manager.Options.UnmanagedResource != null)
+        Message.Warning ("Win32 resources (-res) are not yet supported when running the compiler on CoreCLR; ignoring");
+
+      pairs.ToArray ()
     }
 
     /**
@@ -280,26 +396,45 @@ namespace Nemerle.Compiler
      */
     public SaveAssembly () : void
     {
-      add_resources_to_assembly ();
-
       // if there are some nemerle specific metadata encoded in attributes
       when (contains_nemerle_specifics) {
         def attr = Manager.AttributeCompiler.MakeEmittedAttribute (SystemTypeCache.Reflection_AssemblyConfigurationAttribute, "ContainsNemerleTypes");
         this._assembly_builder.SetCustomAttribute (attr);
       }
 
+      // resolve the entry point uniformly for both paths
+      def entry_point =
+        match ((_need_entry_point, _entry_point))
+        {
+          | (true, Some (entry_point_method_info)) => Some (entry_point_method_info)
+          | (true, None) =>
+            Message.Error ("no suitable entry point (Main function) found");
+            None ()
+          | _ => None ()
+        };
+
+      if (CoreEmitBridge.IsCoreClr)
+        SaveAssemblyCore (entry_point)
+      else
+        SaveAssemblyClr4 (entry_point)
+    }
+
+    /** CLR4-only: AssemblyBuilder.SetEntryPoint/Save (neither exists on CoreCLR). */
+    private SaveAssemblyClr4 (entry_point : option [MethodInfo]) : void
+    {
+#if NET_4_0
+      add_resources_to_assembly_clr4 ();
+
       // set the entry point
-      match ((_need_entry_point, _entry_point))
+      match (entry_point)
       {
-        | (true, Some (entry_point_method_info)) =>
+        | Some (entry_point_method_info) =>
           _assembly_builder.SetEntryPoint (entry_point_method_info,
                                            if (Manager.Options.TargetIsWinexe)
                                              Emit.PEFileKinds.WindowApplication
                                            else
                                              Emit.PEFileKinds.ConsoleApplication)
-        | (true, None) =>
-          Message.Error ("no suitable entry point (Main function) found")
-        | _ => ()
+        | None => ()
       }
 
       // save the assembly
@@ -324,6 +459,44 @@ namespace Nemerle.Compiler
 
         | e is System.ApplicationException =>
           Message.Error (e.Message);
+      }
+#else
+      // dotnet-port WP-D: dead code when this assembly is compiled for CoreCLR -- see
+      // doc comment above and the CoreEmitBridge.IsCoreClr dispatch in SaveAssembly.
+      ignore (entry_point);
+      Util.ice ("SaveAssemblyClr4 must never be called on CoreCLR")
+#endif
+    }
+
+    /**
+     * CoreCLR-only: PersistedAssemblyBuilder has no Save/SetEntryPoint; both are
+     * replaced by the GenerateMetadata + ManagedPEBuilder recipe implemented in
+     * Nemerle.CoreEmit.dll (CoreEmitBridge.Save).
+     */
+    private SaveAssemblyCore (entry_point : option [MethodInfo]) : void
+    {
+      def embeddedResources = add_resources_to_assembly_core ();
+      def outputPath = Path.GetFullPath (_OutputFileName);
+
+      try
+      {
+        CoreEmitBridge.Save (_assembly_builder, outputPath, entry_point.WithDefault (null),
+                             Manager.Options.TargetIsWinexe, embeddedResources,
+                             /* emitRuntimeConfig = */ true);
+      }
+      catch
+      {
+        | e is System.UnauthorizedAccessException =>
+          Message.Error ($"could not write to output file `$(this._OutputFileName)'"
+                         " -- `$(e.Message)'")
+
+        | e is IOException =>
+          Message.Error ($"could not write to output file `$(this._OutputFileName)'"
+                         " -- `$(e.Message)'")
+
+        | e is System.Reflection.TargetInvocationException =>
+          def inner = if (e.InnerException != null) e.InnerException.Message else e.Message;
+          Message.Error ($"could not save output file `$(this._OutputFileName)' -- `$inner'")
       }
     }
 
@@ -466,7 +639,14 @@ namespace Nemerle.Compiler
     private   mutable _assembly_name              : System.Reflection.AssemblyName;
     private   mutable _assembly_builder           : Emit.AssemblyBuilder;
     internal  mutable _module_builder             : Emit.ModuleBuilder;
+#if NET_4_0
     public    mutable _debug_emit                 : ISymbolWriter;
+#else
+    // dotnet-port WP-D: System.Diagnostics.SymbolStore.ISymbolWriter does not exist on
+    // CoreCLR; always null there (PDB emission is not yet wired for CoreCLR, see
+    // dotnet-port/11-emission-log.md).
+    public    mutable _debug_emit                 : object;
+#endif
     internal  mutable contains_nemerle_specifics  : bool = false;
 
     internal          _need_entry_point           : bool;
@@ -578,11 +758,30 @@ namespace Nemerle.Compiler
         when (extension_patterns.Count > 0)
           TyManager.contains_nemerle_specifics = true;
 
-        Manager.AttributeCompiler.GetPermissionSets(GlobalEnv, modifiers.custom_attrs)
-          .Iter(type_builder.AddDeclarativeSecurity);
+        unless (CoreEmitBridge.IsCoreClr)
+          ApplyTypeDeclarativeSecurityClr4 (type_builder);
 
         system_type = type_builder;
       }
+    }
+
+    /**
+     * CLR4-only: CoreCLR has no Code-Access-Security (TypeBuilder.AddDeclarativeSecurity
+     * doesn't exist there); isolated into its own method (rather than calling
+     * GetPermissionSets/AddDeclarativeSecurity directly from CreateEmitBuilder above, which
+     * is invoked for every type -- see 03-dotnet-runtime-facts.md / 00-PLAN.md) so that
+     * CreateEmitBuilder itself still JIT-compiles fine on CoreCLR.
+     */
+    private ApplyTypeDeclarativeSecurityClr4 (type_builder : Emit.TypeBuilder) : void
+    {
+#if NET_4_0
+      Manager.AttributeCompiler.GetPermissionSets(GlobalEnv, modifiers.custom_attrs)
+        .Iter(type_builder.AddDeclarativeSecurity);
+#else
+      // dotnet-port WP-D: TypeBuilder.AddDeclarativeSecurity does not exist on CoreCLR;
+      // dead code when this assembly is compiled for CoreCLR (see call site above).
+      ignore (type_builder);
+#endif
     }
 
     /**
@@ -805,8 +1004,10 @@ namespace Nemerle.Compiler
                                  "found, e.g. types $(exist.DeclaringType) and $(mb.DeclaringType)");
                   Message.Hint ("you can use -main TypeName switch to disambiguate selection");
                 | None =>
+#if NET_4_0
                   when (DeclaringType.TyManager._debug_emit != null)
                     DeclaringType.TyManager._debug_emit.SetUserEntryPoint (SymbolToken (1));
+#endif
                   emitter._entry_point = Some (mb : MethodInfo)
               }
           }
@@ -1044,8 +1245,8 @@ namespace Nemerle.Compiler
         fun_header.GetParamTypeRequiredModifiers(),
         fun_header.GetParamTypeOptionalModifiers());
         
-      Manager.AttributeCompiler.GetPermissionSets(Manager.CoreEnv, modifiers.custom_attrs)
-        .Iter((method_base :> SRE.MethodBuilder).AddDeclarativeSecurity);
+      unless (CoreEmitBridge.IsCoreClr)
+        ApplyMethodDeclarativeSecurityClr4 ();
 
       /* add the runtime modifiers for delegate methods */
       when (DeclaringType.IsDelegate) {
@@ -1105,8 +1306,8 @@ namespace Nemerle.Compiler
           fun_header.GetParamTypeRequiredModifiers (),
           fun_header.GetParamTypeOptionalModifiers ());
 
-      Manager.AttributeCompiler.GetPermissionSets(Manager.CoreEnv, modifiers.custom_attrs)
-        .Iter((method_base :> SRE.ConstructorBuilder).AddDeclarativeSecurity);
+      unless (CoreEmitBridge.IsCoreClr)
+        ApplyConstructorDeclarativeSecurityClr4 ();
 
       /* add the runtime modifiers for delegate constructors */
       when (DeclaringType.IsDelegate) {
@@ -1137,6 +1338,37 @@ namespace Nemerle.Compiler
         }
       }
       name_parms (1, GetParameters ());
+    }
+
+    /**
+     * CLR4-only: CoreCLR has no Code-Access-Security (MethodBuilder.AddDeclarativeSecurity
+     * doesn't exist there); isolated into its own method (see the identical reasoning at
+     * ApplyTypeDeclarativeSecurityClr4 above) so that CreateMethodBuilder itself -- invoked
+     * for every method -- still JIT-compiles fine on CoreCLR.
+     */
+    private ApplyMethodDeclarativeSecurityClr4 () : void
+    {
+#if NET_4_0
+      Manager.AttributeCompiler.GetPermissionSets(Manager.CoreEnv, modifiers.custom_attrs)
+        .Iter((method_base :> SRE.MethodBuilder).AddDeclarativeSecurity);
+#else
+      // dotnet-port WP-D: MethodBuilder.AddDeclarativeSecurity does not exist on CoreCLR;
+      // dead code when this assembly is compiled for CoreCLR (see call site above).
+      ()
+#endif
+    }
+
+    /** CLR4-only counterpart of ApplyMethodDeclarativeSecurityClr4 for constructors. */
+    private ApplyConstructorDeclarativeSecurityClr4 () : void
+    {
+#if NET_4_0
+      Manager.AttributeCompiler.GetPermissionSets(Manager.CoreEnv, modifiers.custom_attrs)
+        .Iter((method_base :> SRE.ConstructorBuilder).AddDeclarativeSecurity);
+#else
+      // dotnet-port WP-D: ConstructorBuilder.AddDeclarativeSecurity does not exist on
+      // CoreCLR; dead code when this assembly is compiled for CoreCLR (see call site above).
+      ()
+#endif
     }
 
     internal override Compile () : void
