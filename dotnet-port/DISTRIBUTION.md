@@ -38,9 +38,23 @@ dotnet-port\dist\ncc\
   Nemerle.dll / Nemerle.Compiler.dll / Nemerle.Macros.dll / Nemerle.CoreEmit.dll
   ncc.default.rsp            -- 標準参照セット(-no-stdlib -use-loaded-corlib
                                  -greedy-references:- + 実体分割アセンブリ + 自身の
-                                 Nemerle.dll への -ref:)
-  ncc.cmd                    -- 利便性ラッパー(後述)
+                                 Nemerle.dll への -ref:)。**絶対パスはマシン/設置場所固有**
+                                 (下記「再配置(relocation)」参照)
+  gen-default-rsp.ps1        -- ncc.default.rsp を現在の設置場所・ランタイムから再生成
+  ncc.cmd                    -- 利便性ラッパー(後述)。移動を検知して rsp を自動再生成
 ```
+
+> **再配置(relocation)について**: `ncc.default.rsp` の `-ref:` は絶対パスである必要がある
+> (ncc は `-ref:` の相対パスをカレントディレクトリ基準で解決するため、相対パスでは
+> 任意の場所から使えない)。そのため、このレイアウトを別マシン・別ディレクトリへコピーすると、
+> pack 時に焼き込まれた (a) 共有フレームワークのパス(`...\Microsoft.NETCore.App\10.0.9\` の
+> ようにバージョン番号込み)と (b) 自身の `Nemerle.dll` のパスが両方とも無効になる。
+> これを避けるため、同梱の `gen-default-rsp.ps1` が **自分の設置場所** と **その場の
+> インストール済みランタイム** から全絶対パスを再計算する。`ncc.cmd` は rsp 内の
+> `Nemerle.dll` パスが現在地を指していない(=移動された)ときにこれを自動実行するので、
+> **`ncc.cmd` 経由なら配布物はそのまま再配置可能**。`dotnet <dir>\ncc.dll -from-file:...`
+> の直接呼び出しパスを使う場合や、.NET ランタイムをアップグレードした場合は、
+> `gen-default-rsp.ps1` を一度手動実行して rsp を更新すること。
 
 ### 検証済みの事実
 

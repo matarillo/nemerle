@@ -22,7 +22,12 @@
 #     non-facade shared-framework split assemblies and to this layout's own Nemerle.dll --
 #     the exact "option (b)" reference recipe from 13-stage2-log.md/build-stage2-core.ps1,
 #     just aimed at compiling ordinary user programs instead of the compiler's own
-#     sources). Combine it with `-from-file:` at the FRONT of any invocation -- ncc's
+#     sources). These are ABSOLUTE paths specific to this machine/location (ncc resolves
+#     -ref: against the current directory, so relative paths won't do); gen-default-rsp.ps1
+#     -- shipped alongside -- recomputes them from the layout's own location + the installed
+#     runtime, and ncc.cmd runs it automatically whenever the folder has been copied/moved,
+#     so the distribution is relocatable. Combine it with `-from-file:` at the FRONT of any
+#     invocation -- ncc's
 #     `-from-file` is a Getopt `SubstitutionString` option (ncc\CompilationOptions.n /
 #     lib\getopt.n): it recursively parses the response file's contents in place and then
 #     resumes parsing the rest of the original command line, so
@@ -91,47 +96,45 @@ Copy-Item -Path (Join-Path $CompilerDir "ncc.runtimeconfig.json") -Destination $
 Copy-Item -Path (Join-Path $OutDir "ncc.exe") -Destination (Join-Path $OutDir "ncc.dll") -Force
 
 # ---------------------------------------------------------------------------
-# 2. Resolve the shared framework directory (same logic as build-stage2-core.ps1) and
-#    write ncc.default.rsp: the standard reference set for compiling ORDINARY user
-#    programs against this layout (as opposed to build-stage2-core.ps1's rsp files, which
-#    are for rebuilding the compiler's own 4 core projects and don't reference Nemerle.dll
-#    as a -ref: since they ARE Nemerle.dll/etc).
+# 2. Ship a self-contained, RELOCATABLE reference-set generator and run it once.
+#    ncc.default.rsp must use ABSOLUTE -ref: paths (ncc resolves -ref: against the current
+#    working directory, which is unknown at compile time, so relative paths won't do), but
+#    baking THIS machine's paths in at pack time makes the layout non-portable: both the
+#    shared-framework path (versioned, e.g. ...\Microsoft.NETCore.App\10.0.9\) and this
+#    layout's own Nemerle.dll path would be wrong on any other machine or install location.
+#    So instead we write gen-default-rsp.ps1 INTO the layout; it recomputes every absolute
+#    path from its own directory (Nemerle.dll) + the target machine's installed runtime (the
+#    BCL split assemblies), and ncc.cmd runs it whenever the layout has moved (see section 3).
+#    We invoke it once here so the freshly-packed layout is immediately usable on this machine.
 # ---------------------------------------------------------------------------
-$runtimes = & dotnet --list-runtimes | Where-Object { $_ -match '^Microsoft\.NETCore\.App (\S+) \[(.+)\]$' }
-$netCoreRuntimes = $runtimes | ForEach-Object {
-    if ($_ -match '^Microsoft\.NETCore\.App (\S+) \[(.+)\]$') {
-        [PSCustomObject]@{ Version = [version]$Matches[1]; Dir = $Matches[2] }
+$GenPath = Join-Path $OutDir "gen-default-rsp.ps1"
+$genScript = @'
+# Regenerates ncc.default.rsp for THIS layout, on the CURRENT machine. Relocatable: every
+# -ref: path is resolved at run time from this script's own directory (for Nemerle.dll) and
+# the installed shared framework (for the BCL split assemblies), so the distribution works
+# wherever it is copied. Re-run this (or just use ncc.cmd, which runs it automatically after
+# a move) if you relocate the folder or upgrade the .NET runtime.
+$ErrorActionPreference = "Stop"
+$Here = $PSScriptRoot
+$netCore =
+  foreach ($line in (& dotnet --list-runtimes)) {
+    if ($line -match '^Microsoft\.NETCore\.App (\S+) \[(.+)\]$') {
+      [PSCustomObject]@{ Version = [version]$Matches[1]; Dir = $Matches[2] }
     }
-} | Sort-Object Version -Descending
-$best = $netCoreRuntimes | Where-Object { $_.Version.Major -eq 10 } | Select-Object -First 1
-if ($null -eq $best) { $best = $netCoreRuntimes | Select-Object -First 1 }
-if ($null -eq $best) { throw "Could not resolve a Microsoft.NETCore.App shared framework via 'dotnet --list-runtimes'" }
+  }
+$netCore = $netCore | Sort-Object Version -Descending
+$best = $netCore | Where-Object { $_.Version.Major -eq 10 } | Select-Object -First 1
+if (-not $best) { $best = $netCore | Select-Object -First 1 }
+if (-not $best) { throw "No Microsoft.NETCore.App runtime found via 'dotnet --list-runtimes'" }
 $FW = Join-Path $best.Dir $best.Version.ToString()
-Write-Host "Using shared framework: $FW"
-
-function FwRef([string]$name) { Join-Path $FW $name }
-
-# Same "real, non-facade split assembly" set as build-stage2-core.ps1's $CoreRefs, i.e.
-# the assemblies confirmed (13-stage2-log.md section 1) to have non-empty
-# GetExportedTypes() via Assembly.LoadFrom, covering the common BCL surface ordinary
-# Nemerle programs are likely to touch (collections, console I/O, LINQ, XML, crypto, ADO
-# interfaces, process, URI).
+# Real, non-facade split assemblies (13-stage2-log.md section 1: non-empty GetExportedTypes()
+# via Assembly.LoadFrom) covering the common BCL surface ordinary Nemerle programs touch.
 $CoreRefs = @(
-    "System.Collections.dll",
-    "System.Console.dll",
-    "System.Collections.Specialized.dll",
-    "System.Linq.dll",
-    "System.Diagnostics.Process.dll",
-    "System.Private.Uri.dll",
-    "System.Diagnostics.TraceSource.dll",
-    "System.Security.Cryptography.dll",
-    "System.Private.Xml.dll",
-    "System.Private.Xml.Linq.dll",
-    "System.Data.Common.dll"
-) | ForEach-Object { FwRef $_ }
-
-$RspPath = Join-Path $OutDir "ncc.default.rsp"
-function Q([string]$v) { '"' + $v + '"' }
+  "System.Collections.dll", "System.Console.dll", "System.Collections.Specialized.dll",
+  "System.Linq.dll", "System.Diagnostics.Process.dll", "System.Private.Uri.dll",
+  "System.Diagnostics.TraceSource.dll", "System.Security.Cryptography.dll",
+  "System.Private.Xml.dll", "System.Private.Xml.Linq.dll", "System.Data.Common.dll"
+)
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("-no-color")
 $lines.Add("-no-stdlib")
@@ -139,9 +142,16 @@ $lines.Add("-greedy-references:-")
 $lines.Add("-use-loaded-corlib")
 $lines.Add("-ref:mscorlib")
 $lines.Add("-ref:System")
-foreach ($r in $CoreRefs) { $lines.Add("-ref:$(Q $r)") }
-$lines.Add("-ref:$(Q (Join-Path $OutDir 'Nemerle.dll'))")
-Set-Content -Path $RspPath -Value $lines -Encoding utf8
+foreach ($r in $CoreRefs) { $lines.Add('-ref:"' + (Join-Path $FW $r) + '"') }
+$lines.Add('-ref:"' + (Join-Path $Here 'Nemerle.dll') + '"')
+Set-Content -Path (Join-Path $Here 'ncc.default.rsp') -Value $lines -Encoding utf8
+'@
+Set-Content -Path $GenPath -Value $genScript -Encoding utf8
+Write-Host "Wrote $GenPath"
+
+# Produce the initial ncc.default.rsp for immediate use on THIS machine.
+& $GenPath
+$RspPath = Join-Path $OutDir "ncc.default.rsp"
 Write-Host "Wrote $RspPath"
 
 # ---------------------------------------------------------------------------
@@ -155,11 +165,19 @@ Write-Host "Wrote $RspPath"
 $WrapperPath = Join-Path $OutDir "ncc.cmd"
 $wrapperContent = @"
 @echo off
-rem Convenience wrapper generated by dotnet-port\pack-tool.ps1 -- runs this directory's
+rem Convenience wrapper generated by dotnet-port\pack-tool.ps1. Runs this directory's
 rem ncc.dll with the standard reference set (ncc.default.rsp) pre-pended, then copies
 rem Nemerle*.dll into the current directory on success (see pack-tool.ps1 header for why).
+rem ncc.default.rsp holds ABSOLUTE -ref: paths, so if this folder was copied/moved (or was
+rem never packed on this machine) they are stale; we regenerate it via gen-default-rsp.ps1
+rem whenever its baked Nemerle.dll path no longer points at THIS folder.
 setlocal
 set "HERE=%~dp0"
+where pwsh >nul 2>&1 && (set "PS=pwsh") || (set "PS=powershell")
+set "NEED_GEN="
+if not exist "%HERE%ncc.default.rsp" set "NEED_GEN=1"
+if not defined NEED_GEN findstr /C:"%HERE%Nemerle.dll" "%HERE%ncc.default.rsp" >nul 2>&1 || set "NEED_GEN=1"
+if defined NEED_GEN "%PS%" -NoProfile -ExecutionPolicy Bypass -File "%HERE%gen-default-rsp.ps1" >nul || echo [ncc] warning: failed to regenerate ncc.default.rsp 1>&2
 dotnet "%HERE%ncc.dll" "-from-file:%HERE%ncc.default.rsp" %*
 set "EXITCODE=%ERRORLEVEL%"
 if "%EXITCODE%"=="0" copy /y "%HERE%Nemerle*.dll" . >nul 2>&1
