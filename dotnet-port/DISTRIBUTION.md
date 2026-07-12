@@ -11,6 +11,17 @@
 - タスク2: `dotnet tool` 化 PoC(`Nemerle.Tool`) — **PoC 成功**(制約付き)
 - タスク3: SDK スタイル MSBuild 統合 PoC(`msbuild\Nemerle.Core.targets`) — **PoC 成功**(制約付き)
 
+> **更新 (2026-07-13, WP-A2 — dotnet ネイティブ化レベル A)**: 本ドキュメント中の
+> 「毎回長い `-ref:` 列 / `ncc.default.rsp` が必要」という前提は**もう当てはまらない**。
+> `ncc\passes.n` に CoreCLR 用のデフォルト参照自動解決(`LoadCoreStdlibReferences`)を実装し、
+> `dotnet ncc.dll hello.n` が rsp なしで動くようになった(コミット 56964d879)。
+> さらに `Nemerle.Core.targets` は (a) `-from-file:ncc.default.rsp` を撤廃、(b) `@(ReferencePath)`
+> を `-ref:` として配線(フレームワーク ref パック facade は `%(FrameworkReferenceName)` で除外)
+> したので、`ProjectReference`/`PackageReference` を持つ `.nproj` も `dotnet build` できる
+> (コミット ee2ae06f3、`samples\RefDemo` で実証)。以下の「制約」節のうち rsp 依存・参照未配線に
+> 関する記述はこの2コミットで解消済み。`pack-tool.ps1` の rsp/cmd/gen-default-rsp 生成は
+> now 任意(レガシー)で、整理は未実施。
+
 ---
 
 ## 1. `dotnet ncc` 配布レイアウト — `dotnet-port\pack-tool.ps1`
@@ -316,10 +327,9 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 
 ## 推奨される次ステップ
 
-1. `Nemerle.Core.targets` に `@(ReferencePath)`(ProjectReference/
-   PackageReference 解決結果)を `-ref:` として渡す配線を追加し、複数
-   プロジェクト間の依存を伴う実用的な Nemerle ソリューションをビルド
-   できるようにする。
+1. ~~`Nemerle.Core.targets` に `@(ReferencePath)` を `-ref:` として渡す配線~~
+   → **完了 (ee2ae06f3)**。`samples\RefDemo` で ProjectReference を実証。
+   PackageReference は同じ `@(ReferencePath)` 経路だが未実測。
 2. `dotnet tool` PoC のシムをプロセス起動方式から
    `Nemerle.Compiler.dll` の直接呼び出し(コンパイラー API 呼び出し)に
    置き換え、起動オーバーヘッドを削減する。
