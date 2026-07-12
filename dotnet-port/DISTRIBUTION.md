@@ -152,13 +152,16 @@ Nemerle*.dll` を出力先へコピーするだけ)。
 不要な既製バイナリの再パッケージ用)を新設:
 
 - 実体は**小さな C# シム**(`Program.cs`)。`AppContext.BaseDirectory` から
-  同梱された `ncc.dll`/`ncc.default.rsp` を見つけ、`Process.Start` で
-  `dotnet <dir>\ncc.dll -from-file:<dir>\ncc.default.rsp <転送引数>` を起動する。
+  同梱された `ncc.dll` を見つけ、`Process.Start` で
+  `dotnet <dir>\ncc.dll <転送引数>` を起動する。
   **`ProcessStartInfo.ArgumentList` で引数を渡すため、シェル/PowerShell 側の
   再トークン化を一切経由しない**(1.節の `.cmd` と同じ問題を回避する、より
   堅牢な方式)。
+  > **更新 (0.2.0-poc1)**: auto-ref 化(`ncc\passes.n` の `LoadCoreStdlibReferences`)により
+  > **シムは `-from-file:ncc.default.rsp` を前置しなくなった**。素の `ncc.dll hello.n` が
+  > rsp なしでコンパイルできるため。`ncc.default.rsp` は .nupkg にも同梱しない。
 - `dotnet-port\pack-tool.ps1` が組み立てた `dotnet-port\dist\ncc\` の
-  `Nemerle*.dll`/`ncc.dll`/`ncc.runtimeconfig.json`/`ncc.default.rsp` を
+  `Nemerle*.dll`/`ncc.dll`/`ncc.runtimeconfig.json` を
   `<None Pack="true" PackagePath="tools\net10.0\any\">` として **.nupkg の
   tool content として同梱**(コンパイルはしない、ただの再パッケージ)。
 - `PackageId=Nemerle.Ncc.DevTool`、`ToolCommandName=nemerle-ncc`
@@ -172,7 +175,9 @@ pwsh dotnet-port\pack-tool.ps1
 dotnet pack -c Release dotnet-port\Nemerle.Tool\Nemerle.Tool.csproj -o dotnet-port\dist\nupkg
 
 # 2. ローカルフィードからグローバルツールとしてインストール
-dotnet tool install --global --add-source dotnet-port\dist\nupkg Nemerle.Ncc.DevTool --version 0.1.0-poc1
+#    (再パックのたびに csproj の <Version> を上げること: NuGet は (id,version) を
+#     内容ごとキャッシュするため、同版で内容だけ差し替えると古いビットが使われる)
+dotnet tool install --global --add-source dotnet-port\dist\nupkg Nemerle.Ncc.DevTool --version 0.2.0-poc1
 
 # 3. 任意のディレクトリから使う
 nemerle-ncc -out:hello.exe hello.n

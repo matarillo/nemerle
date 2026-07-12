@@ -30,8 +30,11 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>nemerle-ncc</ToolCommandName>
     <PackageId>Nemerle.Ncc.DevTool</PackageId>
-    <!-- Dev/PoC version, not intended for nuget.org publication. -->
-    <Version>0.1.0-poc1</Version>
+    <!-- Dev/PoC version, not intended for nuget.org publication. Bump on every re-pack:
+         NuGet caches an (id, version) by content, so reusing a version ships stale bits.
+         poc2: rsp-free (ncc auto-resolves references; shim no longer prepends
+         -from-file:ncc.default.rsp), built from the auto-ref compiler. -->
+    <Version>0.2.0-poc1</Version>
     <Authors>Nemerle dotnet-port WP-I2 PoC</Authors>
     <Description>PoC: pre-built "dotnet ncc" core-flavor compiler repackaged as a dotnet tool shim. See dotnet-port/DISTRIBUTION.md.</Description>
 
@@ -46,10 +49,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Bundle the pre-built compiler + stdlib + default reference rsp as tool content,
-         landing next to the shim's own Nemerle.Tool.dll inside tools\<tfm>\any\ so
-         AppContext.BaseDirectory finds them at run time. -->
-    <None Include="$(NccLayoutDir)Nemerle.dll;$(NccLayoutDir)Nemerle.Compiler.dll;$(NccLayoutDir)Nemerle.Macros.dll;$(NccLayoutDir)Nemerle.CoreEmit.dll;$(NccLayoutDir)ncc.dll;$(NccLayoutDir)ncc.runtimeconfig.json;$(NccLayoutDir)ncc.default.rsp"
+    <!-- Bundle the pre-built compiler + stdlib as tool content, landing next to the shim's
+         own Nemerle.Tool.dll inside tools\<tfm>\any\ so AppContext.BaseDirectory finds them
+         at run time. ncc.default.rsp is intentionally NOT bundled: ncc auto-resolves the
+         standard reference set on CoreCLR, so the response file is no longer needed. -->
+    <None Include="$(NccLayoutDir)Nemerle.dll;$(NccLayoutDir)Nemerle.Compiler.dll;$(NccLayoutDir)Nemerle.Macros.dll;$(NccLayoutDir)Nemerle.CoreEmit.dll;$(NccLayoutDir)ncc.dll;$(NccLayoutDir)ncc.runtimeconfig.json"
           Pack="true" PackagePath="tools\$(TargetFramework)\any\" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 

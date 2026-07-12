@@ -1,16 +1,18 @@
 // WP-I2 (task 2) dotnet-tool PoC shim. See Nemerle.Tool.csproj for why this exists: a
 // `dotnet tool`'s entry point must be the assembly the packaging csproj itself builds, so
 // this tiny program's only job is to re-invoke the bundled, pre-built `ncc.dll` (packed
-// alongside this shim under tools\<tfm>\any\) with the standard reference rsp
-// (ncc.default.rsp, produced by dotnet-port\pack-tool.ps1) pre-pended, forwarding the
-// user's original arguments byte-for-byte via ProcessStartInfo.ArgumentList (no shell or
-// PowerShell re-tokenization of ncc's `-name:value` switches -- see pack-tool.ps1's header
-// comment for why a naive text-based wrapper is fragile for this exact CLI shape).
+// alongside this shim under tools\<tfm>\any\), forwarding the user's original arguments
+// byte-for-byte via ProcessStartInfo.ArgumentList (no shell or PowerShell re-tokenization
+// of ncc's `-name:value` switches -- see pack-tool.ps1's header comment for why a naive
+// text-based wrapper is fragile for this exact CLI shape).
+//
+// No -from-file:ncc.default.rsp is prepended any more: ncc auto-resolves the standard
+// reference set on CoreCLR (LoadCoreStdlibReferences in ncc\passes.n), so a bare
+// `ncc.dll hello.n` compiles with no response file.
 using System.Diagnostics;
 
 var here = AppContext.BaseDirectory;
 var nccDll = Path.Combine(here, "ncc.dll");
-var rsp = Path.Combine(here, "ncc.default.rsp");
 
 if (!File.Exists(nccDll))
 {
@@ -24,7 +26,6 @@ var psi = new ProcessStartInfo
     UseShellExecute = false,
 };
 psi.ArgumentList.Add(nccDll);
-psi.ArgumentList.Add($"-from-file:{rsp}");
 foreach (var a in args)
     psi.ArgumentList.Add(a);
 
