@@ -166,6 +166,17 @@ namespace Nemerle.Compiler
     [Nemerle.Memoize(Scope=Instance, Synchronized=true)]
     private DefineDebugDocument (fileIndex : int) : ISymbolDocumentWriter
     {
+      // dotnet-port WP-E: runtime dispatch, same isolation pattern as the other
+      // CLR4/CoreCLR dual paths (see 11-emission-log.md).
+      if (CoreEmitBridge.IsCoreClr)
+        DefineDebugDocumentCore (fileIndex)
+      else
+        DefineDebugDocumentClr4 (fileIndex)
+    }
+
+    /** CLR4-only: verbatim pre-WP-E body of DefineDebugDocument. */
+    private DefineDebugDocumentClr4 (fileIndex : int) : ISymbolDocumentWriter
+    {
 #if NET_4_0
       if (fileIndex != 0) // not Location.Default
         _module_builder.DefineDocument (Path.GetFullPath (Location.GetFileName(fileIndex)),
@@ -179,14 +190,63 @@ namespace Nemerle.Compiler
           _debug_doc;
       }
 #else
-      // dotnet-port WP-D: System.Diagnostics.SymbolStore.SymDocumentType/SymLanguageType/
-      // SymLanguageVendor do not exist on CoreCLR (ISymbolDocumentWriter itself does, via
-      // ModuleBuilder.DefineDocument(url, Guid) -- see 03-dotnet-runtime-facts.md fact 4 --
-      // but wiring that up is out of scope here). -debug is warn-and-skipped on CoreCLR in
-      // HierarchyEmitter.CreateModuleCore, so this is not reachable at run time there.
+      // dotnet-port WP-E: dead code when this assembly is compiled for CoreCLR (the
+      // dispatcher above never calls this there); guarded out so the core-flavor
+      // build does not have to type-check the legacy SymbolStore guid holders.
       ignore (fileIndex);
-      null
+      Util.ice ("DefineDebugDocumentClr4 must never be called on CoreCLR")
 #endif
+    }
+
+    /**
+     * CoreCLR-only. Two differences from the CLR4 path:
+     *  - documents are cached per module (TypesManager._core_debug_documents):
+     *    CoreCLR's persisted ModuleBuilder.DefineDocument adds a new document row on
+     *    every call (the legacy CLR4 ISymbolWriter deduped by URL internally), and
+     *    this method runs once per ILEmitter instance, i.e. once per method;
+     *  - when this source is compiled as core flavor (NET_4_0 undefined), the legacy
+     *    4-arg DefineDocument call cannot be type-checked (the SymDocumentType/
+     *    SymLanguageType/SymLanguageVendor guid holders live in
+     *    System.Diagnostics.StackTrace.dll, outside the stage2 reference set), so the
+     *    2-arg overload (in-box since .NET 9) is used with the same language guid
+     *    value the 4-arg call effectively passes.
+     */
+    private DefineDebugDocumentCore (fileIndex : int) : ISymbolDocumentWriter
+    {
+      if (fileIndex != 0) // not Location.Default
+      {
+        def cache = _parent_type_builder.TyManager._core_debug_documents;
+        match (cache.Get (fileIndex))
+        {
+          | Some (doc) => doc
+          | None =>
+            def url = Path.GetFullPath (Location.GetFileName (fileIndex));
+#if NET_4_0
+            // stage1 flavor (net4 binary) running on CoreCLR: the 4-arg overload also
+            // exists there and the Sym* guid holders resolve at run time through the
+            // mscorlib facade (forwarded to System.Diagnostics.StackTrace.dll) --
+            // verified on .NET 10, see dotnet-port/14-pdb-log.md.
+            def doc = _module_builder.DefineDocument (url,
+              SymDocumentType.Text, SymLanguageType.ILAssembly, SymLanguageVendor.Microsoft);
+#else
+            // NB: SymDocumentType.Text as the *language* reproduces what the CLR4 path
+            // has always (accidentally, but harmlessly) passed in the language position,
+            // keeping stage1-on-CoreCLR and stage2+ PDB output identical.
+            def doc = _module_builder.DefineDocument (url,
+              Guid ("5a869d0b-6611-11d3-bd2a-0000f80849bd") /* == SymDocumentType.Text */);
+#endif
+            cache [fileIndex] = doc;
+            doc
+        }
+      }
+      else {
+        Message.Warning ("missing debug location, this is probably some internal compiler error");
+        def loc = LocationStack.Top();
+        if (loc != Location.Default)
+          DefineDebugDocument (loc.FileIndex);
+        else
+          _debug_doc;
+      }
     }
 
     public SetDocument (loc : Location) : void

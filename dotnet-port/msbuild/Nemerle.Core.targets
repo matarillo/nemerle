@@ -1,0 +1,105 @@
+<Project>
+  <!--
+    WP-I2 (task 3) PoC: lets an ordinary SDK-style project (`<Project Sdk="Microsoft.NET.Sdk">`)
+    compile Nemerle (.n) sources via the dotnet-hosted `ncc.dll` (dotnet-port\dist\ncc,
+    produced by dotnet-port\pack-tool.ps1), driven by plain `dotnet build`.
+
+    Consuming project shape (see dotnet-port\samples\HelloCore\HelloCore.nproj):
+      Project Sdk="Microsoft.NET.Sdk"
+        PropertyGroup
+          OutputType: Exe
+          TargetFramework: net10.0
+          EnableDefaultCompileItems: false   (Nemerle .n sources are NOT C#; keep the
+                                              SDK's own **/*.cs globbing out of the
+                                              picture entirely)
+          UseAppHost: false                  (ncc emits a managed PE directly runnable
+                                              via "dotnet <dll>", verified in
+                                              pack-tool.ps1; no native apphost needed)
+          GenerateDependencyFile: false      (no PackageReference/ProjectReference
+                                              graph to describe)
+        ItemGroup
+          NemerleCompile Include="*.n"
+        Import Project="...\Nemerle.Core.targets"
+
+    Design: this does NOT try to be a full MSBuild-task port of the legacy Ncc ToolTask
+    (tools\msbuild-task\MSBuildTask.cs: out-of-proc ManagedCompiler subclass, ~40 lines of
+    switch emission, one option/arg per response-file line; see
+    dotnet-port\02-build-flow.md section 3). That class derives from
+    Microsoft.Build.Tasks.ManagedCompiler, which does not exist in
+    Microsoft.Build.Tasks.Core on modern/SDK-style MSBuild (section 6, point 2 of that
+    doc); porting it for real is its own work package. Instead, this PoC overrides the
+    single well-known MSBuild extension point real compilers hook (`CoreCompile`, called
+    by the SDK's own `Compile`/`Build` chain: exactly what the legacy Ncc task did by
+    overriding `CoreCompile` via `<UsingTask TaskName="...Ncc">` + retargeted
+    `Microsoft.Common.targets`) with a plain `<Exec>` of `dotnet ncc.dll @(NemerleCompile)`,
+    equivalent in spirit but implemented as a handful of MSBuild XML lines instead of a
+    compiled ToolTask. `@(IntermediateAssembly)` (the exact output path csc/fsc/vbc's own
+    CoreCompile would have produced) is reused verbatim so every downstream SDK target
+    (CopyFilesToOutputDirectory, GenerateBuildRuntimeConfigurationFiles, Clean, etc.) keeps
+    working unmodified.
+  -->
+
+  <PropertyGroup>
+    <!-- Where dotnet-port\pack-tool.ps1 wrote the runnable "dotnet ncc" layout
+         (ncc.dll + ncc.default.rsp + Nemerle*.dll). Override with -p:NccLayoutDir=... -->
+    <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)..\dist\ncc\</NccLayoutDir>
+    <NccDll>$(NccLayoutDir)ncc.dll</NccDll>
+    <NccDefaultRsp>$(NccLayoutDir)ncc.default.rsp</NccDefaultRsp>
+    <!-- "exe" or "library": mirrors ncc's own -target: values, defaulted from OutputType
+         the same way Nemerle.MSBuild.targets/the legacy .nproj files do. -->
+    <NemerleTargetType Condition="'$(NemerleTargetType)' == '' AND '$(OutputType)' == 'Exe'">exe</NemerleTargetType>
+    <NemerleTargetType Condition="'$(NemerleTargetType)' == ''">library</NemerleTargetType>
+    <!-- The SDK's "ref assembly" optimization (ProduceReferenceAssembly, on by default)
+         expects CoreCompile to additionally emit a stripped-down reference assembly under
+         obj\...\refint\; that is a Roslyn (/refout:)-specific feature ncc has no
+         equivalent of, so turn it off for Nemerle.Core.targets-based projects. -->
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+
+  <Target Name="NemerleEnsureLayout" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(NccDll)')"
+           Text="NccLayoutDir ($(NccLayoutDir)) does not contain ncc.dll: run dotnet-port\pack-tool.ps1 first (or pass -p:NccLayoutDir=&lt;path&gt;)." />
+    <Error Condition="'@(NemerleCompile)' == ''"
+           Text="No @(NemerleCompile) items -- add &lt;NemerleCompile Include=&quot;*.n&quot; /&gt; (or similar) to the project." />
+  </Target>
+
+  <!-- Using a non-".csproj" project extension (".nproj") deliberately: the .NET SDK
+       selects its language-specific target set (Microsoft.CSharp.CurrentVersion.targets
+       etc.) from $(MSBuildProjectExtension), and that set is imported by the SDK's own
+       implicit trailing "Sdk.targets" import, i.e. AFTER any explicit <Import> a project
+       body writes, so a ".csproj"-named project always has ITS csc-based CoreCompile
+       win over ours (last same-named target definition wins in MSBuild), no matter where
+       we import from. ".nproj" sidesteps the conflict entirely (no competing CoreCompile
+       is ever imported) at the cost of losing a couple of small pieces of infrastructure
+       that are normally supplied by the language-specific targets; CreateManifestResourceNames
+       is the one this PoC has needed to stub out so far (called unconditionally from the
+       SDK's own Compile chain; harmless no-op here since no <EmbeddedResource> items are
+       used by NemerleCompile-based projects). -->
+  <Target Name="CreateManifestResourceNames" Condition="'$(MSBuildProjectExtension)' != '.csproj'" />
+
+  <!-- Overrides the SDK's built-in CoreCompile (normally Csc). @(IntermediateAssembly) is
+       already computed by the common targets imported ahead of this file (Sdk.targets), to
+       the same path csc would have written; reusing it verbatim keeps every downstream
+       target (copy-to-output, runtimeconfig/deps generation, Clean, incremental up-to-date
+       checks via Inputs/Outputs below) working exactly as the SDK expects. -->
+  <Target Name="CoreCompile"
+          Inputs="@(NemerleCompile);$(NccDll);$(NccDefaultRsp)"
+          Outputs="@(IntermediateAssembly)">
+    <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
+    <Exec Command="dotnet &quot;$(NccDll)&quot; -from-file:&quot;$(NccDefaultRsp)&quot; -target:$(NemerleTargetType) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
+  <!-- Ordinary Nemerle programs reference Nemerle.dll (and, if they use macros at their own
+       call sites, Nemerle.Macros.dll/Nemerle.Compiler.dll) at RUN time; .NET's assembly
+       probing only looks beside the entry assembly / in the shared framework (no GAC),
+       see pack-tool.ps1's header comment / 18-testsuite-log.md section 3b for the same gap
+       in the test harness. Copy them into the build output next to the produced assembly. -->
+  <Target Name="NemerleCopyRuntimeAssemblies" AfterTargets="Build">
+    <ItemGroup>
+      <_NemerleRuntimeDlls Include="$(NccLayoutDir)Nemerle.dll;$(NccLayoutDir)Nemerle.Compiler.dll;$(NccLayoutDir)Nemerle.Macros.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_NemerleRuntimeDlls)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

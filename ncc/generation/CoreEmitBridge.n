@@ -57,6 +57,9 @@ namespace Nemerle.Compiler
     private mutable create_builder_mi     : MethodInfo;
     private mutable create_run_builder_mi : MethodInfo;
     private mutable save_mi               : MethodInfo;
+    private mutable attr_blob_type        : System.Type;
+    private mutable create_attr_mi        : MethodInfo;
+    private mutable set_asm_attr_mi       : MethodInfo;
 
     private EnsureLoaded () : void
     {
@@ -73,6 +76,9 @@ namespace Nemerle.Compiler
         create_builder_mi      = helper_type.GetMethod ("CreateBuilder");
         create_run_builder_mi  = helper_type.GetMethod ("CreateRunBuilder");
         save_mi                = helper_type.GetMethod ("Save");
+        attr_blob_type         = asm.GetType ("Nemerle.CoreEmit.AttributeBlob", true);
+        create_attr_mi         = attr_blob_type.GetMethod ("Create");
+        set_asm_attr_mi        = helper_type.GetMethod ("SetAssemblyCustomAttribute");
       }
     }
 
@@ -92,12 +98,54 @@ namespace Nemerle.Compiler
     }
 
     /** Saves a builder created by CreateBuilder to disk (GenerateMetadata + ManagedPEBuilder
-        recipe); see Nemerle.CoreEmit.Emitter.Save for the exact contract. */
+        recipe); see Nemerle.CoreEmit.Emitter.Save for the exact contract. When emitDebug is
+        true, a standalone Portable PDB is written next to outputPath and referenced from
+        the PE's debug directory (ncc -debug). win32ResourceFile (ncc -win32-resource), when
+        non-null, is converted from RES to a .rsrc PE section by
+        Nemerle.CoreEmit.ResFileResourceSection. linkedResources ("name|absoluteFilePath"
+        pairs, ncc -linkres) are written as File+ManifestResource metadata rows -- see
+        Emitter.Save's doc comment for the CoreCLR GetManifestResourceInfo caveat. */
     public Save (ab : System.Reflection.Emit.AssemblyBuilder, outputPath : string, entryPoint : MethodInfo,
-                 isWinexe : bool, embeddedResources : array [string], emitRuntimeConfig : bool) : void
+                 isWinexe : bool, embeddedResources : array [string], emitRuntimeConfig : bool,
+                 emitDebug : bool, win32ResourceFile : string, linkedResources : array [string]) : void
     {
       EnsureLoaded ();
-      _ = save_mi.Invoke (null, array [ab : object, outputPath, entryPoint, isWinexe, embeddedResources, emitRuntimeConfig]);
+      _ = save_mi.Invoke (null, array [ab : object, outputPath, entryPoint, isWinexe, embeddedResources, emitRuntimeConfig, emitDebug, win32ResourceFile, linkedResources]);
+    }
+
+    /** CoreCLR-only: builds a CustomAttributeBuilder that tolerates locally-defined
+        (still-being-compiled TypeBuilder) enum types among the attribute's constructor
+        argument / named property / named field types. The persisted TypeBuilderImpl lacks
+        the enum special case in UnderlyingSystemType that both net4 TypeBuilder and
+        CoreCLR's own RuntimeTypeBuilder have, so the public CustomAttributeBuilder
+        constructor throws ArgumentException("Constant does not match the defined type.")
+        for any such attribute usage (see dotnet-port\15-attributes01-diagnosis.md). Falls
+        back to the normal validated constructor when no local enum is involved. */
+    public CreateAttributeBuilder (ctor : ConstructorInfo, ctorArgs : array [object],
+                                    props : array [PropertyInfo], propVals : array [object],
+                                    fields : array [FieldInfo], fieldVals : array [object])
+        : System.Reflection.Emit.CustomAttributeBuilder
+    {
+      EnsureLoaded ();
+      create_attr_mi.Invoke (null, array [ctor : object, ctorArgs, props, propVals, fields, fieldVals])
+        :> System.Reflection.Emit.CustomAttributeBuilder
+    }
+
+    /** CoreCLR-only: applies an assembly-level custom attribute, routing around a
+        PersistedAssemblyBuilder bug where AssemblyBuilder.SetCustomAttribute corrupts the
+        saved PE when the attribute's constructor belongs to a TypeBuilder defined in the
+        same assembly (verified independently of Nemerle -- see
+        dotnet-port\17-resources-fixes-log.md and Nemerle.CoreEmit.Emitter.
+        SetAssemblyCustomAttribute's doc comment). Attributes whose constructor is external
+        (already-compiled) are applied immediately as before; local-constructor ones are
+        deferred and flushed by Nemerle.CoreEmit.Emitter.Save after GenerateMetadata(). Use
+        this instead of calling `ab.SetCustomAttribute` directly for every assembly-level
+        attribute on the CoreCLR path. */
+    public SetAssemblyCustomAttribute (ab : System.Reflection.Emit.AssemblyBuilder,
+                                        attr : System.Reflection.Emit.CustomAttributeBuilder) : void
+    {
+      EnsureLoaded ();
+      _ = set_asm_attr_mi.Invoke (null, array [ab : object, attr]);
     }
 
     // NOTE: public-key-from-.snk extraction (formerly GetPublicKeyFromSnk here, invoked

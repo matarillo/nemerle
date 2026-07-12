@@ -1,0 +1,14 @@
+using Nemerle.IO;
+using Nemerle.Collections;
+
+class M
+{
+  static Main () : void
+  {
+    printf ("Hello from HelloCore (SDK-style dotnet build)!\n");
+    def xs = [1, 2, 3];
+    def ys = xs.Map (x => x * 2);
+    foreach (y in ys) printf ("%d ", y);
+    printf ("\n")
+  }
+}

@@ -41,11 +41,20 @@
 #     CoreCLR, so they are now also guarded out of compilation entirely with
 #     `#if NET_4_0 ... #else <dead-code stub> #endif` (stage2 rsp files below do NOT
 #     define NET_4_0). See dotnet-port\13-stage2-log.md for the exact list of methods.
-#   - -debug/-linkres/Win32 -res are still not supported when the compiler itself runs on
+#   - -linkres/Win32 -res are still not supported when the compiler itself runs on
 #     CoreCLR (known gap carried over from WP-B/WP-C) -- stage2 rsp files below do not
-#     pass -debug or -res/-linkres. /doc: is NOT passed either: it was dropped opportunistically
-#     to keep the rsp files minimal and closer to the ncc.nproj (Release) set; it is not
-#     known to be broken, just untested here -- left as a documented gap, not a finding.
+#     pass -res/-linkres. -debug IS supported on CoreCLR since WP-E (Portable PDB, see
+#     dotnet-port\14-pdb-log.md) but is not passed here either, to keep the stage2
+#     output minimal/deterministic-ish. /doc: is NOT passed: it was dropped
+#     opportunistically to keep the rsp files minimal and closer to the ncc.nproj
+#     (Release) set; it is not known to be broken, just untested here -- a documented
+#     gap, not a finding.
+#   - NB (WP-E finding): assembly versions come from `git describe` (commits since the
+#     last tag), so the -Compiler's own Nemerle.dll must have been built from the same
+#     commit as HEAD -- otherwise loading the freshly built Stage2\Nemerle.dll (newer
+#     version, same simple name) into the compiler process fails with a ref-def
+#     mismatch FileLoadException. If that happens, force a full Stage1 rebuild first
+#     (touch lib/macros/ncc AssemblyInfo.n).
 
 param(
     [string]$Configuration = "Release",

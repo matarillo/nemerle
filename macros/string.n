@@ -146,7 +146,31 @@ namespace StringTemplate
         {
           def mods               = method.modifiers;
           def attrs              = mods.Attributes;
-          def newMods            = AttributesAndModifiers(Public | (attrs & (Virtual | Override | Abstract)), //Protected
+          // dotnet-port WP-J: the `__StImpl` companion method always gets a real
+          // (if often later-replaced) `{ }` body from `newMethodAst` below -- even
+          // when the original method (`method`) is abstract, since abstract methods
+          // are deliberately included in `members2` above (`testAbstract(m) ||  ...`).
+          // Copying the `Abstract` modifier onto it here is simply wrong: it produces
+          // a method that is marked `Abstract` at the CLR level while still carrying
+          // a concrete IL body request. Classic .NET Framework's Reflection.Emit
+          // silently tolerated this contradiction (the resulting body was emitted
+          // but, since __StImpl is never called for the abstract-original case --
+          // `beforeBodyTypingHandler` below explicitly skips abstract originals --
+          // never verified or executed). CoreCLR's `MethodBuilderImpl.GetILGenerator`
+          // enforces ECMA-335 more strictly and throws `InvalidOperationException
+          // ("Method body should not exist.")` as soon as anyone asks for an IL
+          // generator on a MethodBuilder flagged Abstract (see testsuite/positive/
+          // string-template-3.n, BaseHtmlReportTemplate[T].PrintBody__StImpl). Only
+          // `Virtual`/`Override` need to carry over so a derived class's own
+          // companion still correctly overrides this one; `Abstract` must not.
+          // An `abstract` original does not necessarily also carry the `Virtual`
+          // bit in Nemerle's own modifier set (unlike the emitted CLR metadata,
+          // where `abstract` methods are always `virtual` too), so an abstract
+          // original's companion needs `Virtual` substituted in explicitly --
+          // otherwise a derived class's own (overriding) companion has nothing
+          // marked `virtual' to override, which is a plain (and separate) error.
+          def companionAttrs     = (attrs & (Virtual | Override)) %| (if (attrs %&& Abstract) Virtual else None);
+          def newMods            = AttributesAndModifiers(Public | companionAttrs, //Protected
                                    mods.GetCustomAttributes());
           def h                  = method.header;
           def workMethParsedName = MakeWorkMethParsedName(method);

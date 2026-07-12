@@ -4,6 +4,11 @@
 [Oo]bj*/
 [Rr]elease*/
 
+# WP-I2 (dotnet-port distribution PoC): generated "dotnet ncc" layout / nupkg output,
+# rebuildable via dotnet-port\pack-tool.ps1 / dotnet-port\Nemerle.Tool.
+dotnet-port/dist/
+*.nupkg
+
 *.ReSharper
 _ReSharper.*
 *.user

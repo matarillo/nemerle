@@ -56,4 +56,4 @@
 -ref:"C:\Program Files\dotnet\shared\Microsoft.NETCore.App\10.0.9\System.Private.Xml.dll"
 -ref:"C:\Program Files\dotnet\shared\Microsoft.NETCore.App\10.0.9\System.Private.Xml.Linq.dll"
 -ref:"C:\Program Files\dotnet\shared\Microsoft.NETCore.App\10.0.9\System.Data.Common.dll"
--out:"F:\dev\nemerle_projects\github-nemerle\bin\Release\core\Stage2\Nemerle.dll"
+-out:"F:\dev\nemerle_projects\github-nemerle\bin\Release\core\Stage3\Nemerle.dll"

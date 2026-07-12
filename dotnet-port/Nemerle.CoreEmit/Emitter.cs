@@ -16,17 +16,102 @@
 // based on.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using System.Runtime.CompilerServices;
 
 namespace Nemerle.CoreEmit
 {
     public static class Emitter
     {
+        // dotnet-port WP-F/17-resources-fixes-log.md: PersistedAssemblyBuilder.SetCustomAttribute
+        // (the assembly-level, not type-level, overload) corrupts the saved PE when the
+        // attribute's constructor belongs to a TypeBuilder defined in the SAME persisted
+        // assembly (verified with a minimal repro independent of Nemerle -- the equivalent
+        // TypeBuilder.SetCustomAttribute call with the exact same locally-defined
+        // ConstructorBuilder works fine, so this is specific to the assembly-level overload).
+        // The saved file loads with BadImageFormatException even though ncc reports zero
+        // compile errors -- e.g. `[assembly: SomeLocallyDefinedAttribute]`. Constructors from
+        // already-compiled (external) assemblies are unaffected (PersistedAssemblyBuilder
+        // correctly synthesizes the MemberRef for those during GenerateMetadata), so this
+        // path is only needed for local (TypeBuilder-declared) attribute constructors --
+        // SetAssemblyCustomAttribute below detects that case and defers such attributes to a
+        // pending list, later flushed directly into the MetadataBuilder returned by
+        // GenerateMetadata() (see FlushPendingAssemblyAttributes in Save), instead of ever
+        // calling the broken AssemblyBuilder.SetCustomAttribute for them.
+        private static readonly ConditionalWeakTable<AssemblyBuilder, List<CustomAttributeBuilder>> s_pendingAssemblyAttributes = new();
+
+        private static ConstructorInfo GetCabCtor(CustomAttributeBuilder cab)
+        {
+            FieldInfo fi = typeof(CustomAttributeBuilder).GetField("m_con", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (fi == null)
+                throw new InvalidOperationException(
+                    "Nemerle.CoreEmit.Emitter: System.Reflection.Emit.CustomAttributeBuilder no longer has " +
+                    "a private field named 'm_con' on this runtime -- the assembly-level-local-attribute " +
+                    "workaround (see dotnet-port\\17-resources-fixes-log.md) needs updating.");
+            return (ConstructorInfo)fi.GetValue(cab);
+        }
+
+        private static byte[] GetCabBlob(CustomAttributeBuilder cab)
+        {
+            FieldInfo fi = typeof(CustomAttributeBuilder).GetField("m_blob", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (fi == null)
+                throw new InvalidOperationException(
+                    "Nemerle.CoreEmit.Emitter: System.Reflection.Emit.CustomAttributeBuilder no longer has " +
+                    "a private field named 'm_blob' on this runtime -- the assembly-level-local-attribute " +
+                    "workaround (see dotnet-port\\17-resources-fixes-log.md) needs updating.");
+            return (byte[])fi.GetValue(cab);
+        }
+
+        /// <summary>
+        /// Applies an assembly-level custom attribute, routing around the
+        /// PersistedAssemblyBuilder.SetCustomAttribute bug described above when (and only
+        /// when) the attribute's constructor belongs to a not-yet-baked TypeBuilder in this
+        /// same assembly. Must be used (instead of AssemblyBuilder.SetCustomAttribute
+        /// directly) for every assembly-level attribute on the CoreCLR path; Save's
+        /// FlushPendingAssemblyAttributes writes back any deferred ones after
+        /// GenerateMetadata().
+        /// </summary>
+        public static void SetAssemblyCustomAttribute(AssemblyBuilder ab, CustomAttributeBuilder cab)
+        {
+            ConstructorInfo con = GetCabCtor(cab);
+            if (con.DeclaringType is TypeBuilder)
+            {
+                List<CustomAttributeBuilder> pending = s_pendingAssemblyAttributes.GetOrCreateValue(ab);
+                pending.Add(cab);
+            }
+            else
+            {
+                ab.SetCustomAttribute(cab);
+            }
+        }
+
+        private static void FlushPendingAssemblyAttributes(AssemblyBuilder ab, MetadataBuilder metadata)
+        {
+            if (!s_pendingAssemblyAttributes.TryGetValue(ab, out List<CustomAttributeBuilder> pending))
+                return;
+
+            // The Assembly table has exactly one row (this assembly); its EntityHandle is
+            // always token 0x20000001 in the module being generated.
+            EntityHandle assemblyHandle = MetadataTokens.EntityHandle(0x20000001);
+            foreach (CustomAttributeBuilder cab in pending)
+            {
+                ConstructorInfo con = GetCabCtor(cab);
+                byte[] blob = GetCabBlob(cab);
+                // Valid only after GenerateMetadata() has run (see the MetadataToken timing
+                // note on entryPointMethod below).
+                EntityHandle ctorHandle = MetadataTokens.EntityHandle(con.MetadataToken);
+                BlobHandle blobHandle = metadata.GetOrAddBlob(blob);
+                metadata.AddCustomAttribute(assemblyHandle, ctorHandle, blobHandle);
+            }
+            s_pendingAssemblyAttributes.Remove(ab);
+        }
+
         /// <summary>
         /// Creates a persisted (savable) dynamic assembly builder. Used for the
         /// "-target:exe/library, save to disk" path on CoreCLR (the equivalent of
@@ -62,12 +147,39 @@ namespace Nemerle.CoreEmit
         /// <param name="isWinexe">true to mark the PE subsystem as Windows GUI instead of console.</param>
         /// <param name="embeddedResources">"name|absoluteFilePath" pairs for -res embedded resources, or null/empty.</param>
         /// <param name="emitRuntimeConfig">When true and entryPointMethod != null, also writes "&lt;basename&gt;.runtimeconfig.json" next to outputPath.</param>
+        /// <param name="emitDebug">When true, also writes a standalone Portable PDB
+        /// ("&lt;basename&gt;.pdb" next to outputPath) built from the documents / sequence
+        /// points / local names recorded via ModuleBuilder.DefineDocument,
+        /// ILGenerator.MarkSequencePoint and LocalBuilder.SetLocalSymInfo, and wires a
+        /// CodeView entry for it into the PE's debug directory (ncc -debug). See
+        /// dotnet-port\03-dotnet-runtime-facts.md recipe R4.</param>
+        /// <param name="win32ResourceFile">Path to a Win32 .RES file (ncc -win32-resource),
+        /// or null. Converted to a .rsrc section by <see cref="ResFileResourceSection"/> and
+        /// passed as ManagedPEBuilder's nativeResources (see dotnet-port\17-resources-fixes-log.md).</param>
+        /// <param name="linkedResources">"name|absoluteFilePath" pairs for -linkres linked
+        /// (non-embedded) resources, or null/empty. Written as ECMA-335 File + ManifestResource
+        /// table rows (metadata is verified spec-correct -- see 17-resources-fixes-log.md --
+        /// but note System.Reflection.Assembly.GetManifestResourceInfo/GetManifestResourceStream
+        /// return null for these on CoreCLR, a runtime limitation unrelated to this encoding;
+        /// consistent with .NET Core's removal of multi-file-assembly support).</param>
         public static void Save(AssemblyBuilder ab, string outputPath, MethodInfo entryPointMethod,
-                                 bool isWinexe, string[] embeddedResources, bool emitRuntimeConfig)
+                                 bool isWinexe, string[] embeddedResources, bool emitRuntimeConfig,
+                                 bool emitDebug, string win32ResourceFile, string[] linkedResources)
         {
             var pab = (PersistedAssemblyBuilder)ab;
 
-            MetadataBuilder metadata = pab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData);
+            BlobBuilder ilStream;
+            BlobBuilder fieldData;
+            MetadataBuilder pdbMetadata = null;
+            MetadataBuilder metadata = emitDebug
+                ? pab.GenerateMetadata(out ilStream, out fieldData, out pdbMetadata)
+                : pab.GenerateMetadata(out ilStream, out fieldData);
+
+            // Assembly-level attributes whose constructor is a local (TypeBuilder) type were
+            // deferred by SetAssemblyCustomAttribute instead of being applied directly (see
+            // that method's doc comment); write them into the metadata now that constructor
+            // tokens are valid.
+            FlushPendingAssemblyAttributes(ab, metadata);
 
             // Token timing: MethodBuilder.MetadataToken is only valid AFTER GenerateMetadata.
             MethodDefinitionHandle entryPointHandle = default;
@@ -100,6 +212,38 @@ namespace Nemerle.CoreEmit
                 }
             }
 
+            // Linked resources (-linkres): a File table row (with a content hash, as
+            // csc/link.exe write) + a ManifestResource row whose Implementation points at
+            // that File row instead of embedding the bytes. Spec-correct (verified via
+            // System.Reflection.Metadata against a hand-built repro -- see
+            // 17-resources-fixes-log.md) but NOTE: System.Reflection's own
+            // Assembly.GetManifestResourceInfo/GetManifestResourceStream return null for
+            // File-implementation resources on CoreCLR (confirmed independently of ncc);
+            // this is a CoreCLR limitation (multi-file assemblies are not supported there),
+            // not a defect in this encoding.
+            if (linkedResources != null && linkedResources.Length > 0)
+            {
+                foreach (string entry in linkedResources)
+                {
+                    int sep = entry.IndexOf('|');
+                    if (sep < 0)
+                        continue;
+                    string name = entry.Substring(0, sep);
+                    string filePath = entry.Substring(sep + 1);
+                    byte[] hash = System.Security.Cryptography.SHA1.HashData(File.ReadAllBytes(filePath));
+
+                    AssemblyFileHandle fileHandle = metadata.AddAssemblyFile(
+                        metadata.GetOrAddString(Path.GetFileName(filePath)),
+                        metadata.GetOrAddBlob(hash),
+                        containsMetadata: false);
+                    metadata.AddManifestResource(
+                        ManifestResourceAttributes.Public,
+                        metadata.GetOrAddString(name),
+                        implementation: fileHandle,
+                        offset: 0);
+                }
+            }
+
             Characteristics characteristics = entryPointMethod != null
                 ? Characteristics.ExecutableImage
                 : (Characteristics.ExecutableImage | Characteristics.Dll);
@@ -107,12 +251,35 @@ namespace Nemerle.CoreEmit
 
             var header = new PEHeaderBuilder(imageCharacteristics: characteristics, subsystem: subsystem);
 
+            // Portable PDB (ncc -debug): serialize the PDB metadata collected by
+            // GenerateMetadata's 3-out overload into a standalone .pdb next to the
+            // output, and point a CodeView debug-directory entry at it. Must happen
+            // before ManagedPEBuilder.Serialize (the PE embeds the PDB's BlobContentId).
+            DebugDirectoryBuilder debugDir = null;
+            BlobBuilder pdbBlob = null;
+            string pdbPath = null;
+            if (emitDebug)
+            {
+                pdbPath = Path.ChangeExtension(Path.GetFullPath(outputPath), ".pdb");
+                var pdbBuilder = new PortablePdbBuilder(pdbMetadata, metadata.GetRowCounts(), entryPointHandle);
+                pdbBlob = new BlobBuilder();
+                BlobContentId pdbId = pdbBuilder.Serialize(pdbBlob);
+                debugDir = new DebugDirectoryBuilder();
+                debugDir.AddCodeViewEntry(pdbPath, pdbId, pdbBuilder.FormatVersion);
+            }
+
+            ResourceSectionBuilder nativeResources = win32ResourceFile != null
+                ? ResFileResourceSection.FromFile(win32ResourceFile)
+                : null;
+
             var peBuilder = new ManagedPEBuilder(
                 header: header,
                 metadataRootBuilder: new MetadataRootBuilder(metadata),
                 ilStream: ilStream,
                 mappedFieldData: fieldData,
                 managedResources: resourcesBlob,
+                nativeResources: nativeResources,
+                debugDirectoryBuilder: debugDir,
                 entryPoint: entryPointHandle);
 
             var peBlob = new BlobBuilder();
@@ -124,6 +291,12 @@ namespace Nemerle.CoreEmit
 
             using (var fs = File.Create(outputPath))
                 peBlob.WriteContentTo(fs);
+
+            if (emitDebug)
+            {
+                using (var fs = File.Create(pdbPath))
+                    pdbBlob.WriteContentTo(fs);
+            }
 
             if (entryPointMethod != null && emitRuntimeConfig)
             {

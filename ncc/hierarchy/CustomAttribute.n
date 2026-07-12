@@ -621,13 +621,27 @@ namespace Nemerle.Compiler
     {
       def (ctor_info, ctor_params, prop_infos, prop_values, field_infos, field_values) = pre_compile (env, ti, attr, parms);
 
-      def attrBuilder = SR.Emit.CustomAttributeBuilder(
-        ctor_info,
-        ctor_params.Reverse().ToArray(),
-        prop_infos.Reverse().ToArray(),
-        prop_values.Reverse().ToArray(),
-        field_infos.Reverse().ToArray(),
-        field_values.Reverse().ToArray());
+      def attrBuilder =
+        if (CoreEmitBridge.IsCoreClr)
+          // CoreCLR: route through Nemerle.CoreEmit.AttributeBlob, which only diverges
+          // from the ordinary CustomAttributeBuilder constructor when a locally-defined
+          // (TypeBuilder) enum type is involved -- see dotnet-port\15-attributes01-diagnosis.md.
+          CoreEmitBridge.CreateAttributeBuilder (
+            ctor_info,
+            ctor_params.Reverse().ToArray(),
+            prop_infos.Reverse().ToArray(),
+            prop_values.Reverse().ToArray(),
+            field_infos.Reverse().ToArray(),
+            field_values.Reverse().ToArray())
+        else
+          // CLR4: unchanged.
+          SR.Emit.CustomAttributeBuilder(
+            ctor_info,
+            ctor_params.Reverse().ToArray(),
+            prop_infos.Reverse().ToArray(),
+            prop_values.Reverse().ToArray(),
+            field_infos.Reverse().ToArray(),
+            field_values.Reverse().ToArray());
       def shouldEmit = if(attr.IsConditional) attr.EvalConditions(env) else true;
       (attrBuilder, shouldEmit)
     }

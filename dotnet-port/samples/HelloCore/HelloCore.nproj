@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-I2 (task 3) PoC sample: a "SDK-style" project (Nemerle.Core.targets requires nothing
+    more than an ordinary <Project Sdk="Microsoft.NET.Sdk"> with an @(NemerleCompile) item
+    group) that builds Nemerle sources through the dotnet-hosted ncc.dll via plain
+    `dotnet build`. See dotnet-port\msbuild\Nemerle.Core.targets for how CoreCompile is
+    overridden and dotnet-port\DISTRIBUTION.md for the write-up / limitations.
+
+    Prerequisite: dotnet-port\dist\ncc must exist (pwsh dotnet-port\pack-tool.ps1).
+
+    Usage:
+      dotnet build dotnet-port\samples\HelloCore\HelloCore.nproj
+      dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="hello.n" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

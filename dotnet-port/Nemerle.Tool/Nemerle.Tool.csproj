@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-I2 (task 2): PoC packaging csproj that turns the already-built "dotnet ncc" layout
+    (dotnet-port\dist\ncc, produced by dotnet-port\pack-tool.ps1) into an installable
+    `dotnet tool` .nupkg, WITHOUT compiling any of ncc's own Nemerle sources here: this
+    project only compiles a tiny C# shim (Program.cs) and repackages the pre-built compiler
+    binaries as tool content.
+
+    Why a shim instead of PackAsTool pointing straight at ncc.dll: `dotnet pack
+    -p:PackAsTool=true` always makes the ENTRY POINT the assembly this very csproj
+    produces (SDK-generated DotnetToolSettings.xml hardcodes
+    EntryPoint="<AssemblyName>.dll"); there is no supported way to point PackAsTool at
+    an arbitrary pre-built dll instead. So Program.cs's only job is to be that entry point
+    and immediately re-invoke the bundled `ncc.dll` via `dotnet <dir>\ncc.dll
+    -from-file:<dir>\ncc.default.rsp <forwarded args>` (Process.Start with an explicit
+    ArgumentList, so forwarded args are passed byte-for-byte, no shell/PowerShell
+    re-parsing of ncc's `-name:value` switches is involved, unlike a .ps1 wrapper; see
+    pack-tool.ps1's header comment for why that matters).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Nemerle.Tool</RootNamespace>
+    <AssemblyName>Nemerle.Tool</AssemblyName>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>nemerle-ncc</ToolCommandName>
+    <PackageId>Nemerle.Ncc.DevTool</PackageId>
+    <!-- Dev/PoC version, not intended for nuget.org publication. -->
+    <Version>0.1.0-poc1</Version>
+    <Authors>Nemerle dotnet-port WP-I2 PoC</Authors>
+    <Description>PoC: pre-built "dotnet ncc" core-flavor compiler repackaged as a dotnet tool shim. See dotnet-port/DISTRIBUTION.md.</Description>
+
+    <!-- This project intentionally has no lib/ref output of its own beyond the shim exe,
+         and bundles foreign (non-project-built) assemblies as tool content; both are
+         expected/known-safe here, so silence the corresponding pack warnings. -->
+    <NoWarn>$(NoWarn);NU5100;NU5128;NU5118</NoWarn>
+
+    <!-- Where pack-tool.ps1 wrote the runnable layout (Nemerle*.dll, ncc.dll,
+         ncc.default.rsp). Override with -p:NccLayoutDir=... if built elsewhere. -->
+    <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)..\dist\ncc\</NccLayoutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Bundle the pre-built compiler + stdlib + default reference rsp as tool content,
+         landing next to the shim's own Nemerle.Tool.dll inside tools\<tfm>\any\ so
+         AppContext.BaseDirectory finds them at run time. -->
+    <None Include="$(NccLayoutDir)Nemerle.dll;$(NccLayoutDir)Nemerle.Compiler.dll;$(NccLayoutDir)Nemerle.Macros.dll;$(NccLayoutDir)Nemerle.CoreEmit.dll;$(NccLayoutDir)ncc.dll;$(NccLayoutDir)ncc.runtimeconfig.json;$(NccLayoutDir)ncc.default.rsp"
+          Pack="true" PackagePath="tools\$(TargetFramework)\any\" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="EnsureNccLayoutExists" BeforeTargets="Build;Pack">
+    <Error Condition="!Exists('$(NccLayoutDir)ncc.dll')"
+           Text="NccLayoutDir ($(NccLayoutDir)) does not contain ncc.dll: run dotnet-port\pack-tool.ps1 first (or pass -p:NccLayoutDir=&lt;path&gt;)." />
+  </Target>
+
+</Project>

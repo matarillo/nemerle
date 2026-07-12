@@ -628,19 +628,53 @@ namespace Nemerle.Compiler
       ! o.IsGeneric
     }
 
-    // dotnet-port WP-D: modern .NET BCL methods increasingly ship an overload whose
-    // trailing parameter(s) have a default value purely to support an interpolated-string-
-    // handler sibling overload (e.g. `Debug.Assert(bool)` alongside a newer
-    // `Debug.Assert(bool, string message = null)`). Real C# disambiguates these via
-    // `System.Runtime.CompilerServices.OverloadResolutionPriorityAttribute`, which this
-    // reflection-based overload resolver does not read. Absent that, prefer whichever
-    // candidate(s) matched the call site's actual argument count exactly (no default
-    // parameters filled in) over ones that needed defaults, when both exist among an
-    // otherwise-ambiguous candidate set. This is a pure tie-breaker: it only narrows the
-    // set when a strict subset already has UsedDefaultParms = false.
+    // dotnet-port WP-D/WP-J: modern .NET BCL surfaces increasingly grow a sibling overload
+    // whose trailing parameter(s) carry a default value -- not just for the interpolated-
+    // string-handler pattern WP-D originally targeted (`Debug.Assert(bool)` alongside a newer
+    // `Debug.Assert(bool, string message = null)`), but also for plain convenience overloads
+    // added over time (`string.Split(char[])` alongside a newer `Split(string, StringSplit
+    // Options options = default)`; `StreamReader(Stream)` alongside `StreamReader(Stream,
+    // Encoding, bool, int, bool = default)`-shaped ctors). Calling these with an argument list
+    // that satisfies more than one such overload (e.g. `"...".Split(null)`, a null literal
+    // convertible to either `char[]` or `string`) is a genuine tie under ncc's reflection-based
+    // resolver, and self-hosting hits it directly (`ncc/parsing/Lexer.n`'s `Split(null)`,
+    // `ncc/parsing/Source.n`'s `StreamReader` construction).
+    //
+    // WP-D's fix was to unconditionally prefer whichever candidate(s) didn't need a default
+    // parameter filled in. That is unsound as a general rule: it also silently resolves
+    // `testsuite/negative/overloading-01.n`'s `Bug743(string)` / `Bug743(string, _ = "a")`,
+    // which is a *user*-authored pair of overloads deliberately shaped the same way, and the
+    // test expects that call to be reported as ambiguous. (For the record: real C# does *not*
+    // consider that particular user case ambiguous either -- `Bug743("s")` compiles fine and
+    // silently picks the no-default-args overload in Roslyn, confirmed empirically. Nemerle's
+    // own testsuite intentionally requires user code to disambiguate this shape explicitly --
+    // a deliberate, stricter design choice that predates this WP and is independent of how any
+    // particular BCL surface behaves. This fix is about the BCL not being editable by the
+    // user, not about matching C# overload resolution in general.)
+    //
+    // The distinguishing signal that actually separates the two situations: every real-world
+    // case that forced this tie-break (Debug.Assert, Split, the StreamReader ctors) is an
+    // *externally referenced* (BCL) member the user cannot edit or disambiguate at the
+    // declaration site, while every genuinely-ambiguous testsuite case (including Bug743) is a
+    // member declared in the source under compilation. So: keep the WP-D "prefer no default
+    // parameters used" tie-break, but only let it fire when *every* candidate in the tied set
+    // is an externally referenced member -- never when user-declared source is involved.
+    static IsExternalMember (o : OverloadPossibility) : bool
+    {
+      o.Member is LibraryReference.ExternalMemberInfo
+    }
+
     static AintUsingDefaultParms (o : OverloadPossibility) : bool
     {
       ! o.UsedDefaultParms
+    }
+
+    static PreferNonDefaultedExternalOverloads (overloads : list [OverloadPossibility]) : list [OverloadPossibility]
+    {
+      if (overloads.ForAll (IsExternalMember))
+        overloads.FilterIfExists (AintUsingDefaultParms)
+      else
+        overloads
     }
 
     static RemoveExtensionMethods (parms : list [OverloadPossibility]) : list [OverloadPossibility]
@@ -675,7 +709,7 @@ namespace Nemerle.Compiler
           def res0 = RemoveOverloadsWithTupleConvertion(parms);
           def res1 = RemoveExtensionMethods(res0);
           def res2 = GetMinimal(res1, IsBetterOverload);
-          def res2b = res2.FilterIfExists(AintUsingDefaultParms);
+          def res2b = PreferNonDefaultedExternalOverloads(res2);
           def res3 = res2b.FilterIfExists(AintVarArgs);
           def res4 = res3.FilterIfExists(DidntMamboJumbo);
           def res5 = res4.FilterIfExists(AintGeneric);
