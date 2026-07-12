@@ -83,10 +83,13 @@
        target (copy-to-output, runtimeconfig/deps generation, Clean, incremental up-to-date
        checks via Inputs/Outputs below) working exactly as the SDK expects. -->
   <Target Name="CoreCompile"
-          Inputs="@(NemerleCompile);$(NccDll);$(NccDefaultRsp)"
+          Inputs="@(NemerleCompile);$(NccDll)"
           Outputs="@(IntermediateAssembly)">
     <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
-    <Exec Command="dotnet &quot;$(NccDll)&quot; -from-file:&quot;$(NccDefaultRsp)&quot; -target:$(NemerleTargetType) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
+    <!-- ncc auto-resolves the standard reference set (the shared framework's real split
+         BCL assemblies + this layout's Nemerle.dll) on CoreCLR since the LoadCoreStdlibReferences
+         change in ncc\passes.n, so no -from-file:ncc.default.rsp is needed here any more. -->
+    <Exec Command="dotnet &quot;$(NccDll)&quot; -target:$(NemerleTargetType) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
           WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 

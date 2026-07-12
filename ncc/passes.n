@@ -560,18 +560,68 @@ namespace Nemerle.Compiler
       when (OnInit != null) OnInit (); // run externally registered functions - used for cleanup of macro_context_classes in used macros
     }
 
+    // On CoreCLR the historical default stdlib set -- AddLibrary("mscorlib"/"System"/
+    // "System.Xml") resolved by bare name -- binds to the shared framework's type-forwarder
+    // *facade* assemblies, whose GetExportedTypes() is empty (and GetForwardedTypes() can
+    // even throw), so ncc used to require an explicit response file to compile anything on
+    // .NET (dotnet-port\dist\ncc\ncc.default.rsp: -no-stdlib -use-loaded-corlib
+    // -greedy-references:- plus -ref: paths to the real split assemblies -- see
+    // dotnet-port\13-stage2-log.md / build-stage2-core.ps1). This reproduces that
+    // proven-good reference set automatically from the running shared framework, so a bare
+    // `dotnet ncc.dll hello.n` compiles with no response file. -no-stdlib still skips this
+    // entirely, leaving the old "specify every reference by hand" workflow available.
+    LoadCoreStdlibReferences() : void
+    {
+      // Map bare "mscorlib"/"System" to the *loaded* real assemblies (System.Private.CoreLib
+      // / System.Text.RegularExpressions), not the empty facades of the same name.
+      Options.UseLoadedCorlib = true;
+      // Greedy transitive loading walks GetReferencedAssemblies() into those facades on
+      // CoreCLR (GetForwardedTypes throwing for absent targets like System.Security.
+      // Permissions); the proven-good configuration disables it.
+      Options.GreedyReferences = false;
+
+      LibrariesManager.AddLibrary("mscorlib", true);
+      LibrariesManager.AddLibrary("System", true);
+
+      // The real (non-facade) split assemblies covering the common BCL surface ordinary
+      // Nemerle programs touch -- kept in sync with dotnet-port\build-stage2-core.ps1's
+      // $CoreRefs and gen-default-rsp.ps1. Resolved from the running framework directory
+      // (System.Private.CoreLib's own location) so this follows a runtime upgrade.
+      def frameworkDir = IO.Path.GetDirectoryName(typeof(System.Object).Assembly.Location);
+      def splitAssemblies =
+        [ "System.Collections.dll", "System.Console.dll", "System.Collections.Specialized.dll",
+          "System.Linq.dll", "System.Diagnostics.Process.dll", "System.Private.Uri.dll",
+          "System.Diagnostics.TraceSource.dll", "System.Security.Cryptography.dll",
+          "System.Private.Xml.dll", "System.Private.Xml.Linq.dll", "System.Data.Common.dll" ];
+      foreach (name in splitAssemblies)
+      {
+        def path = IO.Path.Combine(frameworkDir, name);
+        when (IO.File.Exists(path))
+          LibrariesManager.AddLibrary(path, true);
+      }
+
+      // Nemerle.dll lives next to the compiler; the LibraryReferenceManager ctor already
+      // puts its directory on the search path, so the bare name resolves via LookupAssembly.
+      LibrariesManager.AddLibrary("Nemerle", true);
+    }
+
     protected internal LoadExternalLibraries(forceInitNemerleTypes : bool = false) : void
     {
       MethodsStatistics.Clear();
-      
+
       if (shouldCreate (InternalType.Void))
       {
         unless (Options.DoNotLoadStdlib)
         {
-          LibrariesManager.AddLibrary("mscorlib", true);
-          LibrariesManager.AddLibrary("System", true);
-          LibrariesManager.AddLibrary("Nemerle", true);
-          LibrariesManager.AddLibrary("System.Xml", true);
+          if (CoreEmitBridge.IsCoreClr)
+            LoadCoreStdlibReferences()
+          else
+          {
+            LibrariesManager.AddLibrary("mscorlib", true);
+            LibrariesManager.AddLibrary("System", true);
+            LibrariesManager.AddLibrary("Nemerle", true);
+            LibrariesManager.AddLibrary("System.Xml", true);
+          }
         }
 
         mutable exception : System.Exception;
