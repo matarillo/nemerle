@@ -48,6 +48,13 @@
          the same way Nemerle.MSBuild.targets/the legacy .nproj files do. -->
     <NemerleTargetType Condition="'$(NemerleTargetType)' == '' AND '$(OutputType)' == 'Exe'">exe</NemerleTargetType>
     <NemerleTargetType Condition="'$(NemerleTargetType)' == ''">library</NemerleTargetType>
+    <!-- ncc emits a standalone Portable PDB (WP-E, dotnet-port\14-pdb-log.md) at <out>.pdb
+         when -debug is passed, i.e. at $(IntermediateOutputPath)$(TargetName).pdb, exactly
+         where the SDK's @(_DebugSymbolsIntermediatePath) already points, so once ncc writes
+         it there the common targets copy it to $(OutDir) and clean it with no extra wiring.
+         Emit symbols unless the project turned them off (DebugType=none / DebugSymbols=false);
+         the SDK defaults DebugType=portable and DebugSymbols=true for both Debug and Release. -->
+    <NemerleDebugSwitch Condition="'$(DebugType)' != 'none' AND '$(DebugType)' != 'None' AND '$(DebugSymbols)' != 'false'">-debug</NemerleDebugSwitch>
     <!-- The SDK's "ref assembly" optimization (ProduceReferenceAssembly, on by default)
          expects CoreCompile to additionally emit a stripped-down reference assembly under
          obj\...\refint\; that is a Roslyn (/refout:)-specific feature ncc has no
@@ -98,7 +105,7 @@
     <!-- ncc auto-resolves the standard reference set (the shared framework's real split
          BCL assemblies + this layout's Nemerle.dll) on CoreCLR since the LoadCoreStdlibReferences
          change in ncc\passes.n, so no -from-file:ncc.default.rsp is needed here any more. -->
-    <Exec Command="dotnet &quot;$(NccDll)&quot; -target:$(NemerleTargetType) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
+    <Exec Command="dotnet &quot;$(NccDll)&quot; -target:$(NemerleTargetType) $(NemerleDebugSwitch) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
           WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 
@@ -106,12 +113,19 @@
        call sites, Nemerle.Macros.dll/Nemerle.Compiler.dll) at RUN time; .NET's assembly
        probing only looks beside the entry assembly / in the shared framework (no GAC),
        see pack-tool.ps1's header comment / 18-testsuite-log.md section 3b for the same gap
-       in the test harness. Copy them into the build output next to the produced assembly. -->
-  <Target Name="NemerleCopyRuntimeAssemblies" AfterTargets="Build">
+       in the test harness. Copy them next to the produced assembly and record the
+       destinations in @(FileWrites) so `dotnet clean` removes them again. Runs right after
+       CopyFilesToOutputDirectory (which creates $(OutDir) and copies the main assembly/pdb)
+       and BEFORE IncrementalClean, which is the target that snapshots @(FileWrites) into the
+       clean file; the previous version ran AfterTargets="Build" (after IncrementalClean) and
+       off the FileWrites path, so these dlls were left behind in bin\ by clean. -->
+  <Target Name="NemerleCopyRuntimeAssemblies" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(OutDir)' != ''">
     <ItemGroup>
-      <_NemerleRuntimeDlls Include="$(NccLayoutDir)Nemerle.dll;$(NccLayoutDir)Nemerle.Compiler.dll;$(NccLayoutDir)Nemerle.Macros.dll" />
+      <_NemerleRuntimeDll Include="$(NccLayoutDir)Nemerle.dll;$(NccLayoutDir)Nemerle.Compiler.dll;$(NccLayoutDir)Nemerle.Macros.dll" />
     </ItemGroup>
-    <Copy SourceFiles="@(_NemerleRuntimeDlls)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_NemerleRuntimeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true">
+      <Output TaskParameter="DestinationFiles" ItemName="FileWrites" />
+    </Copy>
   </Target>
 
 </Project>
