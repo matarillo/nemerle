@@ -1,0 +1,8 @@
+namespace MathLib
+{
+  public module Calc
+  {
+    public Square(x : int) : int { x * x }
+    public Sum(xs : list[int]) : int { xs.FoldLeft(0, _ + _) }
+  }
+}

@@ -1,0 +1,11 @@
+using MathLib;
+using System.Console;
+
+module Program
+{
+  Main() : void
+  {
+    WriteLine($"Square(7) = $(Calc.Square(7))");
+    WriteLine($"Sum([1..5]) = $(Calc.Sum([1, 2, 3, 4, 5]))");
+  }
+}
