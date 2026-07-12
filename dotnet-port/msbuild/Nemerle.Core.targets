@@ -41,10 +41,9 @@
 
   <PropertyGroup>
     <!-- Where dotnet-port\pack-tool.ps1 wrote the runnable "dotnet ncc" layout
-         (ncc.dll + ncc.default.rsp + Nemerle*.dll). Override with -p:NccLayoutDir=... -->
+         (ncc.dll + Nemerle*.dll). Override with -p:NccLayoutDir=... -->
     <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)..\dist\ncc\</NccLayoutDir>
     <NccDll>$(NccLayoutDir)ncc.dll</NccDll>
-    <NccDefaultRsp>$(NccLayoutDir)ncc.default.rsp</NccDefaultRsp>
     <!-- "exe" or "library": mirrors ncc's own -target: values, defaulted from OutputType
          the same way Nemerle.MSBuild.targets/the legacy .nproj files do. -->
     <NemerleTargetType Condition="'$(NemerleTargetType)' == '' AND '$(OutputType)' == 'Exe'">exe</NemerleTargetType>
