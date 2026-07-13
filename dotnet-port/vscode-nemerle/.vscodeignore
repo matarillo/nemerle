@@ -1,0 +1,13 @@
+.github/**
+.vscode/**
+.gitignore
+dist-test/**
+src/**
+test/**
+test-workspace/**
+eslint.config.mjs
+tsconfig.json
+tsconfig.test.json
+*.vsix
+dist/*.vsix
+out/*.map

@@ -1,0 +1,143 @@
+{
+  "name": "vscode-nemerle",
+  "displayName": "Nemerle",
+  "description": "Development VS Code language support for Nemerle on .NET 10.",
+  "version": "0.1.0",
+  "publisher": "nemerle-project",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/matarillo/nemerle.git",
+    "directory": "dotnet-port/vscode-nemerle"
+  },
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "Nemerle",
+    "language server",
+    "LSP"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:nemerle",
+    "onCommand:nemerle.restartLanguageServer",
+    "onCommand:nemerle.showOutput"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Syntax highlighting and editing support remain available, but the Nemerle language server is not executed until the workspace is trusted.",
+      "restrictedConfigurations": [
+        "nemerle.server.path"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "The development language server currently supports local files only."
+    }
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "nemerle",
+        "aliases": [
+          "Nemerle",
+          "nemerle"
+        ],
+        "extensions": [
+          ".n"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nemerle",
+        "scopeName": "source.nemerle",
+        "path": "./syntaxes/nemerle.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "nemerle.restartLanguageServer",
+        "title": "Nemerle: Restart Language Server",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "nemerle.showOutput",
+        "title": "Nemerle: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "Nemerle",
+      "properties": {
+        "nemerle.server.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Absolute path to a development `Nemerle.LanguageServer.dll`. WP-L1 does not bundle a server; build `dotnet-port/LspServer` and configure its output path.",
+          "order": 10
+        },
+        "nemerle.server.trace": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "enumDescriptions": [
+            "Disable LSP protocol tracing.",
+            "Trace LSP messages without payload details.",
+            "Trace LSP messages and payload details."
+          ],
+          "default": "off",
+          "scope": "window",
+          "description": "Controls LSP protocol tracing in the Nemerle Language Server output channel.",
+          "order": 20
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check-types": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "lint": "eslint .",
+    "test": "npm run build && npm run test:unit",
+    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/test/unit/manifest.test.js dist-test/test/unit/grammar.test.js dist-test/test/unit/serverLaunch.test.js",
+    "test:integration": "npm run build && tsc -p tsconfig.test.json && node dist-test/test/runTest.js && node dist-test/test/runUntrusted.js",
+    "vscode:prepublish": "npm run build",
+    "package": "npm run lint && npm test && npm run package:vsix",
+    "package:vsix": "vsce package --out vscode-nemerle-0.1.0.vsix"
+  },
+  "dependencies": {
+    "vscode-languageclient": "10.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/mocha": "10.0.10",
+    "@types/node": "22.20.1",
+    "@types/vscode": "1.125.0",
+    "@typescript-eslint/eslint-plugin": "8.63.0",
+    "@typescript-eslint/parser": "8.63.0",
+    "@vscode/test-electron": "3.0.0",
+    "@vscode/vsce": "3.9.2",
+    "eslint": "10.7.0",
+    "globals": "17.7.0",
+    "mocha": "11.7.6",
+    "typescript": "5.9.3",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
+  },
+  "overrides": {
+    "diff": "8.0.4",
+    "serialize-javascript": "7.0.6"
+  }
+}

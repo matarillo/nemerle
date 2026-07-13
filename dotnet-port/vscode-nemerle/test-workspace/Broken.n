@@ -1,0 +1,7 @@
+module Broken
+{
+  Main() : void
+  {
+    def value : int = "wrong";
+  }
+}
