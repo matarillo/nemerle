@@ -1,0 +1,117 @@
+<Project>
+  <!--
+    Linux/Unix variant of dotnet-port/msbuild/Nemerle.Core.targets. Same design as the
+    Windows copy (see that file's header for the full rationale); it differs only where the
+    host platform forces it to:
+
+      * NccLayoutDir defaults to $(MSBuildThisFileDirectory)../ncc/ (a sibling "ncc" folder
+        next to this "linux" directory) rather than the Windows copy's ../dist/ncc/.
+      * CoreCompile invokes the compiler with `dotnet exec "<ncc.dll>"` (the explicit exec
+        verb) rather than relying on a bundled ncc.exe apphost, which is Windows-only.
+      * Paths use forward slashes.
+
+    It lets an ordinary SDK-style project (`<Project Sdk="Microsoft.NET.Sdk">`) compile
+    Nemerle (.n) sources via the dotnet-hosted ncc.dll, driven by plain `dotnet build`, by
+    overriding the single well-known CoreCompile extension point with a plain <Exec>.
+    @(IntermediateAssembly) (the exact output path csc/fsc/vbc's own CoreCompile would have
+    produced) is reused verbatim so every downstream SDK target (CopyFilesToOutputDirectory,
+    GenerateBuildRuntimeConfigurationFiles, Clean, etc.) keeps working unmodified.
+
+    Consuming project shape:
+      Project Sdk="Microsoft.NET.Sdk"
+        PropertyGroup
+          OutputType: Exe
+          TargetFramework: net10.0
+          EnableDefaultCompileItems: false   (Nemerle .n sources are NOT C#)
+          UseAppHost: false                  (ncc emits a managed PE runnable via dotnet exec)
+          GenerateDependencyFile: false
+        ItemGroup
+          NemerleCompile Include="*.n"
+        Import Project="<path>/linux/Nemerle.Core.targets"
+  -->
+
+  <PropertyGroup>
+    <!-- The runnable "dotnet ncc" layout (ncc.dll + ncc.runtimeconfig.json + Nemerle*.dll),
+         expected as a sibling "ncc" folder next to this "linux" directory.
+         Override with -p:NccLayoutDir=... -->
+    <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)../ncc/</NccLayoutDir>
+    <NccDll>$(NccLayoutDir)ncc.dll</NccDll>
+    <!-- "exe" or "library": mirrors ncc's own -target: values, defaulted from OutputType. -->
+    <NemerleTargetType Condition="'$(NemerleTargetType)' == '' AND '$(OutputType)' == 'Exe'">exe</NemerleTargetType>
+    <NemerleTargetType Condition="'$(NemerleTargetType)' == ''">library</NemerleTargetType>
+    <!-- ncc emits a standalone Portable PDB (WP-E, dotnet-port/14-pdb-log.md) at <out>.pdb
+         when -debug is passed, i.e. at $(IntermediateOutputPath)$(TargetName).pdb, exactly
+         where the SDK's @(_DebugSymbolsIntermediatePath) already points, so once ncc writes
+         it there the common targets copy it to $(OutDir) and clean it with no extra wiring.
+         Emit symbols unless the project turned them off (DebugType=none / DebugSymbols=false);
+         the SDK defaults DebugType=portable and DebugSymbols=true for both Debug and Release. -->
+    <NemerleDebugSwitch Condition="'$(DebugType)' != 'none' AND '$(DebugType)' != 'None' AND '$(DebugSymbols)' != 'false'">-debug</NemerleDebugSwitch>
+    <!-- The SDK's "ref assembly" optimization (ProduceReferenceAssembly, on by default)
+         expects CoreCompile to additionally emit a stripped-down reference assembly under
+         obj/.../refint/; that is a Roslyn (/refout:)-specific feature ncc has no
+         equivalent of, so turn it off for Nemerle.Core.targets-based projects. -->
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+
+  <Target Name="NemerleEnsureLayout" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(NccDll)')"
+           Text="NccLayoutDir ($(NccLayoutDir)) does not contain ncc.dll: place the runnable ncc layout there (or pass -p:NccLayoutDir=&lt;path&gt;)." />
+    <Error Condition="'@(NemerleCompile)' == ''"
+           Text="No @(NemerleCompile) items -- add &lt;NemerleCompile Include=&quot;*.n&quot; /&gt; (or similar) to the project." />
+  </Target>
+
+  <!-- Using a non-".csproj" project extension (".nproj") deliberately: the .NET SDK selects
+       its language-specific target set from $(MSBuildProjectExtension) via the implicit
+       trailing "Sdk.targets" import, i.e. AFTER any explicit <Import> a project body writes,
+       so a ".csproj"-named project always has ITS csc-based CoreCompile win over ours (last
+       same-named target definition wins in MSBuild). ".nproj" sidesteps the conflict entirely
+       at the cost of losing a couple of small pieces of infrastructure normally supplied by
+       the language-specific targets; CreateManifestResourceNames is the one this has needed
+       to stub out so far (called unconditionally from the SDK's own Compile chain; harmless
+       no-op here since no <EmbeddedResource> items are used by NemerleCompile-based projects). -->
+  <Target Name="CreateManifestResourceNames" Condition="'$(MSBuildProjectExtension)' != '.csproj'" />
+
+  <!-- Overrides the SDK's built-in CoreCompile (normally Csc). @(IntermediateAssembly) is
+       already computed by the common targets imported ahead of this file (Sdk.targets), to
+       the same path csc would have written; reusing it verbatim keeps every downstream target
+       (copy-to-output, runtimeconfig/deps generation, Clean, incremental up-to-date checks
+       via Inputs/Outputs below) working exactly as the SDK expects. -->
+  <Target Name="CoreCompile"
+          Inputs="@(NemerleCompile);@(ReferencePath);$(NccDll)"
+          Outputs="@(IntermediateAssembly)">
+    <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
+    <!-- Pass this project's own ProjectReference/PackageReference outputs to ncc as -ref:.
+         The .NET SDK's ResolveAssemblyReferences populates @(ReferencePath) with BOTH those
+         and the framework ref-pack facades (Microsoft.NETCore.App.Ref, %(FrameworkReferenceName)
+         = Microsoft.NETCore.App); the facades are excluded here because their GetExportedTypes()
+         is empty and ncc already auto-resolves the real shared framework itself
+         (LoadCoreStdlibReferences in ncc/passes.n). What is left is project/package references,
+         which have an empty %(FrameworkReferenceName). -->
+    <ItemGroup>
+      <_NemerleUserReference Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == ''" />
+    </ItemGroup>
+    <!-- ncc auto-resolves the standard reference set (the shared framework's real split BCL
+         assemblies + this layout's Nemerle.dll) on CoreCLR since the LoadCoreStdlibReferences
+         change in ncc/passes.n, so no -from-file:ncc.default.rsp is needed here. Invoked via
+         `dotnet exec <ncc.dll>` (explicit exec verb; no Windows-only ncc.exe apphost). -->
+    <Exec Command="dotnet exec &quot;$(NccDll)&quot; -target:$(NemerleTargetType) $(NemerleDebugSwitch) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
+  <!-- Ordinary Nemerle programs reference Nemerle.dll (and, if they use macros at their own
+       call sites, Nemerle.Macros.dll/Nemerle.Compiler.dll) at RUN time; .NET's assembly
+       probing only looks beside the entry assembly / in the shared framework (no GAC). Copy
+       them next to the produced assembly and record the destinations in @(FileWrites) so
+       `dotnet clean` removes them again. Runs right after CopyFilesToOutputDirectory (which
+       creates $(OutDir) and copies the main assembly/pdb) and BEFORE IncrementalClean, which
+       snapshots @(FileWrites) into the clean file. -->
+  <Target Name="NemerleCopyRuntimeAssemblies" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(OutDir)' != ''">
+    <ItemGroup>
+      <_NemerleRuntimeDll Include="$(NccLayoutDir)Nemerle.dll;$(NccLayoutDir)Nemerle.Compiler.dll;$(NccLayoutDir)Nemerle.Macros.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_NemerleRuntimeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true">
+      <Output TaskParameter="DestinationFiles" ItemName="FileWrites" />
+    </Copy>
+  </Target>
+
+</Project>
