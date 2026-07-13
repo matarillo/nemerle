@@ -30,12 +30,16 @@ export interface ProjectInfoLoadResult {
   readonly sourceCount: number;
   readonly assemblyReferenceCount: number;
   readonly macroReferenceCount: number;
+  readonly sourceFiles: readonly string[];
+  readonly assemblyReferences: readonly string[];
+  readonly macroReferences: readonly string[];
   readonly defineConstants: readonly string[];
   readonly warnings: readonly string[];
   readonly errorKind?: string;
   readonly errorMessage?: string;
   readonly errorDetails?: string;
-  readonly appliedToEngine: false;
+  readonly appliedToEngine: boolean;
+  readonly applyError?: string;
 }
 
 const configurationSection = 'nemerle';

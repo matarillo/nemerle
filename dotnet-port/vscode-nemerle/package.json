@@ -2,7 +2,7 @@
   "name": "vscode-nemerle",
   "displayName": "Nemerle",
   "description": "Development VS Code language support for Nemerle on .NET 10.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "nemerle-project",
   "license": "BSD-3-Clause",
   "repository": {
@@ -100,7 +100,7 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "markdownDescription": "Absolute path to a development `Nemerle.LanguageServer.dll`. The WP-L2 development VSIX does not bundle a server; build `dotnet-port/LspServer` and configure its output path.",
+          "markdownDescription": "Absolute path to a development `Nemerle.LanguageServer.dll`. The development VSIX does not bundle a server (planned for WP-L4); build `dotnet-port/LspServer` and configure its output path.",
           "order": 10
         },
         "nemerle.server.trace": {
@@ -168,7 +168,7 @@
     "test:integration": "npm run build && tsc -p tsconfig.test.json && node dist-test/test/runTest.js && node dist-test/test/runUntrusted.js",
     "vscode:prepublish": "npm run build",
     "package": "npm run lint && npm test && npm run package:vsix",
-    "package:vsix": "vsce package --out vscode-nemerle-0.2.0.vsix"
+    "package:vsix": "vsce package --out vscode-nemerle-0.3.0.vsix"
   },
   "dependencies": {
     "vscode-languageclient": "10.1.0"

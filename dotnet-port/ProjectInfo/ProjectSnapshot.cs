@@ -46,11 +46,14 @@ public sealed record NemerleProjectSnapshot(
     IReadOnlyList<string> Warnings,
     DateTimeOffset LoadedAtUtc);
 
-internal static class ProjectPathNormalizer
+public static class ProjectPathNormalizer
 {
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
+
+    /// <summary>Case sensitivity used to compare normalized paths on this platform.</summary>
+    public static StringComparer Comparer => PathComparer;
 
     public static string NormalizeFile(string path)
     {

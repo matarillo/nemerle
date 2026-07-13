@@ -22,16 +22,14 @@ internal sealed class InMemoryNemerleSource : IIdeSource
     private TopDeclaration[] _topDeclarations = [];
     private IList<RegionInfo> _regions = [];
 
-    public InMemoryNemerleSource(string uri, string path, string text, int version)
+    public InMemoryNemerleSource(string path, string text, int version)
     {
-        Uri = uri;
         Path = path;
         FileIndex = Location.GetFileIndex(path);
         _text = text;
         _version = version;
     }
 
-    public string Uri { get; }
     public string Path { get; }
     public int FileIndex { get; }
 

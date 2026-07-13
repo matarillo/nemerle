@@ -6,12 +6,14 @@ import {
 } from './clientController';
 import {
   isExcludedProjectPath,
+  normalizeComparablePath,
   resolveSelectedProject,
   sortAndDedupeProjects,
 } from './projectDiscovery';
 
 const selectedProjectKey = 'nemerle.selectedProject';
 const discoveryExclude = '**/{bin,obj,node_modules,.git,.vs,dist}/**';
+const maxReferenceWatchers = 64;
 
 export interface ProjectStatusSnapshot {
   readonly state: string;
@@ -23,9 +25,15 @@ export interface ProjectStatusSnapshot {
 export class NemerleProjectController implements vscode.Disposable {
   private readonly statusItem: vscode.StatusBarItem;
   private readonly watcher: vscode.FileSystemWatcher;
+  private readonly importsWatcher: vscode.FileSystemWatcher;
+  private readonly assetsWatcher: vscode.FileSystemWatcher;
+  private readonly sourceWatcher: vscode.FileSystemWatcher;
+  private referenceWatchers: vscode.FileSystemWatcher[] = [];
+  private watchedSourceFiles = new Set<string>();
   private selectedProject: string | undefined;
   private status: ProjectStatusSnapshot = { state: 'unselected', message: 'No project selected.' };
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  private pendingForceReload = false;
   private generation = 0;
   private loadOperation: Promise<void> = Promise.resolve();
   private disposed = false;
@@ -46,8 +54,30 @@ export class NemerleProjectController implements vscode.Disposable {
     this.watcher = vscode.workspace.createFileSystemWatcher('**/*.nproj');
     this.watcher.onDidCreate((uri) => this.scheduleDiscovery(uri), this, context.subscriptions);
     this.watcher.onDidDelete((uri) => this.scheduleDiscovery(uri), this, context.subscriptions);
-    this.watcher.onDidChange((uri) => this.scheduleReload(uri), this, context.subscriptions);
-    context.subscriptions.push(this.statusItem, this.watcher);
+    this.watcher.onDidChange((uri) => this.scheduleProjectFileReload(uri), this, context.subscriptions);
+    // Imported targets/props (including obj/*.nuget.g.*) and NuGet assets
+    // change the MSBuild evaluation result, so they force a fresh snapshot
+    // query.  Plain .n disk edits only need the cached snapshot re-applied so
+    // the engine rereads closed sources from disk.
+    this.importsWatcher = vscode.workspace.createFileSystemWatcher('**/*.{targets,props}');
+    this.importsWatcher.onDidCreate(() => this.scheduleSelectedReload(true), this, context.subscriptions);
+    this.importsWatcher.onDidChange(() => this.scheduleSelectedReload(true), this, context.subscriptions);
+    this.importsWatcher.onDidDelete(() => this.scheduleSelectedReload(true), this, context.subscriptions);
+    this.assetsWatcher = vscode.workspace.createFileSystemWatcher('**/obj/project.assets.json');
+    this.assetsWatcher.onDidCreate(() => this.scheduleSelectedReload(true), this, context.subscriptions);
+    this.assetsWatcher.onDidChange(() => this.scheduleSelectedReload(true), this, context.subscriptions);
+    this.assetsWatcher.onDidDelete(() => this.scheduleSelectedReload(true), this, context.subscriptions);
+    this.sourceWatcher = vscode.workspace.createFileSystemWatcher('**/*.n');
+    this.sourceWatcher.onDidCreate((uri) => this.scheduleSourceRefresh(uri), this, context.subscriptions);
+    this.sourceWatcher.onDidChange((uri) => this.scheduleSourceRefresh(uri), this, context.subscriptions);
+    this.sourceWatcher.onDidDelete((uri) => this.scheduleSourceRefresh(uri), this, context.subscriptions);
+    context.subscriptions.push(
+      this.statusItem,
+      this.watcher,
+      this.importsWatcher,
+      this.assetsWatcher,
+      this.sourceWatcher,
+    );
     this.renderStatus();
   }
 
@@ -72,7 +102,7 @@ export class NemerleProjectController implements vscode.Disposable {
     }
     if (folders.length !== 1) {
       this.selectedProject = undefined;
-      this.setStatus('unsupported', 'WP-L2 supports one workspace folder and one selected project only.');
+      this.setStatus('unsupported', 'A single workspace folder with one selected project is supported.');
       return;
     }
     const folder = folders[0];
@@ -110,7 +140,7 @@ export class NemerleProjectController implements vscode.Disposable {
     }
     const folders = vscode.workspace.workspaceFolders ?? [];
     if (folders.length !== 1) {
-      this.setStatus('unsupported', 'WP-L2 supports one workspace folder and one selected project only.');
+      this.setStatus('unsupported', 'A single workspace folder with one selected project is supported.');
       return;
     }
     const folder = folders[0];
@@ -128,7 +158,7 @@ export class NemerleProjectController implements vscode.Disposable {
       projectPath,
     }));
     const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: 'Select the single Nemerle project used for the WP-L2 snapshot',
+      placeHolder: 'Select the Nemerle project used for the engine workspace',
       matchOnDescription: true,
     });
     if (selected === undefined) {
@@ -143,10 +173,7 @@ export class NemerleProjectController implements vscode.Disposable {
     if (!this.ensureTrusted('reload the project')) {
       return;
     }
-    if (this.debounceTimer !== undefined) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = undefined;
-    }
+    this.clearSchedule();
     if (this.selectedProject === undefined) {
       await this.initialize();
       if (this.selectedProject === undefined) {
@@ -166,10 +193,8 @@ export class NemerleProjectController implements vscode.Disposable {
   public dispose(): void {
     this.disposed = true;
     this.generation++;
-    if (this.debounceTimer !== undefined) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = undefined;
-    }
+    this.clearSchedule();
+    this.disposeReferenceWatchers();
   }
 
   private async discoverProjects(): Promise<string[]> {
@@ -220,8 +245,14 @@ export class NemerleProjectController implements vscode.Disposable {
             this.output.show(true);
           }
         });
+      } else if (!result.appliedToEngine) {
+        const message = `Project snapshot loaded but was not applied to the analysis engine${result.applyError !== undefined ? `: ${result.applyError}` : '.'}`;
+        this.setStatus('notApplied', message, result);
+        this.output.error(message);
       } else {
-        this.setStatus('loaded', `Loaded snapshot for ${result.projectPath ?? projectPath}.`, result);
+        this.watchedSourceFiles = new Set(result.sourceFiles.map(normalizeComparablePath));
+        this.updateReferenceWatchers(result);
+        this.setStatus('applied', `Applied ${result.projectPath ?? projectPath} to the analysis engine.`, result);
         this.output.info(this.formatStatus());
         for (const warning of result.warnings) {
           this.output.warn(warning);
@@ -244,15 +275,33 @@ export class NemerleProjectController implements vscode.Disposable {
     this.schedule(() => this.initialize());
   }
 
-  private scheduleReload(uri: vscode.Uri): void {
+  private scheduleProjectFileReload(uri: vscode.Uri): void {
     if (isExcludedProjectPath(uri.fsPath) || this.selectedProject === undefined) {
       return;
     }
-    const left = process.platform === 'win32' ? uri.fsPath.toLowerCase() : uri.fsPath;
-    const right = process.platform === 'win32' ? this.selectedProject.toLowerCase() : this.selectedProject;
-    if (path.normalize(left) === path.normalize(right)) {
-      this.schedule(() => this.loadSelected(true));
+    if (normalizeComparablePath(uri.fsPath) === normalizeComparablePath(this.selectedProject)) {
+      this.scheduleSelectedReload(true);
     }
+  }
+
+  private scheduleSourceRefresh(uri: vscode.Uri): void {
+    if (this.selectedProject === undefined ||
+        !this.watchedSourceFiles.has(normalizeComparablePath(uri.fsPath))) {
+      return;
+    }
+    this.scheduleSelectedReload(false);
+  }
+
+  private scheduleSelectedReload(forceReload: boolean): void {
+    if (this.selectedProject === undefined || !vscode.workspace.isTrusted) {
+      return;
+    }
+    this.pendingForceReload = this.pendingForceReload || forceReload;
+    this.schedule(() => {
+      const force = this.pendingForceReload;
+      this.pendingForceReload = false;
+      return this.loadSelected(force);
+    });
   }
 
   private schedule(action: () => Promise<void>): void {
@@ -263,6 +312,43 @@ export class NemerleProjectController implements vscode.Disposable {
       this.debounceTimer = undefined;
       void action();
     }, 350);
+  }
+
+  private clearSchedule(): void {
+    if (this.debounceTimer !== undefined) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = undefined;
+    }
+    this.pendingForceReload = false;
+  }
+
+  private updateReferenceWatchers(result: ProjectInfoLoadResult): void {
+    this.disposeReferenceWatchers();
+    const references = [...result.assemblyReferences, ...result.macroReferences];
+    if (references.length > maxReferenceWatchers) {
+      this.output.warn(
+        `Watching only the first ${maxReferenceWatchers} of ${references.length} resolved references for changes.`);
+    }
+    for (const reference of references.slice(0, maxReferenceWatchers)) {
+      const pattern = new vscode.RelativePattern(
+        vscode.Uri.file(path.dirname(reference)),
+        path.basename(reference),
+      );
+      const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+      // A rebuilt dependency keeps its resolved path, so the cached snapshot
+      // stays valid; re-applying it makes the engine reload the assembly
+      // (byte-level load keyed by file write time).
+      watcher.onDidCreate(() => this.scheduleSelectedReload(false));
+      watcher.onDidChange(() => this.scheduleSelectedReload(false));
+      this.referenceWatchers.push(watcher);
+    }
+  }
+
+  private disposeReferenceWatchers(): void {
+    for (const watcher of this.referenceWatchers) {
+      watcher.dispose();
+    }
+    this.referenceWatchers = [];
   }
 
   private ensureTrusted(action: string): boolean {
@@ -286,7 +372,8 @@ export class NemerleProjectController implements vscode.Disposable {
       empty: '$(circle-slash) Nemerle: No Project',
       unselected: '$(question) Nemerle: Select Project',
       loading: '$(sync~spin) Nemerle: Loading',
-      loaded: '$(project) Nemerle: Project Loaded',
+      applied: '$(project) Nemerle: Project Applied',
+      notApplied: '$(warning) Nemerle: Not Applied',
       error: '$(error) Nemerle: Project Error',
     };
     this.statusItem.text = labels[this.status.state] ?? '$(project) Nemerle';
@@ -305,8 +392,14 @@ export class NemerleProjectController implements vscode.Disposable {
       if (result.warnings.length > 0) {
         lines.push(...result.warnings.map((warning) => `Warning: ${warning}`));
       }
+      if (result.appliedToEngine) {
+        lines.push('The snapshot is applied to the analysis engine; diagnostics are project-aware.');
+      } else {
+        lines.push(`The snapshot is NOT applied to the analysis engine${result.applyError !== undefined ? `: ${result.applyError}` : '.'}`);
+      }
+    } else {
+      lines.push('No project snapshot is applied; the language server analyzes open files only.');
     }
-    lines.push('WP-L2 snapshot only: it is not applied to the analysis engine; diagnostics are not project-aware until WP-L3.');
     return lines.join('\n');
   }
 }

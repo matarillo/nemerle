@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import {
   isExcludedProjectPath,
+  normalizeComparablePath,
   resolveSelectedProject,
   sortAndDedupeProjects,
 } from '../../src/projectDiscovery';
@@ -14,6 +15,16 @@ test('project discovery excludes generated directories and sorts/deduplicates pa
   const excluded = path.join(root, 'A', 'obj', 'Generated.nproj');
   assert.equal(isExcludedProjectPath(excluded), true);
   assert.deepEqual(sortAndDedupeProjects([two, excluded, one, one]), [one, two]);
+});
+
+test('comparable path normalization folds separators, relative segments, and Windows case', () => {
+  const root = path.resolve('workspace');
+  const canonical = normalizeComparablePath(path.join(root, 'Src', 'Main.n'));
+  assert.equal(normalizeComparablePath(path.join(root, 'Src', '..', 'Src', 'Main.n')), canonical);
+  if (process.platform === 'win32') {
+    assert.equal(normalizeComparablePath(path.join(root, 'Src', 'Main.n').toUpperCase()), canonical);
+    assert.equal(normalizeComparablePath(path.join(root, 'Src', 'Main.n').replace(/\\/gu, '/')), canonical);
+  }
 });
 
 test('selection distinguishes zero, one, many, explicit, and stale choices', () => {

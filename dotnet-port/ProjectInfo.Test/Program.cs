@@ -7,6 +7,8 @@ internal static class Program
         try
         {
             await ParserTests();
+            EngineInputTests();
+            PathNormalizerTests();
             await ErrorTests();
             await ProviderTests();
             if (args.Contains("--integration", StringComparer.Ordinal))
@@ -46,6 +48,53 @@ internal static class Program
         var missingMetadata = fixture.Replace("\"FullPath\": \"C:\\\\repo\\\\App\\\\Program.n\"", "\"NotFullPath\": \"Program.n\"", StringComparison.Ordinal);
         Throws(ProjectQueryErrorKind.MissingField, () => MsBuildJsonParser.Parse(key, missingMetadata));
         return Task.CompletedTask;
+    }
+
+    private static void EngineInputTests()
+    {
+        var fixture = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Fixtures", "msbuild-mixed.json"));
+        var key = ProjectQueryKey.Create("dotnet", @"C:\repo\App\App.nproj");
+        var snapshot = MsBuildJsonParser.Parse(key, fixture);
+        var inputs = EngineWorkspaceInputs.FromSnapshot(snapshot);
+
+        Equal(snapshot.ProjectPath, inputs.ProjectPath, "engine input project path");
+        True(inputs.SourceFiles.SequenceEqual(snapshot.SourceFiles), "engine input sources");
+        True(inputs.AssemblyReferences.SequenceEqual(snapshot.AssemblyReferences), "engine input assembly references");
+        True(inputs.MacroReferences.SequenceEqual(snapshot.MacroReferences), "engine input macro references");
+        True(inputs.MacroReferences.All(path => !inputs.AssemblyReferences.Contains(path)),
+            "macro-only references never join the assembly reference list");
+        // Build parity: only NemerleAdditionalOptions -define values apply;
+        // the MSBuild DefineConstants property (NET/TRACE here) is reported as
+        // a warning because Nemerle.Core.targets does not pass it to ncc.
+        True(inputs.Defines.SequenceEqual(snapshot.Options.AdditionalDefines), "engine defines come from -define only");
+        True(!inputs.Defines.Contains("NET") && !inputs.Defines.Contains("TRACE"), "MSBuild DefineConstants not applied");
+        Equal(false, inputs.CheckIntegerOverflow, "checked option propagated");
+        True(inputs.IndentationSyntax, "indentation option propagated");
+        True(inputs.Warnings.Count == snapshot.Warnings.Count + 1, "DefineConstants gap warning added");
+        True(inputs.Warnings.Any(warning => warning.Contains("DefineConstants", StringComparison.Ordinal)),
+            "DefineConstants gap warning names the property");
+
+        // Without extra MSBuild defines there is no gap warning.
+        var noExtraDefines = snapshot with
+        {
+            DefineConstants = snapshot.Options.AdditionalDefines,
+        };
+        var quietInputs = EngineWorkspaceInputs.FromSnapshot(noExtraDefines);
+        Equal(snapshot.Warnings.Count, quietInputs.Warnings.Count, "no gap warning without extra defines");
+    }
+
+    private static void PathNormalizerTests()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        Equal(@"C:\repo\App\Program.n", ProjectPathNormalizer.NormalizeFile(@"c:\repo\App\Program.n"),
+            "drive letter is normalized to upper case");
+        Equal(@"C:\repo\App\Program.n", ProjectPathNormalizer.NormalizeFile(@"C:\repo\Lib\..\App\.\Program.n"),
+            "relative segments are resolved");
+        var deduped = ProjectPathNormalizer.NormalizeDistinct([@"C:\repo\a.n", @"c:\REPO\A.N"]);
+        Equal(1, deduped.Count, "case-differing duplicates collapse to one path");
+        True(ProjectPathNormalizer.Comparer.Equals(@"C:\repo\a.n", @"c:\Repo\A.N"), "path comparer is case-insensitive on Windows");
     }
 
     private static async Task ErrorTests()

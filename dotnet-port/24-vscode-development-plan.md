@@ -38,13 +38,15 @@
 
 現在欠けているもの:
 
-- WP-L2 snapshot を `IIdeProject` / LSP engine へ適用する経路（WP-L3）。
-- disk 上の project source と未保存 editor buffer を一つの compilation として扱う workspace。
-- VSIX と server binaries を再現可能に組み立てる packaging/test 手順。
+- VSIX と server binaries を再現可能に組み立てる packaging/test 手順（WP-L4）。
 
-進捗更新 (2026-07-13): WP-L1 と WP-L2 は完了。WP-L2 は snapshot の取得・表示までで、
-engine には接続していない。実装・検証結果は `25-vscode-extension-log.md` と
-`26-vscode-project-info-log.md` を参照。
+進捗更新 (2026-07-13): WP-L1 と WP-L2 は完了。実装・検証結果は
+`25-vscode-extension-log.md` と `26-vscode-project-info-log.md` を参照。
+
+進捗更新 (2026-07-14): WP-L3 完了。WP-L2 snapshot は engine workspace に適用され、
+project 全 source（open buffer 優先、closed source は disk-backed）と resolved
+reference / macro reference を使う project-aware diagnostics が動く。
+実装・検証結果は `27-vscode-project-workspace-log.md` を参照。
 
 ## 3. ゴール
 
@@ -234,6 +236,9 @@ snapshot は WP-L3 まで engine 非適用。詳細は `26-vscode-project-info-l
 5. project evaluation failure が server crash や無限 restart にならない。
 
 ### WP-L3: project-aware engine workspace
+
+状態: **完了 (2026-07-14)**。受け入れ基準 1〜7 を raw LSP / Extension Host の実プロセスで
+確認済み。詳細は `27-vscode-project-workspace-log.md`。
 
 成果物:
 

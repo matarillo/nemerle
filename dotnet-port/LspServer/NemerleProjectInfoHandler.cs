@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Nemerle.LanguageServer.Engine;
 using Nemerle.ProjectInfo;
 using OmniSharp.Extensions.JsonRpc;
 using MediatR;
@@ -23,28 +25,35 @@ public sealed record ProjectInfoLoadResult(
     int SourceCount,
     int AssemblyReferenceCount,
     int MacroReferenceCount,
+    IReadOnlyList<string> SourceFiles,
+    IReadOnlyList<string> AssemblyReferences,
+    IReadOnlyList<string> MacroReferences,
     IReadOnlyList<string> DefineConstants,
     IReadOnlyList<string> Warnings,
     string? ErrorKind,
     string? ErrorMessage,
     string? ErrorDetails,
-    bool AppliedToEngine);
+    bool AppliedToEngine,
+    string? ApplyError);
 
 [Serial]
 internal sealed class NemerleProjectInfoHandler
     : IJsonRpcRequestHandler<ProjectInfoLoadRequest, ProjectInfoLoadResult>
 {
     private readonly ProjectInfoProvider _provider;
+    private readonly WorkspaceManager _workspace;
 
-    public NemerleProjectInfoHandler(ProjectInfoProvider provider)
+    public NemerleProjectInfoHandler(ProjectInfoProvider provider, WorkspaceManager workspace)
     {
         _provider = provider;
+        _workspace = workspace;
     }
 
     public async Task<ProjectInfoLoadResult> Handle(
         ProjectInfoLoadRequest request,
         CancellationToken cancellationToken)
     {
+        NemerleProjectSnapshot snapshot;
         try
         {
             var key = ProjectQueryKey.Create(
@@ -53,26 +62,13 @@ internal sealed class NemerleProjectInfoHandler
                 request.Configuration,
                 request.Platform,
                 request.TargetFramework);
-            var snapshot = await _provider.GetSnapshotAsync(
+            var queryStopwatch = Stopwatch.StartNew();
+            snapshot = await _provider.GetSnapshotAsync(
                 key,
                 request.ForceReload,
                 cancellationToken).ConfigureAwait(false);
-            return new ProjectInfoLoadResult(
-                "loaded",
-                snapshot.ProjectPath,
-                snapshot.ProjectDirectory,
-                snapshot.Configuration,
-                snapshot.Platform,
-                snapshot.TargetFramework,
-                snapshot.SourceFiles.Count,
-                snapshot.AssemblyReferences.Count,
-                snapshot.MacroReferences.Count,
-                snapshot.DefineConstants,
-                snapshot.Warnings,
-                null,
-                null,
-                null,
-                AppliedToEngine: false);
+            Console.Error.WriteLine(
+                $"nemerle project query finished after {queryStopwatch.Elapsed.TotalMilliseconds:F0} ms: {snapshot.ProjectPath}");
         }
         catch (ProjectQueryException ex)
         {
@@ -87,6 +83,31 @@ internal sealed class NemerleProjectInfoHandler
             Console.Error.WriteLine($"Project query configuration error: {ex.Message}");
             return Error("Configuration", ex.Message, null);
         }
+
+        // The query succeeded; apply the snapshot to the engine workspace.
+        // Apply failures stay recoverable: the previous workspace remains
+        // active and the server keeps running.
+        var apply = await _workspace.ApplySnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
+        return new ProjectInfoLoadResult(
+            "loaded",
+            snapshot.ProjectPath,
+            snapshot.ProjectDirectory,
+            snapshot.Configuration,
+            snapshot.Platform,
+            snapshot.TargetFramework,
+            snapshot.SourceFiles.Count,
+            snapshot.AssemblyReferences.Count,
+            snapshot.MacroReferences.Count,
+            snapshot.SourceFiles,
+            snapshot.AssemblyReferences,
+            snapshot.MacroReferences,
+            snapshot.DefineConstants,
+            apply.Warnings,
+            null,
+            null,
+            null,
+            AppliedToEngine: apply.Applied,
+            ApplyError: apply.Error);
     }
 
     private static ProjectInfoLoadResult Error(string kind, string message, string? details) =>
@@ -102,8 +123,12 @@ internal sealed class NemerleProjectInfoHandler
             0,
             Array.Empty<string>(),
             Array.Empty<string>(),
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            Array.Empty<string>(),
             kind,
             message,
             details,
-            AppliedToEngine: false);
+            AppliedToEngine: false,
+            ApplyError: null);
 }

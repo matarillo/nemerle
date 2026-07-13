@@ -137,7 +137,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A2 | dotnet ネイティブ化「レベル A」: 参照自動解決・rsp撤廃(`LoadCoreStdlibReferences`)、`@(ReferencePath)`→`-ref:`配線、`-debug`/PDB・`dotnet clean`対応、dotnet tool rspフリー化、Linux版targets | —(計画後) | 完了(2026-07-13) | DISTRIBUTION.md |
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
-| WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 進行中(WP-L1/L2 完了、2026-07-13) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md |
+| WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 進行中(WP-L1/L2/L3 完了、2026-07-14。残は WP-L4 packaging) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md |
 
 ## 作業ログ
 
@@ -594,3 +594,13 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   HelloCore/RefDemo/Newtonsoft.Json fixture/Sokoban、失敗後の LSP 継続、trusted/untrusted
   Extension Host を実測。snapshot の engine 適用は WP-L3 へ明示的に残した。
   詳細は `26-vscode-project-info-log.md`。
+- 2026-07-14: WP-L3(project-aware engine workspace)完了。WP-L2 snapshot を
+  `WorkspaceManager` / `IIdeProject` adapter 経由で analysis engine に適用し、
+  project 全 source(open buffer が disk-backed text より優先)、resolved assembly
+  reference、macro-only reference(assembly reference に混入しない)を使う
+  project-aware diagnostics を実装。didClose の disk 復帰、解析済み version 照合による
+  stale diagnostics 抑止、`.nproj`/targets/assets の force reload と on-disk `.n`/参照 dll
+  の cache-hit 再適用の watch、失敗 reload の回復可能化を、HelloCore/RefDemo/
+  PackageReference/Sokoban と一時 project の raw LSP シナリオおよび Extension Host で
+  実測した。extension 0.3.0 は適用状態を status に表示する。
+  詳細は `27-vscode-project-workspace-log.md`。

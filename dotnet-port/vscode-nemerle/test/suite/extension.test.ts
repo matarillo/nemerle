@@ -78,20 +78,22 @@ suite('Nemerle extension', () => {
     const api = await extension.activate();
 
     await waitUntil(
-      () => api.projectStatus?.state === 'loaded',
-      'the single .nproj project snapshot to load automatically',
+      () => api.projectStatus?.state === 'applied',
+      'the single .nproj project snapshot to load and apply automatically',
     );
     assert.equal(api.projectStatus?.result?.sourceCount, 1);
     assert.equal(api.projectStatus?.result?.assemblyReferenceCount, 0);
     assert.equal(api.projectStatus?.result?.macroReferenceCount, 0);
-    assert.equal(api.projectStatus?.result?.appliedToEngine, false);
+    assert.equal(api.projectStatus?.result?.appliedToEngine, true);
+    assert.equal(api.projectStatus?.result?.sourceFiles.length, 1);
+    assert.match(api.projectStatus?.result?.sourceFiles[0] ?? '', /Editing\.n$/u);
     const selection = vscode.commands.executeCommand('nemerle.selectProject');
     await new Promise((resolve) => setTimeout(resolve, 250));
     await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
     await selection;
-    await waitUntil(() => api.projectStatus?.state === 'loaded', 'the QuickPick project selection to load');
+    await waitUntil(() => api.projectStatus?.state === 'applied', 'the QuickPick project selection to apply');
     await vscode.commands.executeCommand('nemerle.reloadProject');
-    await waitUntil(() => api.projectStatus?.state === 'loaded', 'the project snapshot to reload');
+    await waitUntil(() => api.projectStatus?.state === 'applied', 'the project snapshot to reload and apply');
     await vscode.commands.executeCommand('nemerle.showProjectStatus');
 
     await waitUntil(
@@ -108,6 +110,29 @@ suite('Nemerle extension', () => {
     await waitUntil(
       () => vscode.languages.getDiagnostics(uri).length === 0,
       'diagnostics to clear after the unsaved fix',
+    );
+
+    // A project source: the unsaved buffer overrides the clean disk content,
+    // and revert+close returns the file to disk-backed analysis.
+    const editingUri = vscode.Uri.file(path.join(workspaceRoot(), 'Editing.n'));
+    const editingDocument = await vscode.workspace.openTextDocument(editingUri);
+    const editingEditor = await vscode.window.showTextDocument(editingDocument);
+    await editingEditor.edit((edit) => {
+      const all = new vscode.Range(
+        editingDocument.positionAt(0),
+        editingDocument.positionAt(editingDocument.getText().length));
+      edit.replace(all, 'module Editing\n{\n  Bad() : void\n  {\n    def value : int = "wrong";\n    System.Console.WriteLine(value);\n  }\n}\n');
+    });
+    assert.equal(editingDocument.isDirty, true);
+    await waitUntil(
+      () => vscode.languages.getDiagnostics(editingUri).some((diagnostic) =>
+        diagnostic.severity === vscode.DiagnosticSeverity.Error),
+      'an error diagnostic for the unsaved project source Editing.n',
+    );
+    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+    await waitUntil(
+      () => vscode.languages.getDiagnostics(editingUri).length === 0,
+      'project source diagnostics to clear after revert and close',
     );
 
     const firstPid = await waitForPid(api);

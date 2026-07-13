@@ -41,6 +41,12 @@
 > 配布一体化は WP-L4 のまま。詳細は `24-vscode-development-plan.md` /
 > `26-vscode-project-info-log.md`。
 
+> **更新 (2026-07-14, WP-L3 — project-aware engine workspace)**: 上記 snapshot は
+> LSP server の analysis engine に適用されるようになった。project 全 source
+> (未保存 buffer が disk より優先)、resolved reference、macro-only reference を使う
+> project-aware diagnostics が VS Code extension 0.3.0 で動く。development VSIX が
+> server を同梱しない点は変わらず WP-L4。詳細は `27-vscode-project-workspace-log.md`。
+
 ---
 
 ## 1. `dotnet ncc` 配布レイアウト — `dotnet-port\pack-tool.ps1`

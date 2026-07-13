@@ -11,6 +11,7 @@ internal static class Program
     public static async Task Main()
     {
         await using var project = new NemerleProject(Console.Error);
+        var workspace = new WorkspaceManager(project);
         await using var projectInfo = new ProjectInfoProvider();
         var server = await OmniSharp.Extensions.LanguageServer.Server.LanguageServer.From(options => options
             .WithInput(Console.OpenStandardInput())
@@ -18,11 +19,12 @@ internal static class Program
             .WithServerInfo(new ServerInfo
             {
                 Name = "nemerle-language-server",
-                Version = "0.1.0",
+                Version = "0.2.0",
             })
             .WithServices(services =>
             {
                 services.AddSingleton(project);
+                services.AddSingleton(workspace);
                 services.AddSingleton(projectInfo);
             })
             .WithHandler<NemerleTextDocumentSyncHandler>()
