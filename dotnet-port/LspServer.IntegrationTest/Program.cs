@@ -15,6 +15,10 @@ internal static class Program
             : Path.GetFullPath(Path.Combine(
                 "dotnet-port", "LspServer", "bin", "Release", "net10.0",
                 "Nemerle.LanguageServer.dll"));
+        var helloProject = args.Length > 1
+            ? Path.GetFullPath(args[1])
+            : Path.GetFullPath(Path.Combine(
+                "dotnet-port", "samples", "HelloCore", "HelloCore.nproj"));
 
         if (!File.Exists(serverDll))
         {
@@ -76,6 +80,64 @@ internal static class Program
                 MessageTimeout).ConfigureAwait(false);
 
             await SendNotificationAsync(process, "initialized", new { }).ConfigureAwait(false);
+            await SendAsync(process.StandardInput.BaseStream, new
+            {
+                jsonrpc = "2.0",
+                id = 2,
+                method = "nemerle/projectInfo/load",
+                @params = new
+                {
+                    projectPath = helloProject,
+                    configuration = "Debug",
+                    platform = "AnyCPU",
+                    targetFramework = "net10.0",
+                    dotNetExecutable = "dotnet",
+                    forceReload = true,
+                },
+            }).ConfigureAwait(false);
+            var projectInfo = await WaitForMessageAsync(
+                process.StandardOutput.BaseStream,
+                static message => HasId(message, 2),
+                MessageTimeout).ConfigureAwait(false);
+            if (projectInfo.TryGetProperty("error", out var projectError))
+                throw new InvalidDataException("Project-info custom request failed: " + projectError);
+            var projectResult = projectInfo.GetProperty("result");
+            if (projectResult.GetProperty("state").GetString() != "loaded" ||
+                projectResult.GetProperty("sourceCount").GetInt32() != 1 ||
+                projectResult.GetProperty("appliedToEngine").GetBoolean())
+            {
+                throw new InvalidDataException("Project-info custom request returned an unexpected WP-L2 result.");
+            }
+
+            await SendAsync(process.StandardInput.BaseStream, new
+            {
+                jsonrpc = "2.0",
+                id = 3,
+                method = "nemerle/projectInfo/load",
+                @params = new
+                {
+                    projectPath = Path.Combine(testDirectory, "Missing.nproj"),
+                    configuration = "Debug",
+                    platform = "AnyCPU",
+                    targetFramework = "",
+                    dotNetExecutable = "dotnet",
+                    forceReload = true,
+                },
+            }).ConfigureAwait(false);
+            var failedProjectInfo = await WaitForMessageAsync(
+                process.StandardOutput.BaseStream,
+                static message => HasId(message, 3),
+                MessageTimeout).ConfigureAwait(false);
+            if (failedProjectInfo.TryGetProperty("error", out var failedProjectError))
+                throw new InvalidDataException("Expected a typed project-info result, got JSON-RPC error: " + failedProjectError);
+            var failedProjectResult = failedProjectInfo.GetProperty("result");
+            if (failedProjectResult.GetProperty("state").GetString() != "error" ||
+                failedProjectResult.GetProperty("errorKind").GetString() != "NonZeroExit" ||
+                failedProjectResult.GetProperty("appliedToEngine").GetBoolean())
+            {
+                throw new InvalidDataException("Invalid project did not return the expected recoverable WP-L2 error result.");
+            }
+
             await SendNotificationAsync(process, "textDocument/didOpen", new
             {
                 textDocument = new
@@ -119,13 +181,13 @@ internal static class Program
             await SendAsync(process.StandardInput.BaseStream, new
             {
                 jsonrpc = "2.0",
-                id = 2,
+                id = 4,
                 method = "shutdown",
                 @params = (object?)null,
             }).ConfigureAwait(false);
             _ = await WaitForMessageAsync(
                 process.StandardOutput.BaseStream,
-                static message => HasId(message, 2),
+                static message => HasId(message, 4),
                 MessageTimeout).ConfigureAwait(false);
             await SendNotificationAsync(process, "exit", null).ConfigureAwait(false);
 
@@ -134,7 +196,7 @@ internal static class Program
             if (process.ExitCode != 0)
                 throw new InvalidOperationException($"Server exited with code {process.ExitCode}.");
 
-            Console.WriteLine("PASS initialize -> didOpen(error) -> didChange(clear) -> didClose(clear) -> shutdown/exit");
+            Console.WriteLine("PASS initialize -> projectInfo(snapshot-only) -> projectInfo(recoverable failure) -> didOpen(error) -> didChange(clear) -> didClose(clear) -> shutdown/exit");
             return 0;
         }
         catch (Exception ex)

@@ -137,7 +137,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A2 | dotnet ネイティブ化「レベル A」: 参照自動解決・rsp撤廃(`LoadCoreStdlibReferences`)、`@(ReferencePath)`→`-ref:`配線、`-debug`/PDB・`dotnet clean`対応、dotnet tool rspフリー化、Linux版targets | —(計画後) | 完了(2026-07-13) | DISTRIBUTION.md |
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
-| WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 計画中 | 24-vscode-development-plan.md |
+| WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 進行中(WP-L1/L2 完了、2026-07-13) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md |
 
 ## 作業ログ
 
@@ -587,3 +587,10 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   .NET 10 Nemerle の実用的な編集・build/run loop を作る WP-L を計画。
   原コンパイラー移植計画と成果物/完了条件が異なるため、詳細は
   `24-vscode-development-plan.md` に分離した。
+- 2026-07-13: WP-L2(project information provider)完了。`dotnet msbuild` の JSON query から
+  source / ProjectReference・PackageReference output / macro-only reference / define・option を
+  OmniSharp 非依存 snapshot に正規化し、VS Code の単一 project discovery/selection、status、
+  reload、cache/single-flight、debounce、timeout/cancellation、workspace trust gate を実装した。
+  HelloCore/RefDemo/Newtonsoft.Json fixture/Sokoban、失敗後の LSP 継続、trusted/untrusted
+  Extension Host を実測。snapshot の engine 適用は WP-L3 へ明示的に残した。
+  詳細は `26-vscode-project-info-log.md`。

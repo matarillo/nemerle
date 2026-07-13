@@ -1,0 +1,25 @@
+{
+  "Properties": {
+    "MSBuildProjectFullPath": "C:\\repo\\App\\App.nproj",
+    "MSBuildProjectDirectory": "C:\\repo\\App",
+    "TargetFramework": "net10.0",
+    "Configuration": "Debug",
+    "Platform": "AnyCPU",
+    "DefineConstants": ";NET;TRACE;NET",
+    "NemerleAdditionalOptions": "-def:FEATURE;SECOND -checked- -indentation-syntax -disable-keyword:foo -nowarn:10005"
+  },
+  "Items": {
+    "NemerleCompile": [
+      { "Identity": "Program.n", "FullPath": "C:\\repo\\App\\Program.n" },
+      { "Identity": "program.n", "FullPath": "c:\\repo\\App\\Program.n" }
+    ],
+    "ReferencePath": [
+      { "Identity": "System.Runtime.dll", "FullPath": "C:\\dotnet\\packs\\System.Runtime.dll", "FrameworkReferenceName": "Microsoft.NETCore.App" },
+      { "Identity": "MathLib.dll", "FullPath": "C:\\repo\\MathLib\\bin\\Debug\\net10.0\\MathLib.dll" },
+      { "Identity": "Newtonsoft.Json.dll", "FullPath": "C:\\nuget\\newtonsoft.json\\13.0.4\\lib\\net6.0\\Newtonsoft.Json.dll", "FrameworkReferenceName": "" }
+    ],
+    "NemerleMacroReference": [
+      { "Identity": "Macros.dll", "FullPath": "C:\\repo\\Macros\\bin\\Debug\\net10.0\\Macros.dll", "ReferenceSourceTarget": "ProjectReference" }
+    ]
+  }
+}

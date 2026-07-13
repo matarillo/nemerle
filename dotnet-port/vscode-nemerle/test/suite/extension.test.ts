@@ -78,6 +78,23 @@ suite('Nemerle extension', () => {
     const api = await extension.activate();
 
     await waitUntil(
+      () => api.projectStatus?.state === 'loaded',
+      'the single .nproj project snapshot to load automatically',
+    );
+    assert.equal(api.projectStatus?.result?.sourceCount, 1);
+    assert.equal(api.projectStatus?.result?.assemblyReferenceCount, 0);
+    assert.equal(api.projectStatus?.result?.macroReferenceCount, 0);
+    assert.equal(api.projectStatus?.result?.appliedToEngine, false);
+    const selection = vscode.commands.executeCommand('nemerle.selectProject');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+    await selection;
+    await waitUntil(() => api.projectStatus?.state === 'loaded', 'the QuickPick project selection to load');
+    await vscode.commands.executeCommand('nemerle.reloadProject');
+    await waitUntil(() => api.projectStatus?.state === 'loaded', 'the project snapshot to reload');
+    await vscode.commands.executeCommand('nemerle.showProjectStatus');
+
+    await waitUntil(
       () => vscode.languages.getDiagnostics(uri).some((diagnostic) =>
         diagnostic.severity === vscode.DiagnosticSeverity.Error),
       'an error diagnostic for Broken.n',

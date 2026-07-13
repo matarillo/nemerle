@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { runTests } from '@vscode/test-electron';
 
 async function main(): Promise<void> {
@@ -23,6 +24,18 @@ async function main(): Promise<void> {
   const serverPath = process.env.NEMERLE_TEST_SERVER_PATH ?? defaultServerPath;
   if (!fs.existsSync(serverPath)) {
     throw new Error(`Integration test server does not exist: ${serverPath}`);
+  }
+
+  const restore = spawnSync('dotnet', ['restore', path.join(workspacePath, 'Single.nproj')], {
+    cwd: workspacePath,
+    shell: false,
+    stdio: 'inherit',
+  });
+  if (restore.error !== undefined) {
+    throw restore.error;
+  }
+  if (restore.status !== 0) {
+    throw new Error(`Integration test project restore failed with exit code ${restore.status ?? 'unknown'}.`);
   }
 
   await runTests({

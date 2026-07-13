@@ -38,6 +38,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LspFeasibility\Nemerle.Compiler.Utils\Nemerle.Compiler.Utils.nproj" />
+    <ProjectReference Include="..\ProjectInfo\Nemerle.ProjectInfo.csproj" />
     <PackageReference Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
     <None Include="Nemerle.LanguageServer.runtimeconfig.json"
           CopyToOutputDirectory="PreserveNewest" />

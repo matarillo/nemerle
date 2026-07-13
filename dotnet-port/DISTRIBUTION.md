@@ -32,6 +32,15 @@
 > `dotnet-port\20-inproc-task-plan.md` / `dotnet-port\20-inproc-task-log.md` を参照。
 > `pack-tool.ps1` は既定でこの2プロジェクトもビルドし、レイアウトへ配置するようになった。
 
+> **更新 (2026-07-13, WP-L2 — VS Code project information)**: `dotnet msbuild` の
+> `-getItem` / `-getProperty` JSON query を使い、`.nproj` の source、ProjectReference、
+> PackageReference、macro-only reference、define/options を取得する独立 snapshot provider を追加した。
+> `samples\PackageReference` の Newtonsoft.Json 13.0.4 resolved assembly まで実測済み。
+> VS Code extension 0.2.0 はこの snapshot の選択・reload・状態表示を行うが、WP-L3 前なので
+> diagnostics engine へはまだ適用しない。また development VSIX は server binaries を同梱せず、
+> 配布一体化は WP-L4 のまま。詳細は `24-vscode-development-plan.md` /
+> `26-vscode-project-info-log.md`。
+
 ---
 
 ## 1. `dotnet ncc` 配布レイアウト — `dotnet-port\pack-tool.ps1`
@@ -307,7 +316,9 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 - ~~参照アセンブリ(`ProjectReference`/`PackageReference`)の依存解決~~ →
   **ProjectReference は実装・実証済み (ee2ae06f3, `samples\RefDemo`)**。`@(ReferencePath)` を
   `-ref:` に配線し、フレームワーク ref パック facade は `%(FrameworkReferenceName)` で除外
-  (ncc が実体を自動解決するため)。PackageReference は同経路だが未実測。
+  (ncc が実体を自動解決するため)。**PackageReference も WP-L2 の
+  `samples\PackageReference` (Newtonsoft.Json 13.0.4) で restore/build と
+  `ReferencePath` resolved assembly の両方を実測済み**。
 - ~~`dotnet clean` の bin\ 削除、`-debug`/PDB 配線、マルチプロジェクトビルド~~ →
   **完了 (0de978022)**。clean/PDB 配線済み、複数プロジェクト(MathLib→App)も RefDemo で実証。
 - **Linux/Unix 対応**: `dotnet-port\msbuild\linux\Nemerle.Core.targets` を追加 (253d2ecb3)。
@@ -355,7 +366,8 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 
 1. ~~`Nemerle.Core.targets` に `@(ReferencePath)` を `-ref:` として渡す配線~~
    → **完了 (ee2ae06f3)**。`samples\RefDemo` で ProjectReference を実証。
-   PackageReference は同じ `@(ReferencePath)` 経路だが未実測。
+   **PackageReference も WP-L2 で完了**。`samples\PackageReference` の
+   Newtonsoft.Json 13.0.4 について build と project-information snapshot を実測した。
 2. ~~インプロセス化: MSBuild の `<Exec>` による ncc.dll 別プロセス起動を、
    `Nemerle.Compiler.dll` の API 直呼びへ置き換える~~ →
    **完了 (WP-A3、`dotnet-port\20-inproc-task-plan.md` / `20-inproc-task-log.md`)**。

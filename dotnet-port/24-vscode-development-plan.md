@@ -32,15 +32,19 @@
 - headless IDE engine と、open/change/close + publishDiagnostics を実装した
   `net10.0` stdio LSP server。
 - 未保存 buffer の型エラーが診断へ反映される raw LSP integration test。
+- WP-L1 の VS Code extension shell（syntax/editing、stdio client、trust gate、development VSIX）。
+- WP-L2 の MSBuild JSON project-information provider、独立 snapshot、project discovery/selection、
+  cache/single-flight/timeout/cancellation、status/reload UI。
 
 現在欠けているもの:
 
-- LSP server を起動する editor extension。
-- `.n` の構文色分け、コメント、括弧、インデントなどの基本 editor support。
-- `.nproj` の source、ProjectReference、PackageReference、macro reference、define を
-  LSP engine へ渡す design-time project model。
+- WP-L2 snapshot を `IIdeProject` / LSP engine へ適用する経路（WP-L3）。
 - disk 上の project source と未保存 editor buffer を一つの compilation として扱う workspace。
 - VSIX と server binaries を再現可能に組み立てる packaging/test 手順。
+
+進捗更新 (2026-07-13): WP-L1 と WP-L2 は完了。WP-L2 は snapshot の取得・表示までで、
+engine には接続していない。実装・検証結果は `25-vscode-extension-log.md` と
+`26-vscode-project-info-log.md` を参照。
 
 ## 3. ゴール
 
@@ -198,6 +202,9 @@ string/char、number、operator、type-like identifier、quotation/splice の基
 6. untrusted workspace では server を起動しない。
 
 ### WP-L2: project information provider
+
+状態: **完了 (2026-07-13)**。受け入れ基準 1〜5 を実プロセス/fixture で確認済み。
+snapshot は WP-L3 まで engine 非適用。詳細は `26-vscode-project-info-log.md`。
 
 成果物:
 

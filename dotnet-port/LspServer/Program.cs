@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Nemerle.LanguageServer.Engine;
+using Nemerle.ProjectInfo;
 using OmniSharp.Extensions.LanguageServer.Protocol.Models;
 using OmniSharp.Extensions.LanguageServer.Server;
 
@@ -10,6 +11,7 @@ internal static class Program
     public static async Task Main()
     {
         await using var project = new NemerleProject(Console.Error);
+        await using var projectInfo = new ProjectInfoProvider();
         var server = await OmniSharp.Extensions.LanguageServer.Server.LanguageServer.From(options => options
             .WithInput(Console.OpenStandardInput())
             .WithOutput(Console.OpenStandardOutput())
@@ -18,8 +20,13 @@ internal static class Program
                 Name = "nemerle-language-server",
                 Version = "0.1.0",
             })
-            .WithServices(services => services.AddSingleton(project))
-            .WithHandler<NemerleTextDocumentSyncHandler>()).ConfigureAwait(false);
+            .WithServices(services =>
+            {
+                services.AddSingleton(project);
+                services.AddSingleton(projectInfo);
+            })
+            .WithHandler<NemerleTextDocumentSyncHandler>()
+            .WithHandler<NemerleProjectInfoHandler>()).ConfigureAwait(false);
 
         await server.WaitForExit.ConfigureAwait(false);
     }

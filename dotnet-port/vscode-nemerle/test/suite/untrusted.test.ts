@@ -34,12 +34,16 @@ suite('Nemerle extension in Restricted Mode', () => {
     const api = await extension.activate();
     await delay(750);
     assert.equal(api.serverProcessId, undefined);
+    assert.equal(api.projectStatus?.state, 'restricted');
 
     // Command enablement is a UI hint only. The runtime guard must also reject
     // a direct programmatic invocation in an untrusted workspace.
     await vscode.commands.executeCommand('nemerle.restartLanguageServer');
+    await vscode.commands.executeCommand('nemerle.selectProject');
+    await vscode.commands.executeCommand('nemerle.reloadProject');
     await delay(750);
     assert.equal(api.serverProcessId, undefined);
+    assert.equal(api.projectStatus?.state, 'restricted');
   });
 });
 

@@ -22,14 +22,20 @@ test('manifest registers Nemerle language, commands, settings, and restricted mo
   );
   assert.ok(commands.has('nemerle.restartLanguageServer'));
   assert.ok(commands.has('nemerle.showOutput'));
+  assert.ok(commands.has('nemerle.selectProject'));
+  assert.ok(commands.has('nemerle.reloadProject'));
+  assert.ok(commands.has('nemerle.showProjectStatus'));
 
   const properties = manifest.contributes.configuration.properties;
   assert.equal(properties['nemerle.server.path'].type, 'string');
   assert.deepEqual(properties['nemerle.server.trace'].enum, ['off', 'messages', 'verbose']);
+  assert.equal(properties['nemerle.dotnet.path'].default, 'dotnet');
+  assert.equal(properties['nemerle.project'].type, 'string');
+  assert.equal(properties['nemerle.projectConfiguration'].default, 'Debug');
 
   const trust = manifest.capabilities.untrustedWorkspaces;
   assert.equal(trust.supported, 'limited');
-  assert.deepEqual(trust.restrictedConfigurations, ['nemerle.server.path']);
+  assert.deepEqual(trust.restrictedConfigurations, ['nemerle.server.path', 'nemerle.dotnet.path']);
 });
 
 test('language configuration provides comments, brackets, closing, surrounding, and indentation', () => {

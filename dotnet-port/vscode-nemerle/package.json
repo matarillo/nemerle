@@ -2,7 +2,7 @@
   "name": "vscode-nemerle",
   "displayName": "Nemerle",
   "description": "Development VS Code language support for Nemerle on .NET 10.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "nemerle-project",
   "license": "BSD-3-Clause",
   "repository": {
@@ -28,14 +28,18 @@
   "activationEvents": [
     "onLanguage:nemerle",
     "onCommand:nemerle.restartLanguageServer",
-    "onCommand:nemerle.showOutput"
+    "onCommand:nemerle.showOutput",
+    "onCommand:nemerle.selectProject",
+    "onCommand:nemerle.reloadProject",
+    "onCommand:nemerle.showProjectStatus"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
       "description": "Syntax highlighting and editing support remain available, but the Nemerle language server is not executed until the workspace is trusted.",
       "restrictedConfigurations": [
-        "nemerle.server.path"
+        "nemerle.server.path",
+        "nemerle.dotnet.path"
       ]
     },
     "virtualWorkspaces": {
@@ -73,6 +77,20 @@
       {
         "command": "nemerle.showOutput",
         "title": "Nemerle: Show Output"
+      },
+      {
+        "command": "nemerle.selectProject",
+        "title": "Nemerle: Select Project",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "nemerle.reloadProject",
+        "title": "Nemerle: Reload Project",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "nemerle.showProjectStatus",
+        "title": "Nemerle: Show Project Status"
       }
     ],
     "configuration": {
@@ -82,7 +100,7 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "markdownDescription": "Absolute path to a development `Nemerle.LanguageServer.dll`. WP-L1 does not bundle a server; build `dotnet-port/LspServer` and configure its output path.",
+          "markdownDescription": "Absolute path to a development `Nemerle.LanguageServer.dll`. The WP-L2 development VSIX does not bundle a server; build `dotnet-port/LspServer` and configure its output path.",
           "order": 10
         },
         "nemerle.server.trace": {
@@ -101,6 +119,41 @@
           "scope": "window",
           "description": "Controls LSP protocol tracing in the Nemerle Language Server output channel.",
           "order": 20
+        },
+        "nemerle.dotnet.path": {
+          "type": "string",
+          "default": "dotnet",
+          "scope": "machine-overridable",
+          "markdownDescription": "The `dotnet` executable used both to launch a DLL language server and to run `dotnet msbuild` project queries. Use `dotnet` for PATH lookup or an absolute executable path.",
+          "order": 30
+        },
+        "nemerle.project": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Explicit `.nproj` selection, as an absolute path or a path relative to the single workspace folder. Leave empty to auto-select only when exactly one project exists.",
+          "order": 40
+        },
+        "nemerle.projectConfiguration": {
+          "type": "string",
+          "default": "Debug",
+          "scope": "window",
+          "description": "MSBuild Configuration used for the project snapshot cache key and query.",
+          "order": 50
+        },
+        "nemerle.projectPlatform": {
+          "type": "string",
+          "default": "AnyCPU",
+          "scope": "window",
+          "description": "MSBuild Platform used for the project snapshot cache key and query.",
+          "order": 60
+        },
+        "nemerle.projectTargetFramework": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Optional TargetFramework override. Empty uses the project's evaluated TargetFramework.",
+          "order": 70
         }
       }
     }
@@ -111,11 +164,11 @@
     "watch": "tsc -p tsconfig.json --watch",
     "lint": "eslint .",
     "test": "npm run build && npm run test:unit",
-    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/test/unit/manifest.test.js dist-test/test/unit/grammar.test.js dist-test/test/unit/serverLaunch.test.js",
+    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/test/unit/manifest.test.js dist-test/test/unit/grammar.test.js dist-test/test/unit/serverLaunch.test.js dist-test/test/unit/projectDiscovery.test.js",
     "test:integration": "npm run build && tsc -p tsconfig.test.json && node dist-test/test/runTest.js && node dist-test/test/runUntrusted.js",
     "vscode:prepublish": "npm run build",
     "package": "npm run lint && npm test && npm run package:vsix",
-    "package:vsix": "vsce package --out vscode-nemerle-0.1.0.vsix"
+    "package:vsix": "vsce package --out vscode-nemerle-0.2.0.vsix"
   },
   "dependencies": {
     "vscode-languageclient": "10.1.0"

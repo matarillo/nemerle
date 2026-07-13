@@ -11,6 +11,33 @@ import {
   ServerConfigurationError,
 } from './serverLaunch';
 
+export interface ProjectInfoLoadRequest {
+  readonly projectPath: string;
+  readonly configuration: string;
+  readonly platform: string;
+  readonly targetFramework: string;
+  readonly dotNetExecutable: string;
+  readonly forceReload: boolean;
+}
+
+export interface ProjectInfoLoadResult {
+  readonly state: 'loaded' | 'error';
+  readonly projectPath?: string;
+  readonly projectDirectory?: string;
+  readonly configuration?: string;
+  readonly platform?: string;
+  readonly targetFramework?: string;
+  readonly sourceCount: number;
+  readonly assemblyReferenceCount: number;
+  readonly macroReferenceCount: number;
+  readonly defineConstants: readonly string[];
+  readonly warnings: readonly string[];
+  readonly errorKind?: string;
+  readonly errorMessage?: string;
+  readonly errorDetails?: string;
+  readonly appliedToEngine: false;
+}
+
 const configurationSection = 'nemerle';
 
 export class NemerleClientController implements vscode.Disposable {
@@ -18,6 +45,8 @@ export class NemerleClientController implements vscode.Disposable {
   private operation: Promise<void> = Promise.resolve();
   private disposed = false;
   private lastConfigurationError: string | undefined;
+  private dotnetExecutable = 'dotnet';
+  private readonly projectCancellations = new Set<vscode.CancellationTokenSource>();
 
   public constructor(private readonly output: vscode.LogOutputChannel) {}
 
@@ -48,6 +77,31 @@ export class NemerleClientController implements vscode.Disposable {
     return this.client?.serverProcess?.pid;
   }
 
+  public get resolvedDotNetExecutable(): string {
+    return this.dotnetExecutable;
+  }
+
+  public async loadProject(
+    request: Omit<ProjectInfoLoadRequest, 'dotNetExecutable'>,
+  ): Promise<ProjectInfoLoadResult | undefined> {
+    const client = this.client;
+    if (client === undefined || !vscode.workspace.isTrusted) {
+      return undefined;
+    }
+    const cancellation = new vscode.CancellationTokenSource();
+    this.projectCancellations.add(cancellation);
+    try {
+      return await client.sendRequest<ProjectInfoLoadResult>(
+        'nemerle/projectInfo/load',
+        { ...request, dotNetExecutable: this.dotnetExecutable },
+        cancellation.token,
+      );
+    } finally {
+      this.projectCancellations.delete(cancellation);
+      cancellation.dispose();
+    }
+  }
+
   public dispose(): void {
     void this.disposeAsync();
   }
@@ -73,10 +127,14 @@ export class NemerleClientController implements vscode.Disposable {
     const configuredPath = vscode.workspace
       .getConfiguration(configurationSection)
       .get<string>('server.path', '');
+    const configuredDotnet = vscode.workspace
+      .getConfiguration(configurationSection)
+      .get<string>('dotnet.path', 'dotnet');
 
     let launch;
     try {
-      launch = await resolveServerLaunch(configuredPath);
+      launch = await resolveServerLaunch(configuredPath, configuredDotnet);
+      this.dotnetExecutable = launch.dotnetExecutable;
       this.lastConfigurationError = undefined;
     } catch (error: unknown) {
       if (error instanceof ServerConfigurationError) {
@@ -137,6 +195,11 @@ export class NemerleClientController implements vscode.Disposable {
   }
 
   private async stopCore(): Promise<void> {
+    for (const cancellation of this.projectCancellations) {
+      cancellation.cancel();
+      cancellation.dispose();
+    }
+    this.projectCancellations.clear();
     const client = this.client;
     this.client = undefined;
     if (client === undefined) {

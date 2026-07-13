@@ -6,6 +6,7 @@ export interface ServerLaunchSpec {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly serverPath: string;
+  readonly dotnetExecutable: string;
 }
 
 export class ServerConfigurationError extends Error {
@@ -15,7 +16,11 @@ export class ServerConfigurationError extends Error {
   }
 }
 
-export async function resolveServerLaunch(serverPath: string): Promise<ServerLaunchSpec> {
+export async function resolveServerLaunch(
+  serverPath: string,
+  dotnetPath = 'dotnet',
+): Promise<ServerLaunchSpec> {
+  const dotnetExecutable = await resolveDotNetExecutable(dotnetPath);
   const configuredPath = serverPath.trim();
   if (configuredPath.length === 0) {
     throw new ServerConfigurationError(
@@ -46,10 +51,11 @@ export async function resolveServerLaunch(serverPath: string): Promise<ServerLau
 
   if (path.extname(fullPath).toLowerCase() === '.dll') {
     return {
-      command: 'dotnet',
+      command: dotnetExecutable,
       args: ['exec', fullPath],
       cwd: path.dirname(fullPath),
       serverPath: fullPath,
+      dotnetExecutable,
     };
   }
 
@@ -58,7 +64,34 @@ export async function resolveServerLaunch(serverPath: string): Promise<ServerLau
     args: [],
     cwd: path.dirname(fullPath),
     serverPath: fullPath,
+    dotnetExecutable,
   };
+}
+
+export async function resolveDotNetExecutable(dotnetPath: string): Promise<string> {
+  const configuredPath = dotnetPath.trim();
+  if (configuredPath.length === 0 || configuredPath === 'dotnet') {
+    return 'dotnet';
+  }
+  if (!path.isAbsolute(configuredPath)) {
+    throw new ServerConfigurationError(
+      `Nemerle dotnet executable override must be an absolute file path: ${configuredPath}`,
+    );
+  }
+  const fullPath = path.normalize(configuredPath);
+  let stat: Awaited<ReturnType<typeof fs.stat>>;
+  try {
+    stat = await fs.stat(fullPath);
+  } catch (error: unknown) {
+    if (isMissingFileError(error)) {
+      throw new ServerConfigurationError(`Nemerle dotnet executable does not exist: ${fullPath}`);
+    }
+    throw error;
+  }
+  if (!stat.isFile()) {
+    throw new ServerConfigurationError(`Nemerle dotnet executable path is not a file: ${fullPath}`);
+  }
+  return fullPath;
 }
 
 export function formatLaunchSpec(spec: ServerLaunchSpec): string {

@@ -1,0 +1,10 @@
+namespace PackageReferenceSample
+{
+  public module Marker
+  {
+    public Name : string
+    {
+      get { "Newtonsoft.Json ReferencePath fixture" }
+    }
+  }
+}
