@@ -510,3 +510,16 @@ ncc は Roslyn のようなメタデータベースのコンパイラーでは�
     testsuite 全数実行で新規 regression なし(positive 434/469, negative 166/167 ──
     18-testsuite-log.md 時点の 431/469, 165/167 から string-template-3 と
     overloading-01 の分だけ改善、失敗の残りは全て既知の環境・ハーネス制約)。
+- 2026-07-13: WP-A3(in-process MSBuild task)完了。`Nemerle.Compiler.Hosting` と
+  `Nemerle.MSBuild.Tasks` により、SDK-style `.nproj` の `dotnet build` が compiler API を
+  collectible AssemblyLoadContext 内で直接呼び、構造化 diagnostics を MSBuild へ返す。
+  ProjectReference、macro-only reference、PDB、incremental build/clean、Exec fallback まで検証済み。
+  詳細は `20-inproc-task-plan.md` / `20-inproc-task-log.md`。
+- 2026-07-13: WP-K(LSP feasibility)完了。WinForms/CodeDom 系を除いた IDE engine を
+  .NET 10 で headless build/run し、OmniSharp 0.19.9 を使う最小 stdio LSP server を追加。
+  open/change/close と publishDiagnostics、未保存 buffer の型診断を実プロセス integration test で
+  確認した。詳細は `21-lsp-feasibility.md` / `22-lsp-step1-log.md` / `23-lsp-step2-log.md`。
+- 2026-07-13: コンパイラー移植後の次期作業として、VS Code extension と project-aware LSP により
+  .NET 10 Nemerle の実用的な編集・build/run loop を作る WP-L を計画。
+  原コンパイラー移植計画と成果物/完了条件が異なるため、詳細は
+  `24-vscode-development-plan.md` に分離した。
