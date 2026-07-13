@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-A3: in-process replacement for the <Exec dotnet ncc.dll ...> step in
+    dotnet-port\msbuild\Nemerle.Core.targets's CoreCompile override. This assembly is loaded
+    by MSBuild itself into MSBuild's own task ALC, so it must NOT carry a compile-time
+    reference to Nemerle.dll/Nemerle.Compiler.dll/Nemerle.Compiler.Hosting.dll (that would tie
+    THIS assembly's identity to a specific corlib-reference shape the way
+    Nemerle.Compiler.Hosting.csproj needs to; see that project's own comments); everything
+    Nemerle-specific is reached purely by reflection, across a private collectible
+    AssemblyLoadContext (NccLoadContext.cs) created fresh per Execute() call. See
+    dotnet-port\20-inproc-task-plan.md / dotnet-port\20-inproc-task-log.md.
+
+    Microsoft.Build.Utilities.Core is referenced with ExcludeAssets="runtime": at run time
+    MSBuild supplies its own Microsoft.Build*.dll set (loaded into MSBuild's default ALC by
+    identity), and this task must bind to THOSE exact instances, not a second copy carried
+    alongside the task; the PackageReference is compile-time-only surface.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Nemerle.MSBuild.Tasks</AssemblyName>
+    <RootNamespace>Nemerle.MSBuild.Tasks</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.13.9" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>

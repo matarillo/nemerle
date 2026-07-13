@@ -1,41 +1,31 @@
 <Project>
   <!--
     Linux/Unix variant of dotnet-port/msbuild/Nemerle.Core.targets. Same design as the
-    Windows copy (see that file's header for the full rationale); it differs only where the
-    host platform forces it to:
+    Windows copy (see that file's header for the full rationale, including the WP-A3
+    in-process NccCompile task); it differs only where the host platform forces it to:
 
       * NccLayoutDir defaults to $(MSBuildThisFileDirectory)../ncc/ (a sibling "ncc" folder
         next to this "linux" directory) rather than the Windows copy's ../dist/ncc/.
-      * CoreCompile invokes the compiler with `dotnet exec "<ncc.dll>"` (the explicit exec
-        verb) rather than relying on a bundled ncc.exe apphost, which is Windows-only.
+      * The -p:NemerleUseExec=true fallback invokes `dotnet exec "<ncc.dll>"` (the explicit
+        exec verb) rather than relying on a bundled ncc.exe apphost, which is Windows-only.
       * Paths use forward slashes.
 
-    It lets an ordinary SDK-style project (`<Project Sdk="Microsoft.NET.Sdk">`) compile
-    Nemerle (.n) sources via the dotnet-hosted ncc.dll, driven by plain `dotnet build`, by
-    overriding the single well-known CoreCompile extension point with a plain <Exec>.
-    @(IntermediateAssembly) (the exact output path csc/fsc/vbc's own CoreCompile would have
-    produced) is reused verbatim so every downstream SDK target (CopyFilesToOutputDirectory,
-    GenerateBuildRuntimeConfigurationFiles, Clean, etc.) keeps working unmodified.
-
-    Consuming project shape:
-      Project Sdk="Microsoft.NET.Sdk"
-        PropertyGroup
-          OutputType: Exe
-          TargetFramework: net10.0
-          EnableDefaultCompileItems: false   (Nemerle .n sources are NOT C#)
-          UseAppHost: false                  (ncc emits a managed PE runnable via dotnet exec)
-          GenerateDependencyFile: false
-        ItemGroup
-          NemerleCompile Include="*.n"
-        Import Project="<path>/linux/Nemerle.Core.targets"
+    The in-process NccCompile task itself (dotnet-port/Nemerle.MSBuild.Tasks) is
+    platform-independent (AssemblyLoadContext-based), so unlike the old Exec path, the
+    default (non-fallback) CoreCompile below is now identical in spirit to the Windows copy:
+    no `dotnet exec` vs `dotnet` distinction applies to it at all.
   -->
 
   <PropertyGroup>
-    <!-- The runnable "dotnet ncc" layout (ncc.dll + ncc.runtimeconfig.json + Nemerle*.dll),
-         expected as a sibling "ncc" folder next to this "linux" directory.
-         Override with -p:NccLayoutDir=... -->
+    <!-- The runnable "dotnet ncc" layout (ncc.dll + ncc.runtimeconfig.json + Nemerle*.dll +
+         Nemerle.Compiler.Hosting.dll + msbuild-task/), expected as a sibling "ncc" folder
+         next to this "linux" directory. Override with -p:NccLayoutDir=... -->
     <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)../ncc/</NccLayoutDir>
     <NccDll>$(NccLayoutDir)ncc.dll</NccDll>
+    <!-- In-process task assembly built by dotnet-port/Nemerle.MSBuild.Tasks, placed here by
+         pack-tool.ps1 (or the Linux equivalent layout step). Only needed/validated when
+         NemerleUseExec != true. -->
+    <NemerleTaskAssembly Condition="'$(NemerleTaskAssembly)' == ''">$(NccLayoutDir)msbuild-task/Nemerle.MSBuild.Tasks.dll</NemerleTaskAssembly>
     <!-- "exe" or "library": mirrors ncc's own -target: values, defaulted from OutputType. -->
     <NemerleTargetType Condition="'$(NemerleTargetType)' == '' AND '$(OutputType)' == 'Exe'">exe</NemerleTargetType>
     <NemerleTargetType Condition="'$(NemerleTargetType)' == ''">library</NemerleTargetType>
@@ -45,7 +35,14 @@
          it there the common targets copy it to $(OutDir) and clean it with no extra wiring.
          Emit symbols unless the project turned them off (DebugType=none / DebugSymbols=false);
          the SDK defaults DebugType=portable and DebugSymbols=true for both Debug and Release. -->
-    <NemerleDebugSwitch Condition="'$(DebugType)' != 'none' AND '$(DebugType)' != 'None' AND '$(DebugSymbols)' != 'false'">-debug</NemerleDebugSwitch>
+    <NemerleEmitDebug Condition="'$(DebugType)' != 'none' AND '$(DebugType)' != 'None' AND '$(DebugSymbols)' != 'false'">true</NemerleEmitDebug>
+    <NemerleEmitDebug Condition="'$(NemerleEmitDebug)' == ''">false</NemerleEmitDebug>
+    <!-- Exec-path-only rendering of the same decision, kept for the -p:NemerleUseExec=true
+         fallback below. -->
+    <NemerleDebugSwitch Condition="'$(NemerleEmitDebug)' == 'true'">-debug</NemerleDebugSwitch>
+    <!-- Extra ncc CLI switches (whitespace-separated, verbatim), for both the in-process task
+         and the Exec fallback. -->
+    <NemerleAdditionalOptions Condition="'$(NemerleAdditionalOptions)' == ''"></NemerleAdditionalOptions>
     <!-- The SDK's "ref assembly" optimization (ProduceReferenceAssembly, on by default)
          expects CoreCompile to additionally emit a stripped-down reference assembly under
          obj/.../refint/; that is a Roslyn (/refout:)-specific feature ncc has no
@@ -53,9 +50,18 @@
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
 
+  <!-- Only registered (and only needs to resolve) when actually used: the Condition is
+       evaluated before MSBuild needs the task type to exist, so -p:NemerleUseExec=true works
+       even if Nemerle.MSBuild.Tasks.dll/Nemerle.Compiler.Hosting.dll are missing entirely. -->
+  <UsingTask TaskName="Nemerle.MSBuild.Tasks.NccCompile"
+             AssemblyFile="$(NemerleTaskAssembly)"
+             Condition="'$(NemerleUseExec)' != 'true'" />
+
   <Target Name="NemerleEnsureLayout" BeforeTargets="CoreCompile">
     <Error Condition="!Exists('$(NccDll)')"
            Text="NccLayoutDir ($(NccLayoutDir)) does not contain ncc.dll: place the runnable ncc layout there (or pass -p:NccLayoutDir=&lt;path&gt;)." />
+    <Error Condition="'$(NemerleUseExec)' != 'true' AND !Exists('$(NemerleTaskAssembly)')"
+           Text="NemerleTaskAssembly ($(NemerleTaskAssembly)) not found: build/copy dotnet-port/Nemerle.MSBuild.Tasks's output there first, or pass -p:NemerleUseExec=true to use the out-of-process compiler instead." />
     <Error Condition="'@(NemerleCompile)' == ''"
            Text="No @(NemerleCompile) items -- add &lt;NemerleCompile Include=&quot;*.n&quot; /&gt; (or similar) to the project." />
   </Target>
@@ -77,7 +83,7 @@
        (copy-to-output, runtimeconfig/deps generation, Clean, incremental up-to-date checks
        via Inputs/Outputs below) working exactly as the SDK expects. -->
   <Target Name="CoreCompile"
-          Inputs="@(NemerleCompile);@(ReferencePath);$(NccDll)"
+          Inputs="@(NemerleCompile);@(ReferencePath);$(NccDll);$(NemerleTaskAssembly)"
           Outputs="@(IntermediateAssembly)">
     <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
     <!-- Pass this project's own ProjectReference/PackageReference outputs to ncc as -ref:.
@@ -90,11 +96,24 @@
     <ItemGroup>
       <_NemerleUserReference Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == ''" />
     </ItemGroup>
-    <!-- ncc auto-resolves the standard reference set (the shared framework's real split BCL
-         assemblies + this layout's Nemerle.dll) on CoreCLR since the LoadCoreStdlibReferences
-         change in ncc/passes.n, so no -from-file:ncc.default.rsp is needed here. Invoked via
-         `dotnet exec <ncc.dll>` (explicit exec verb; no Windows-only ncc.exe apphost). -->
-    <Exec Command="dotnet exec &quot;$(NccDll)&quot; -target:$(NemerleTargetType) $(NemerleDebugSwitch) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
+
+    <!-- Default path: in-process NccCompile task (WP-A3), platform-independent. -->
+    <NccCompile Condition="'$(NemerleUseExec)' != 'true'"
+                Sources="@(NemerleCompile)"
+                References="@(_NemerleUserReference)"
+                OutputAssembly="%(IntermediateAssembly.FullPath)"
+                TargetType="$(NemerleTargetType)"
+                EmitDebug="$(NemerleEmitDebug)"
+                AdditionalOptions="$(NemerleAdditionalOptions)"
+                NccLayoutDir="$(NccLayoutDir)" />
+
+    <!-- Escape hatch: original out-of-process path via the explicit `dotnet exec` verb (no
+         Windows-only ncc.exe apphost). ncc auto-resolves the standard reference set (the
+         shared framework's real split BCL assemblies + this layout's Nemerle.dll) on CoreCLR
+         since the LoadCoreStdlibReferences change in ncc/passes.n, so no
+         -from-file:ncc.default.rsp is needed here either. -->
+    <Exec Condition="'$(NemerleUseExec)' == 'true'"
+          Command="dotnet exec &quot;$(NccDll)&quot; -target:$(NemerleTargetType) $(NemerleDebugSwitch) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') $(NemerleAdditionalOptions) @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
           WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 

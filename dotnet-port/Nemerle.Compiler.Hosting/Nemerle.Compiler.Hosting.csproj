@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-A3: in-process bridge assembly to Nemerle.Compiler.dll's ManagerClass API. Loaded by
+    Nemerle.MSBuild.Tasks (dotnet-port\Nemerle.MSBuild.Tasks) into a collectible
+    AssemblyLoadContext ALONGSIDE Nemerle.Compiler.dll/Nemerle.dll/Nemerle.Macros.dll (all
+    resolved from the same NccLayoutDir by that ALC's Load() override), NOT into MSBuild's
+    own default/task ALC, so a compile's static state (ManagerClass.Instance is
+    [ThreadStatic], NamespaceTree caches, etc.) is fully isolated per invocation and per node,
+    and the whole compilation runs inside one ALC. Only CoreLib-defined types (string, int,
+    bool, Action&lt;...&gt;) cross back out to the task; see CompilerHost.cs for the exact
+    boundary. See dotnet-port\20-inproc-task-plan.md and dotnet-port\20-inproc-task-log.md.
+
+    References Nemerle.dll/Nemerle.Compiler.dll via HintPath, Private=false: this project
+    itself is never meant to carry its own copies of them (that would defeat the point of
+    loading everything from one shared, relocatable layout directory at run time); it only
+    needs them to be present for compile-time type checking. The layout is produced by
+    dotnet-port\pack-tool.ps1 (which also copies this project's own build output next to
+    them); run it first if NccLayoutDir doesn't exist yet.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Nemerle.Compiler.Hosting</AssemblyName>
+    <RootNamespace>Nemerle.Compiler.Hosting</RootNamespace>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+
+    <!-- Where dotnet-port\pack-tool.ps1 wrote the runnable "dotnet ncc" layout
+         (Nemerle.dll/Nemerle.Compiler.dll/...). Override with -p:NccLayoutDir=... -->
+    <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)..\dist\ncc\</NccLayoutDir>
+
+    <!-- Nemerle.dll/Nemerle.Compiler.dll are themselves built with -use-loaded-corlib
+         (ncc\passes.n LoadCoreStdlibReferences): their AssemblyRef table names the REAL
+         runtime split assemblies directly (System.Private.CoreLib, System.Linq, ...), not the
+         Microsoft.NETCore.App.Ref facade assemblies (System.Runtime.dll etc.) an ordinary SDK
+         project implicitly references. Mixing the two (implicit facades + a few explicit real
+         assemblies) produces duplicate-type ambiguity (CS0433: a type exists in both the real
+         assembly and the facade that forwards to it) rather than resolving cleanly, so instead
+         this project turns OFF the implicit Microsoft.NETCore.App.Ref facade set entirely and
+         references every real assembly in the installed shared framework directly (below);
+         i.e. compiles against the exact same "real, non-facade" assembly set
+         pack-tool.ps1's gen-default-rsp.ps1 resolves for ncc's own -ref: needs, and that this
+         project's own code (System.Runtime.Loader.AssemblyLoadContext, System.Threading.Thread,
+         etc.) also needs. -->
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <NetCoreSharedFrameworkDir Condition="'$(NetCoreSharedFrameworkDir)' == ''">$(NetCoreRoot)shared\Microsoft.NETCore.App\$(BundledNETCoreAppPackageVersion)\</NetCoreSharedFrameworkDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Private=false: compile-time-only references. At run time these are resolved from
+         NccLayoutDir by Nemerle.MSBuild.Tasks's NccLoadContext (or, for direct/manual hosting
+         scenarios, by whatever loads this assembly), never copied next to this dll. -->
+    <Reference Include="Nemerle">
+      <HintPath>$(NccLayoutDir)Nemerle.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Nemerle.Compiler">
+      <HintPath>$(NccLayoutDir)Nemerle.Compiler.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Every real MANAGED assembly in the shared framework (DisableImplicitFrameworkReferences
+         above removed the ref-pack facade set that would otherwise cover this project's own
+         BCL usage). Include is a full file-path glob, which MSBuild's Reference/RAR handling
+         treats as a direct-path reference (no separate HintPath/Name bookkeeping needed).
+         Scoped to the System.*/Microsoft.*/mscorlib/netstandard name patterns to skip the
+         shared framework's native binaries (coreclr.dll, clrjit.dll, hostpolicy.dll, ...),
+         which RAR would otherwise flag with "PE image does not have metadata" warnings.
+         Private=false: these already exist at run time (shared framework), never copy them. -->
+    <Reference Include="$(NetCoreSharedFrameworkDir)System.*.dll;$(NetCoreSharedFrameworkDir)Microsoft.*.dll;$(NetCoreSharedFrameworkDir)mscorlib.dll;$(NetCoreSharedFrameworkDir)netstandard.dll;$(NetCoreSharedFrameworkDir)WindowsBase.dll"
+               Exclude="$(NetCoreSharedFrameworkDir)Microsoft.DiaSymReader.Native.*.dll">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="EnsureNccLayoutExists" BeforeTargets="Build">
+    <Error Condition="!Exists('$(NccLayoutDir)Nemerle.Compiler.dll')"
+           Text="NccLayoutDir ($(NccLayoutDir)) does not contain Nemerle.Compiler.dll: run dotnet-port\pack-tool.ps1 first (or pass -p:NccLayoutDir=&lt;path&gt;)." />
+  </Target>
+
+</Project>

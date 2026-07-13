@@ -186,6 +186,48 @@ exit /b %EXITCODE%
 Set-Content -Path $WrapperPath -Value $wrapperContent -Encoding ascii
 Write-Host "Wrote $WrapperPath"
 
+# ---------------------------------------------------------------------------
+# 4. WP-A3: build the in-process MSBuild task pieces and drop them into the layout.
+#    - Nemerle.Compiler.Hosting.dll goes NEXT TO Nemerle.Compiler.dll/Nemerle.dll (Nemerle.
+#      MSBuild.Tasks's NccLoadContext.Load() override resolves same-directory siblings into
+#      one AssemblyLoadContext, which the Hosting/ManagerClass subclassing requires -- see
+#      dotnet-port\Nemerle.Compiler.Hosting\CompilerHost.cs).
+#    - Nemerle.MSBuild.Tasks.dll goes into msbuild-task\, the path
+#      dotnet-port\msbuild\Nemerle.Core.targets' <UsingTask AssemblyFile="..."> points at by
+#      default (NemerleTaskAssembly = $(NccLayoutDir)msbuild-task\Nemerle.MSBuild.Tasks.dll).
+#    Built AFTER the layout above exists: Nemerle.Compiler.Hosting.csproj's <Reference
+#    HintPath> entries point at $OutDir, so Nemerle.Compiler.dll/Nemerle.dll must already be
+#    there (see that project's header comment for why it can't simply ProjectReference them --
+#    ncc\*.n itself is never touched by any C# build).
+# ---------------------------------------------------------------------------
+$OutDirFull = (Resolve-Path $OutDir).Path
+$OutDirWithSlash = if ($OutDirFull.EndsWith('\')) { $OutDirFull } else { "$OutDirFull\" }
+$DotnetPortDir = $PSScriptRoot
+$HostingProj = Join-Path $DotnetPortDir "Nemerle.Compiler.Hosting\Nemerle.Compiler.Hosting.csproj"
+$TasksProj   = Join-Path $DotnetPortDir "Nemerle.MSBuild.Tasks\Nemerle.MSBuild.Tasks.csproj"
+
+Write-Host ""
+Write-Host "Building Nemerle.Compiler.Hosting (NccLayoutDir=$OutDirWithSlash) ..."
+& dotnet build -c $Configuration $HostingProj "-p:NccLayoutDir=$OutDirWithSlash" -v:minimal
+if ($LASTEXITCODE -ne 0) { throw "Nemerle.Compiler.Hosting build failed (exit $LASTEXITCODE)" }
+$HostingOutDir = Join-Path $DotnetPortDir "Nemerle.Compiler.Hosting\bin\$Configuration\net10.0"
+Copy-Item -Path (Join-Path $HostingOutDir "Nemerle.Compiler.Hosting.dll") -Destination $OutDir -Force
+$HostingPdb = Join-Path $HostingOutDir "Nemerle.Compiler.Hosting.pdb"
+if (Test-Path $HostingPdb) { Copy-Item -Path $HostingPdb -Destination $OutDir -Force }
+Write-Host "Wrote $(Join-Path $OutDir 'Nemerle.Compiler.Hosting.dll')"
+
+Write-Host ""
+Write-Host "Building Nemerle.MSBuild.Tasks ..."
+& dotnet build -c $Configuration $TasksProj -v:minimal
+if ($LASTEXITCODE -ne 0) { throw "Nemerle.MSBuild.Tasks build failed (exit $LASTEXITCODE)" }
+$TasksOutDir = Join-Path $DotnetPortDir "Nemerle.MSBuild.Tasks\bin\$Configuration\net10.0"
+$TaskDestDir = Join-Path $OutDir "msbuild-task"
+New-Item -ItemType Directory -Force -Path $TaskDestDir | Out-Null
+Copy-Item -Path (Join-Path $TasksOutDir "Nemerle.MSBuild.Tasks.dll") -Destination $TaskDestDir -Force
+$TasksPdb = Join-Path $TasksOutDir "Nemerle.MSBuild.Tasks.pdb"
+if (Test-Path $TasksPdb) { Copy-Item -Path $TasksPdb -Destination $TaskDestDir -Force }
+Write-Host "Wrote $(Join-Path $TaskDestDir 'Nemerle.MSBuild.Tasks.dll')"
+
 Write-Host ""
 Write-Host "Layout complete -> $OutDir"
 Get-ChildItem $OutDir | Format-Table Name, Length

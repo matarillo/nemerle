@@ -22,6 +22,16 @@
 > 関する記述はこの2コミットで解消済み。`pack-tool.ps1` の rsp/cmd/gen-default-rsp 生成は
 > now 任意(レガシー)で、整理は未実施。
 
+> **更新 (WP-A3 — インプロセス MSBuild タスク)**: 「タスク3」の `<Exec dotnet ncc.dll ...>` は
+> 既定で**インプロセスタスク `NccCompile`**(`dotnet-port\Nemerle.MSBuild.Tasks`)に置き換わった。
+> `dotnet-port\Nemerle.Compiler.Hosting` が `Nemerle.Compiler.dll` の `ManagerClass` API を
+> C# から強い型付けで呼び出すブリッジで、コンパイル毎に collectible `AssemblyLoadContext` へ
+> ロードされる(静的状態隔離・参照 dll のファイルロック解放が目的)。診断はテキストではなく
+> `Log.LogError`/`LogWarning`(file/line/col 付き構造化)で報告される。
+> `-p:NemerleUseExec=true` で従来の `<Exec>` 経路にフォールバック可能。詳細・検証結果は
+> `dotnet-port\20-inproc-task-plan.md` / `dotnet-port\20-inproc-task-log.md` を参照。
+> `pack-tool.ps1` は既定でこの2プロジェクトもビルドし、レイアウトへ配置するようになった。
+
 ---
 
 ## 1. `dotnet ncc` 配布レイアウト — `dotnet-port\pack-tool.ps1`
@@ -318,38 +328,43 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 | `dotnet <layout>\ncc.dll` 配布レイアウト | **完全動作** | `pack-tool.ps1` で再現可、hello.n/hello2.n 実証済み |
 | `dotnet tool` 化 | **PoC 成功**(C# シム経由) | install→実行の手順を記載、実証済み |
 | SDK スタイル MSBuild 統合 | **動作**(`.nproj` 拡張子。参照/PDB/clean/マルチプロジェクト/Linux 対応済み) | Windows・WSL で `dotnet build`→実行を実証 |
+| インプロセス MSBuild タスク(WP-A3) | **動作**(構造化診断、ALC 隔離、Exec フォールバック付き) | HelloCore/RefDemo/一時診断プロジェクトで実証(`20-inproc-task-log.md`) |
 | 既存 CLR4 ビルド(`NemerleAll.nproj`/`build-stage2-core.ps1`) | **無改造・無回帰** | 新規ファイルのみ追加(`.gitignore` のみ既存ファイルに軽微な追記) |
 
 ## 変更・追加ファイル一覧
 
 - 新規: `dotnet-port\pack-tool.ps1`
 - 新規: `dotnet-port\Nemerle.Tool\Nemerle.Tool.csproj`, `Program.cs`(0.2.0-poc1 で rsp フリー化)
-- 新規: `dotnet-port\msbuild\Nemerle.Core.targets`(参照配線/PDB/clean 追加)
-- 新規: `dotnet-port\msbuild\linux\Nemerle.Core.targets`(Linux 版, 253d2ecb3)
+- 新規: `dotnet-port\msbuild\Nemerle.Core.targets`(参照配線/PDB/clean/インプロセスタスク追加)
+- 新規: `dotnet-port\msbuild\linux\Nemerle.Core.targets`(Linux 版, 253d2ecb3。インプロセスタスク追加)
+- 新規: `dotnet-port\Nemerle.Compiler.Hosting\`(WP-A3、`ManagerClass` API の C# ブリッジ)
+- 新規: `dotnet-port\Nemerle.MSBuild.Tasks\`(WP-A3、`NccCompile` インプロセスタスク)
+- 新規: `dotnet-port\20-inproc-task-plan.md` / `dotnet-port\20-inproc-task-log.md`(WP-A3 計画/ログ)
 - 新規: `dotnet-port\samples\HelloCore\HelloCore.nproj`, `hello.n`
 - 新規: `dotnet-port\samples\RefDemo\`(MathLib ライブラリ → App exe の ProjectReference 例)
 - 新規: `dotnet-port\DISTRIBUTION.md`(本ドキュメント)
-- コンパイラー側: `ncc\passes.n`(CoreCLR デフォルト参照の自動解決 `LoadCoreStdlibReferences`, 56964d879)
+- コンパイラー側: `ncc\passes.n`(CoreCLR デフォルト参照の自動解決 `LoadCoreStdlibReferences`, 56964d879)。
+  **WP-A3 ではコンパイラー側は無変更**。
 - 既存改変(最小限): `.gitignore`(`dotnet-port/dist/` と `*.nupkg` を追加、
   生成物を誤って追跡しないため)、`dotnet-port\00-PLAN.md`(作業ログ追記)
 - 生成物(既定では git 追跡対象外): `dotnet-port\dist\ncc\`(pack-tool.ps1 の
-  出力)、`dotnet-port\dist\nupkg\`(`dotnet pack` の出力)
+  出力、`Nemerle.Compiler.Hosting.dll`/`msbuild-task\Nemerle.MSBuild.Tasks.dll` を含む)、
+  `dotnet-port\dist\nupkg\`(`dotnet pack` の出力)
 
 ## 推奨される次ステップ
 
 1. ~~`Nemerle.Core.targets` に `@(ReferencePath)` を `-ref:` として渡す配線~~
    → **完了 (ee2ae06f3)**。`samples\RefDemo` で ProjectReference を実証。
    PackageReference は同じ `@(ReferencePath)` 経路だが未実測。
-2. **(現在の検討ポイント — 着手是非を判断中)** インプロセス化: `dotnet tool` シムの
-   `Process.Start` / MSBuild の `<Exec>` による **ncc.dll 別プロセス起動を、
-   `Nemerle.Compiler.dll` の API 直呼び**(`ManagerClass`/`CompilationOptions`/`Message`)
-   へ置き換える。狙いは (a) 2段プロセス起動の解消、(b) **診断の構造化取得(IDE のエラー
-   一覧向け)**。リスク: ncc は「1プロセス1コンパイル」前提で `Instance` シングルトン等
-   プロセス全体の静的状態を持ち、MSBuild ノード再利用と衝突しうる(→ コンパイル毎に
-   collectible AssemblyLoadContext で隔離する案)。診断のテキストパース方式は脆く
-   (ncc 形式 `path:sl:sc:el:ec: sev: Nnnn: msg`、Windows のドライブレターのコロンで
-   naive split 破綻)、代替は **ncc に構造化診断出力を足す**方向。**live squiggle は
-   build-time 診断とは別物で LSP が別途必要**な点にも注意。
+2. ~~インプロセス化: MSBuild の `<Exec>` による ncc.dll 別プロセス起動を、
+   `Nemerle.Compiler.dll` の API 直呼びへ置き換える~~ →
+   **完了 (WP-A3、`dotnet-port\20-inproc-task-plan.md` / `20-inproc-task-log.md`)**。
+   `dotnet-port\Nemerle.MSBuild.Tasks`(`NccCompile` タスク)+
+   `dotnet-port\Nemerle.Compiler.Hosting`(`ManagerClass` API ブリッジ)で実現。
+   コンパイル毎の collectible `AssemblyLoadContext` 隔離、`Log.LogError`/`LogWarning` による
+   構造化診断(テキストパース不要)、`-p:NemerleUseExec=true` フォールバックまで実装・検証済み。
+   `dotnet tool` シム(`Nemerle.Tool`)側のインプロセス化は同じ Hosting ブリッジで後日可能
+   (スコープ外のまま)。**live squiggle(LSP)は引き続き別課題**。
 3. ~~`dotnet clean` が `bin\` 配下を消せるよう `@(FileWrites)` 登録~~
    → **完了 (0de978022)**。ランタイム dll コピーを `AfterTargets=CopyFilesToOutputDirectory`
    (IncrementalClean が @(FileWrites) を確定する前)へ移し `DestinationFiles` を @(FileWrites)
