@@ -1,0 +1,30 @@
+using System;
+using System.CodeDom;
+
+using Nemerle.Compiler.Utils;
+using Nemerle.Compiler.Utils.Async;
+
+namespace Nemerle.Completion2
+{
+  // Satisfies the three IIdeEngine members (Nemerle.Completion2.Engine.IEngine.n, unmodified,
+  // shared with the legacy VS build) that the excluded WinForms Forms-designer CodeDom cluster
+  // would otherwise implement (see the comment in Nemerle.Compiler.Utils.nproj). This headless
+  // host has no Forms designer to round-trip, so these throw rather than silently doing nothing.
+  internal partial class Engine
+  {
+    public CreateCodeCompileUnit(_source : IIdeSource) : CreateCodeCompileUnitAsyncRequest
+    {
+      throw NotSupportedException("CreateCodeCompileUnit (VS Forms designer CodeDom round-trip) is not available in this headless host.");
+    }
+
+    public MergeCodeCompileUnit(_codeCompileUnit : CodeCompileUnit) : FormChanges
+    {
+      throw NotSupportedException("MergeCodeCompileUnit (VS Forms designer CodeDom round-trip) is not available in this headless host.");
+    }
+
+    public BeginMergeCodeCompileUnit(_codeCompileUnit : CodeCompileUnit) : MergeCodeCompileUnitAsyncRequest
+    {
+      throw NotSupportedException("BeginMergeCodeCompileUnit (VS Forms designer CodeDom round-trip) is not available in this headless host.");
+    }
+  }
+}

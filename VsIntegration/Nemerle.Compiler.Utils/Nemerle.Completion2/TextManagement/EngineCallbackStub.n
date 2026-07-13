@@ -31,21 +31,29 @@ namespace Nemerle.Completion2
       // assembly by name and get it path.
       def refsAry = assemblyReferences.NToArray();
       def asmRefs = array(refsAry.Length);
-      _assemblyReferences = asmRefs;
-      
+
       for (mutable i = 0; i < asmRefs.Length; i++)
       {
-        def asm = refsAry[i];
-        if (IO.File.Exists(asm))
-          asmRefs[i] = asm;
+        def name = refsAry[i];
+        if (IO.File.Exists(name))
+          asmRefs[i] = name;
         else
         {
+          // Assembly.LoadWithPartialName is a documented no-op on CoreCLR (always returns
+          // null instead of GAC-probing); fall back to name-based binding, which is how the
+          // rest of this port resolves bare names like "mscorlib"/"System" against the
+          // running CoreCLR's own facades. Names that resolve to neither a file path nor a
+          // loadable assembly (e.g. WinForms/System.Data-era names with no desktop reference
+          // in this headless host) are skipped rather than crashing Init().
 #pragma warning disable 618 // Obsolete
-          def asm = Assembly.LoadWithPartialName(asm);
+          def asm = Assembly.LoadWithPartialName(name);
 #pragma warning restore 618
-          asmRefs[i] = Uri(asm.CodeBase).LocalPath;
+          def asm = if (asm != null) asm else try { Assembly.Load(name) } catch { | _ => null };
+          asmRefs[i] = if (asm != null) Uri(asm.CodeBase).LocalPath else null;
         }
       }
+
+      _assemblyReferences = asmRefs.Where(r => r != null).ToArray();
     }
 
     public ProjectName : string { get { "UnitTestFakeProject" } }

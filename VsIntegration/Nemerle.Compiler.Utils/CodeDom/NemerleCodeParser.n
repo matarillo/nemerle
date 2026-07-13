@@ -141,18 +141,4 @@ namespace Nemerle.Compiler.Utils
       unit;
     }
   }
-
-  [Record]
-  internal sealed class IntegrationDefaultParser : IParser
-  {
-    manager : ManagerClass;
-
-    public Parse(source : ISource) : ParseResult
-    {
-      def lexer = LexerString(manager, source.GetText(), Location(source.FileIndex, 1, 1));
-      when(manager.Options.IndentationSyntax)
-        lexer.SwitchToIndentationMode();
-      DefaultParseResult(MainParser.Parse(lexer), lexer)
-    }
-  }
 }

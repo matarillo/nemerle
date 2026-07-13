@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-K (LSP feasibility validation, dotnet-port\21-lsp-feasibility.md step 1): headless
+    equivalent of the legacy VsIntegration\ConsoleTest\Program.cs (a plain console app that drives
+    Nemerle.Compiler.Utils.Tests' Test1 fixture directly, without VS/NUnit runner or GUI). Unlike
+    the legacy version (which lets the first failing Assert crash the whole process), this driver
+    reflects over Test1's public test methods, invokes each independently, and prints PASS/FAIL per
+    test plus a final summary: a single regression doesn't hide the results of every other
+    test. See Program.n for the exact method list (a superset of the legacy Program.cs's list; see
+    the comment there for what is intentionally excluded and why).
+
+    Build + run:
+      dotnet build dotnet-port\LspFeasibility\ConsoleTest\ConsoleTest.nproj
+      dotnet exec dotnet-port\LspFeasibility\ConsoleTest\bin\Debug\net10.0\ConsoleTest.dll
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="Program.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.Compiler.Utils.Tests\Nemerle.Compiler.Utils.Tests.nproj" />
+  </ItemGroup>
+
+  <!-- Test1's static ctor (VsIntegration\Nemerle.Compiler.Utils.Tests\Tests.Init.n) locates its
+       fixture sources next to its own assembly via GetExecutingAssembly()+"Content"; since all
+       referenced dlls land in this project's own output directory, copying Content here (rather
+       than relying on transitive None-item propagation from the Tests project) is what actually
+       satisfies that lookup regardless of which project's build step runs it. -->
+  <ItemGroup>
+    <None Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils.Tests\Content\*.n">
+      <Link>Content\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

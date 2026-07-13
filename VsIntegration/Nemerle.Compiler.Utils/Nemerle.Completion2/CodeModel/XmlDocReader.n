@@ -75,7 +75,7 @@ namespace Nemerle.Completion2
               // Some of them are loaded from the GAC, while their xml documentation stored in
               // the %SystemRoot%/Microsoft.Net/<version>/ folder.
               
-              def runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+              def runtimeDir = System.IO.Path.GetDirectoryName(typeof(object).Assembly.Location);
               def altPath = Path.Combine(runtimeDir, Path.GetFileName(xmlFile));
 
               if (File.Exists(altPath))

@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-K (LSP feasibility validation, dotnet-port\21-lsp-feasibility.md step 1): builds
+    VsIntegration\Nemerle.Compiler.Utils.Tests (the NUnit test fixture that drives the IDE Engine
+    headlessly, i.e. without Visual Studio) with the core (net10) toolchain, referencing the core
+    build of Nemerle.Compiler.Utils (..\Nemerle.Compiler.Utils\Nemerle.Compiler.Utils.nproj).
+    Sources are referenced in place under VsIntegration\Nemerle.Compiler.Utils.Tests (not copied).
+
+    nunit.framework.dll comes from the repo's ExternalDependences\ directory (an old NUnit 2.x
+    .NET Framework assembly). It loads fine under .NET 10 the same way the legacy net-4.0 ncc.exe
+    does (see dotnet-port\03-dotnet-runtime-facts.md): its mscorlib/System references resolve
+    against the shared framework's compatibility facades, and it is a real (non-facade) assembly
+    so ncc's reflection-based importer sees its exported types normally.
+
+    Build: dotnet build dotnet-port\LspFeasibility\Nemerle.Compiler.Utils.Tests\Nemerle.Compiler.Utils.Tests.nproj
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils.Tests\Tests.Init.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils.Tests\Tests.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Nemerle.Compiler">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\dist\ncc\Nemerle.Compiler.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Nemerle.Macros">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\dist\ncc\Nemerle.Macros.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="nunit.framework">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\..\ExternalDependences\nunit.framework.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.Compiler.Utils\Nemerle.Compiler.Utils.nproj" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

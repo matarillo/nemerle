@@ -4,7 +4,6 @@ using Nemerle.Completion2;
 
 using System;
 using System.Diagnostics;
-using System.Windows.Forms;
 using Nemerle.Compiler.Utils;
 using System.Text;
 using System.IO;
@@ -130,7 +129,7 @@ namespace Nemerle.Completion2.CodeFormatting
       {
         | ex is Exception =>
           def str = string.Format("Message:{0} Method:{1}", ex.Message, ex.TargetSite);
-          _ = MessageBox.Show(str);
+          Trace.WriteLine(str);
           req.Result = null
       }
       finally { req.MarkAsCompleted(); }

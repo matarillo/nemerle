@@ -1,0 +1,79 @@
+using System;
+using System.Console;
+using Tests;
+
+module Program
+{
+  Main() : void
+  {
+    def tests = array[
+      "Complete_in_lambda", "Overload1", "GetMethodTip", "QuickTips", "QuickTip",
+      "Property_location", "Complete_in_return_type_1", "Complete_in_return_type_2",
+      "Complete_in_return_type_3", "Complete_in_return_type_4", "QuickTip_ForMacro",
+      "Complete_in_match_variant_6", "Complete_in_match_variant_5", "Complete_in_match_variant_4",
+      "Complete_System_Collections_Generic_List__Collections", "Complete_namespace_2",
+      "Complete_2", "Complete_empty", "Complete_Complete_expr", "Complete_type_escalation_3",
+      "Complete_Complete_aliased_type", "Complete_ExtensionMethod_1", "QuickTip_Imperative",
+      "QuickTip_ArgPattern", "QuickTip_CtorArg", "QuickTip_TupleProp", "QuickTip_TupleMethod",
+      "Complete_enum", "SimpleSourceTextManager_GetLine", "SimpleSourceTextManager_GetLine_EOF",
+      "SimpleSourceTextManager_GetLineAndColumn", "SimpleSourceTextManager_GetRegion_block_1",
+      "SimpleSourceTextManager_GetRegion_block_2", "SimpleSourceTextManager_GetRegion_block_3",
+      "Hint_on_return", "Hint_in_body_of_implicit_match", "QuickTip_ClassExtension",
+      "Complete_generic_type_cast", "Complete_type_cast", "Complete_namespace_1",
+      "Complete_vars_with_same_name", "Complete_in_match_variant_3", "Complete_in_match_variant_2",
+      "Complete_in_match_variant_1", "Complete_type_escalation_2", "Complete_type_escalation",
+      "Complete_qualidend", "Complete_GlabalNs_in_NestedNs", "CompleteInType_1",
+      "CompleteInUsing_1", "FindByLocation_Method_Main",
+      // Present in Tests.n but not exercised by the legacy VsIntegration\ConsoleTest\Program.cs
+      // list above; included here for broader headless coverage (WP-K).
+      "GoToInfoTest_001", "GoToInfoTest_002", "GoToInfoTest_003", "GoToInfoTest_004",
+      "Complete_in_base_type_1", "Complete_in_base_type_2", "Complete_in_base_type_3",
+      // QuickTip_StackOverflow deliberately NOT run: the legacy ConsoleTest\Program.cs skips it
+      // too (commented out) because a real stack overflow is an uncatchable, process-killing
+      // CLR failure (both net-4.0 and CoreCLR), not something a try/catch runner can report on.
+    ];
+
+    def test = Test1();
+    mutable passed = 0;
+    mutable failed = 0;
+
+    WriteLine("Init...");
+    try { test.Init(); WriteLine("Init OK"); }
+    catch
+    {
+      | e =>
+        WriteLine($"Init FAILED: $(e.GetType().FullName): $(e.Message)");
+        WriteLine(e.StackTrace);
+        when (e.InnerException != null)
+        {
+          WriteLine("--- inner ---");
+          WriteLine($"$(e.InnerException.GetType().FullName): $(e.InnerException.Message)");
+          WriteLine(e.InnerException.StackTrace);
+        }
+        Environment.Exit(2);
+    }
+
+    foreach (name in tests)
+    {
+      try
+      {
+        def method = test.GetType().GetMethod(name);
+        _ = method.Invoke(test, array[]);
+        WriteLine($"PASS $name");
+        passed++;
+      }
+      catch
+      {
+        | e =>
+          def inner = if (e is System.Reflection.TargetInvocationException && e.InnerException != null) e.InnerException else e;
+          WriteLine($"FAIL $name : $(inner.GetType().Name): $(inner.Message)");
+          failed++;
+      }
+    }
+
+    WriteLine($"\n$passed passed, $failed failed, $(tests.Length) total");
+
+    when (failed > 0)
+      Environment.Exit(1);
+  }
+}

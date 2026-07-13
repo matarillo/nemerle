@@ -112,7 +112,7 @@ namespace Nemerle.Completion2.Factories
 
       foreach (path in paths)
       {
-        when (Exists(path))
+        when (System.IO.File.Exists(path))
         {
           def path = path.ToLowerInvariant();
           def fileTime = GetLastWriteTimeUtc(path);
@@ -195,7 +195,7 @@ namespace Nemerle.Completion2.Factories
       if (ok) assembly
       else
       {
-        if (Exists(path))
+        if (System.IO.File.Exists(path))
         {
           def asmName = AssemblyName.GetAssemblyName(path);
           def (assembly, ok) = assByStrongName.TryGetValue(asmName.FullName);
@@ -224,7 +224,7 @@ namespace Nemerle.Completion2.Factories
       //assembly
     }
 
-    static _dotnetPath : string = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory().ToLowerInvariant();
+    static _dotnetPath : string = System.IO.Path.GetDirectoryName(typeof(object).Assembly.Location).ToLowerInvariant();
 
     static AssemblyLoadFromImpl(path : string) : Assembly
     {
@@ -260,7 +260,7 @@ namespace Nemerle.Completion2.Factories
       //SR.Assembly.LoadFrom(path)
       def asmBytes = ReadAllBytes(path);
       def symPath = ChangeExtension(path, ".pdb");
-      def symBytes = if (Exists(symPath)) ReadAllBytes(symPath) else null;
+      def symBytes = if (System.IO.File.Exists(symPath)) ReadAllBytes(symPath) else null;
       def asm = Assembly.Load(asmBytes, symBytes);
 
       // Note from Assembly.CodeBase documentation:

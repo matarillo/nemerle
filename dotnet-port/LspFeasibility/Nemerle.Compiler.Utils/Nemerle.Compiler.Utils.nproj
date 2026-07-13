@@ -1,0 +1,209 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-K (LSP feasibility validation, dotnet-port\21-lsp-feasibility.md step 1): builds
+    VsIntegration\Nemerle.Compiler.Utils (the VS2010 IDE engine, ~22K lines, "Nemerle.Completion2.Engine"
+    core) with the core (net10) toolchain, on top of dist\ncc, EXCLUDING the WinForms/CodeDom-designer
+    files that are irrelevant to a headless engine (debug AST browser forms, VS Forms-designer
+    CodeDom round-trip). Source files are referenced in place under VsIntegration\Nemerle.Compiler.Utils
+    (NOT copied) so this project and the legacy VS-targeting Nemerle.Compiler.Utils.csproj/.nproj share
+    one source of truth.
+
+    Excluded (WinForms/System.Drawing designer-only; not on the IIdeEngine->LSP surface in
+    dotnet-port\21-lsp-feasibility.md), all genuinely coupled to System.Windows.Forms/
+    System.Drawing (not just System.CodeDom, see the note further down for that distinction):
+      AstBrowserForm.n, Nemerle.Completion2\CompiledUnitAstBrowser.n (debug AST tree Form),
+      Nemerle.Completion2\CodeModel\Project.Debug.n (only caller of CompiledUnitAstBrowser; its own
+        caller in Project.Relocation.n was already commented out upstream),
+      CodeDom\CodeDomHelper.n / FormCodeDomGenerator.n / FormCodeDomParser.n /
+        NemerleCodeDomProvider.n / NemerleCodeParser.n / NemerleCodeParserBase.n (the WinForms
+        designer round-trip feature cluster: generates System.Drawing.Point-tagged CodeDom members
+        for the Forms designer's InitializeComponent() merge),
+      Nemerle.Completion2\Engine\BackgroundWorks\Engine-CreateCodeCompileUnit.n /
+        Engine-MergeCodeCompileUnit.n (the actual IIdeEngine.CreateCodeCompileUnit/
+        MergeCodeCompileUnit bodies, which construct a FormCodeDomParser from the excluded cluster
+        above).
+    IEngine.n itself is UNCHANGED (shared with the legacy VS build): Nemerle.VisualStudio's Forms
+    designer (Project\NemerleFileNodeCodeDomProvider.cs) calls CreateCodeCompileUnit/
+    MergeCodeCompileUnit/BeginMergeCodeCompileUnit through the IIdeEngine interface type, so
+    removing them from the interface would break that legacy project's compile even though this
+    headless build never calls them. Their signatures only reference System.CodeDom types
+    (CreateCodeCompileUnitAsyncRequest/FormChanges/MergeCodeCompileUnitAsyncRequest, defined in
+    FormChanges.n/CreateCodeCompileUnitAsyncRequest.n/MergeCodeCompileUnitAsyncRequest.n), which
+    have no WinForms dependency at all, so those three files ARE included here (see the ItemGroup
+    below) together with a System.CodeDom PackageReference (not part of ncc's CoreCLR auto-ref
+    set), and CodeDomStubs.n supplies NotSupportedException bodies for the three interface members
+    so Engine still fully implements IIdeEngine. A single stray `using System.Windows.Forms;` with
+    no actual Forms usage was also dropped from Nemerle.Completion2\CodeFormatting\Formatter.n.
+
+    Build: dotnet build dotnet-port\LspFeasibility\Nemerle.Compiler.Utils\Nemerle.Compiler.Utils.nproj
+    (requires dotnet-port\dist\ncc to already exist: run dotnet-port\pack-tool.ps1 first if not).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\AstUtils\Ast.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequestType.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\AsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\CodeInfoAsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\CompletionAsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\GotoInfoAsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\GotoInfoForMemberAsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\MethodTipInfoAsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\ParseCompileUnitAsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\QuickTipInfoAsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncResponce.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncWorker.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Collections.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\CompilerMessage\CompilerMessage.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\CompilerMessage\CompilerMessageForCompileUnit.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\CompilerMessage\CompilerMessageForMethod.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\CompilerMessage\MessageKind.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Const.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Hints\Convert.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Hints\HintHelper.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Hints\SubHintForType.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeCompletionEngineException.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\AsyncFormatting.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\CodeFormattingStageBase.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\CodeIndentationStage.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\CodeLineBreakingStage.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\Formatter.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\FormatterResult.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\IFormattingStage.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\NonEatingLexer.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\TokenNotFoundException.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeFormatting\TokenStreamFinder.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\CompileUnitCollection.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\ExprDeclWalker.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\ExprFinder.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\GlyphType.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\GotoInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\InterfaceMemberImplSourceGenerator.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\MethodTipInfo\LocalFuncMethodTipInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\MethodTipInfo\MethodTipInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\MethodTipInfo\OverloadsMethodTipInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\MethodTipInfo\VariantConstantObjectTipInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\Project.MakeCompletionList.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\Project.Namespace.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\Project.Refactoring.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\Project.Relocation.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\Project.Type.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\Project.Using.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\Project.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\QuickTipInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\RegionsHelper.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\ScanLexer.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\ScanState.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\ScanTokenColor.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\ScanTokenInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\ScanTokenTriggers.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\ScanTokenType.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\SourceGenerator.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\Static.Analysis.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\TokenFinder.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\XmlDocInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CodeModel\XmlDocReader.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CompilerConcreteDefinitions\Factories\Factories.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CompilerConcreteDefinitions\IntelliSenseModeLibraryReferenceManager.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CompilerConcreteDefinitions\IntelliSenseModeMethodBuilder.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CompilerConcreteDefinitions\IntelliSenseModeTyper.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\CompilerConcreteDefinitions\TypeBuilderEx.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Debug\AstNodeInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Debug\AstUtils.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Decl.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-BeginReloadProject.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-BuildTypeTree.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-CheckMethod.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-Completion.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-FindMethodsToOverride.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-FindUnimplementedMembers.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-GetGoToInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-GetGotoInfoForMember.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-GetInheritorsGoToInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-GetMedhodTip.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-GetTokenInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-HighlightUsages.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-ParseCompileUnit.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-RelocationRequestsQueue.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\BackgroundWorks\Engine-UpdateCompileUnit.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\CompilerUnit.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\CompletionElem.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\CompletionElemFlags.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\Engine-main.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\Engine-overrides.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\Engine.CompilerMessages.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\Engine.Completion-impl.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\Engine.Completion-overrides.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\Engine.Init.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\Engine.ParseEvents.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\Engine.Properties.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\EngineFactory.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\IEngine.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\IntegrationDefaultParser.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\RegionInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Engine\RelocationRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\InternalReference.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\OverloadsEqualityComparer.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\Relocation.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\TextManagement\EngineCallbackStub.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\TextManagement\FileNemerleSource.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\TextManagement\IIdeProject.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\TextManagement\ISource.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\TextManagement\MessageType.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Nemerle.Completion2\TraceWriter.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Properties\AssemblyInfo.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Utils.n" />
+  </ItemGroup>
+
+  <!--
+    IIdeEngine (IEngine.n, unmodified/shared with the legacy VS build) declares
+    CreateCodeCompileUnit/MergeCodeCompileUnit/BeginMergeCodeCompileUnit: Nemerle.VisualStudio's
+    Forms-designer CodeDom round-trip (Project\NemerleFileNodeCodeDomProvider.cs) calls these
+    through the IIdeEngine interface type, so removing them from the interface would break that
+    legacy VS project's compile even though this headless/core build never needs them. Their real
+    implementations (Engine-CreateCodeCompileUnit.n/Engine-MergeCodeCompileUnit.n) go through
+    FormCodeDomParser (CodeDom\NemerleCodeParser.n and friends), which genuinely needs
+    System.Drawing/System.Windows.Forms for designer-position metadata, so those stay excluded.
+    But the three TYPES in the interface signatures (CreateCodeCompileUnitAsyncRequest, FormChanges,
+    MergeCodeCompileUnitAsyncRequest) only use System.CodeDom, not WinForms, so they can be compiled
+    here as-is; CodeDomStubs.n (below) then satisfies the interface with NotSupportedException
+    bodies, which is honest for a host that never calls them (WP-K's headless test suite doesn't).
+  -->
+  <ItemGroup>
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\CodeDom\FormChanges.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\CreateCodeCompileUnitAsyncRequest.n" />
+    <NemerleCompile Include="..\..\..\VsIntegration\Nemerle.Compiler.Utils\Async\AsyncRequest\MergeCodeCompileUnitAsyncRequest.n" />
+    <NemerleCompile Include="CodeDomStubs.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pinned to match the installed/used Microsoft.NETCore.App runtime (dotnet-port\
+         build-stage2-core.ps1 resolves the same 10.0.9 shared-framework directory for its
+         -ref: paths), so this package gets its native net10.0 lib assets instead of falling
+         back to an older TFM's compat shim. -->
+    <PackageReference Include="System.CodeDom" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Nemerle.Compiler">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\dist\ncc\Nemerle.Compiler.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Nemerle.Macros">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\dist\ncc\Nemerle.Macros.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>
