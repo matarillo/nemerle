@@ -1,0 +1,61 @@
+using System;
+using System.Console;
+using System.IO.File;
+using Nemerle.Collections;
+using Nemerle.Imperative;
+using Nemerle.Compiler;
+
+macro SolveMaze(inputFile : string){
+  def maze = ReadAllLines(inputFile);
+  def h = maze.Length;
+  def w = maze[0].Length;
+  def q = Queue();
+  def v = array(h);
+  def d = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+  for(mutable i = 0; i < h; i = i + 1) {
+    v[i] = array(w);
+  }
+  mutable s = None();
+  for(mutable y = 0; y < h; y = y + 1) {
+    for(mutable x = 0; x < w; x = x + 1) {
+      when(maze[y][x] == 'S') s = Some(x, y);
+    }
+  }
+  match(s) {
+  | None => Message.Error("S is not found"); <[ ("" : string) ]>
+  | Some((sx, sy)) => 
+    q.Add([(sx, sy)]);
+    mutable path = null;
+    def Loop() {
+      when(q.IsEmpty) Message.Error("This maze cannot be solved");
+      path = q.Take();
+      def (x, y) = path.Head;
+      when(maze[y][x] == 'G') return;
+      when((!v[y][x]) && maze[y][x] != '*') {
+        v[y][x] = true;
+        d.Iter(fun(_){ 
+        | (dx, dy) => q.Add((x + dx, y + dy)::path);
+        });
+      }
+      Loop();
+    }
+    Loop();
+    def result = System.Text.StringBuilder();
+    for(mutable y = 0; y < h; y = y + 1) {
+      for(mutable x = 0; x < w; x = x + 1) {
+        def e = maze[y][x];
+        if(e == 'S' || e == 'G' || !path.Contains((x, y))) {
+          Write(e);
+          _ = result.Append(e);
+        }else {
+          Write("$");
+          _ = result.Append("$");
+        }
+      }
+      WriteLine("");
+      _ = result.Append("\n");
+    }
+    WriteLine("compiled successfully");
+    <[ $(result.ToString(): string) ]>
+  }
+}
