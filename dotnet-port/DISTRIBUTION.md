@@ -47,6 +47,17 @@
 > project-aware diagnostics が VS Code extension 0.3.0 で動く。development VSIX が
 > server を同梱しない点は変わらず WP-L4。詳細は `27-vscode-project-workspace-log.md`。
 
+> **更新 (2026-07-14, WP-L4 — bundled VSIX packaging)**: VS Code extension 0.4.0 は
+> `dotnet-port\vscode-nemerle\pack-server.ps1` が staging する LspServer Release 出力
+> ディレクトリ全体を VSIX の `server/` に同梱し、既定で bundled server を起動する
+> (`nemerle.server.path` は開発 override)。.NET 10 runtime は同梱せず、起動前に
+> `dotnet --list-runtimes` で検査する。VSIX は server を配布するが、user project の
+> build / MSBuild query には引き続きこの文書の `dist/ncc`(pack-tool.ps1)+
+> `Nemerle.Core.targets` が必要(`Nemerle.Sdk` NuGet 化は次 WP)。同一 commit の
+> server/dist を組み合わせること(Nemerle assembly version は git describe 由来。
+> `server/bundle-info.json` に pack 時 commit を記録)。詳細は
+> `28-vscode-packaging-log.md`。
+
 ---
 
 ## 1. `dotnet ncc` 配布レイアウト — `dotnet-port\pack-tool.ps1`

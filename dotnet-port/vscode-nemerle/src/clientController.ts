@@ -6,6 +6,8 @@ import {
   type LanguageClientOptions,
 } from 'vscode-languageclient/node';
 import {
+  DotNetRuntimeError,
+  ensureDotNetRuntime,
   formatLaunchSpec,
   resolveServerLaunch,
   ServerConfigurationError,
@@ -52,7 +54,10 @@ export class NemerleClientController implements vscode.Disposable {
   private dotnetExecutable = 'dotnet';
   private readonly projectCancellations = new Set<vscode.CancellationTokenSource>();
 
-  public constructor(private readonly output: vscode.LogOutputChannel) {}
+  public constructor(
+    private readonly output: vscode.LogOutputChannel,
+    private readonly bundledServerPath?: string,
+  ) {}
 
   public start(): Promise<void> {
     return this.enqueue(() => this.startCore());
@@ -137,7 +142,7 @@ export class NemerleClientController implements vscode.Disposable {
 
     let launch;
     try {
-      launch = await resolveServerLaunch(configuredPath, configuredDotnet);
+      launch = await resolveServerLaunch(configuredPath, configuredDotnet, this.bundledServerPath);
       this.dotnetExecutable = launch.dotnetExecutable;
       this.lastConfigurationError = undefined;
     } catch (error: unknown) {
@@ -146,6 +151,26 @@ export class NemerleClientController implements vscode.Disposable {
         return;
       }
       throw error;
+    }
+    this.output.info(
+      launch.source === 'bundled'
+        ? `Using the bundled Nemerle language server: ${launch.serverPath}`
+        : `Using the configured development Nemerle language server: ${launch.serverPath}`,
+    );
+
+    // A DLL-shaped server needs the shared .NET runtime; fail before the
+    // process launch with an actionable message when it is missing.
+    if (launch.serverPath.toLowerCase().endsWith('.dll')) {
+      try {
+        const runtime = await ensureDotNetRuntime(launch.dotnetExecutable);
+        this.output.info(`Found Microsoft.NETCore.App ${runtime} via '${launch.dotnetExecutable} --list-runtimes'.`);
+      } catch (error: unknown) {
+        if (error instanceof DotNetRuntimeError) {
+          this.reportConfigurationError(error.message, 'nemerle.dotnet.path');
+          return;
+        }
+        throw error;
+      }
     }
 
     const serverOptions: Executable = {
@@ -218,7 +243,7 @@ export class NemerleClientController implements vscode.Disposable {
     }
   }
 
-  private reportConfigurationError(message: string): void {
+  private reportConfigurationError(message: string, settingId = 'nemerle.server.path'): void {
     this.output.error(message);
     if (this.lastConfigurationError === message) {
       return;
@@ -227,7 +252,7 @@ export class NemerleClientController implements vscode.Disposable {
     this.lastConfigurationError = message;
     void vscode.window.showErrorMessage(message, 'Open Settings', 'Show Output').then(async (choice) => {
       if (choice === 'Open Settings') {
-        await vscode.commands.executeCommand('workbench.action.openSettings', 'nemerle.server.path');
+        await vscode.commands.executeCommand('workbench.action.openSettings', settingId);
       } else if (choice === 'Show Output') {
         this.showOutput();
       }

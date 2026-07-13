@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { NemerleClientController } from './clientController';
 import { NemerleProjectController, type ProjectStatusSnapshot } from './projectController';
@@ -12,7 +13,10 @@ export interface NemerleExtensionApi {
 
 export function activate(context: vscode.ExtensionContext): NemerleExtensionApi {
   const output = vscode.window.createOutputChannel('Nemerle Language Server', { log: true });
-  controller = new NemerleClientController(output);
+  const bundledServerPath = context.asAbsolutePath(
+    path.join('server', 'Nemerle.LanguageServer.dll'),
+  );
+  controller = new NemerleClientController(output, bundledServerPath);
   projectController = new NemerleProjectController(context, controller, output);
 
   context.subscriptions.push(

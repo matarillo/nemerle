@@ -11,3 +11,5 @@ tsconfig.test.json
 *.vsix
 dist/*.vsix
 out/*.map
+pack-server.ps1
+test-bundled-server.ps1

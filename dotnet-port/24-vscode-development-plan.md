@@ -36,10 +36,6 @@
 - WP-L2 の MSBuild JSON project-information provider、独立 snapshot、project discovery/selection、
   cache/single-flight/timeout/cancellation、status/reload UI。
 
-現在欠けているもの:
-
-- VSIX と server binaries を再現可能に組み立てる packaging/test 手順（WP-L4）。
-
 進捗更新 (2026-07-13): WP-L1 と WP-L2 は完了。実装・検証結果は
 `25-vscode-extension-log.md` と `26-vscode-project-info-log.md` を参照。
 
@@ -47,6 +43,12 @@
 project 全 source（open buffer 優先、closed source は disk-backed）と resolved
 reference / macro reference を使う project-aware diagnostics が動く。
 実装・検証結果は `27-vscode-project-workspace-log.md` を参照。
+
+進捗更新 (2026-07-14): WP-L4 完了。WP-L の全 work package が完了した。
+extension 0.4.0 は language server を VSIX の `server/` に同梱し（`pack-server.ps1`）、
+既定で bundled server を起動、`dotnet --list-runtimes` による .NET 10 runtime 検査、
+隔離 install の clean-machine 相当自動テスト、third-party notices の機械検証を持つ。
+実装・検証結果は `28-vscode-packaging-log.md` を参照。
 
 ## 3. ゴール
 
@@ -267,6 +269,10 @@ snapshot は WP-L3 まで engine 非適用。詳細は `26-vscode-project-info-l
 7. project reload 中の didChange/didClose で deadlock/crash しない。
 
 ### WP-L4: packaging と end-to-end test
+
+状態: **完了 (2026-07-14)**。受け入れ基準 1〜5 を自動テストで確認済み
+(clean-machine 相当の隔離 VSIX install、VSIX 抽出 server での raw LSP 全シナリオを含む)。
+詳細は `28-vscode-packaging-log.md`。
 
 成果物:
 

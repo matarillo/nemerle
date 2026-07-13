@@ -137,7 +137,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A2 | dotnet ネイティブ化「レベル A」: 参照自動解決・rsp撤廃(`LoadCoreStdlibReferences`)、`@(ReferencePath)`→`-ref:`配線、`-debug`/PDB・`dotnet clean`対応、dotnet tool rspフリー化、Linux版targets | —(計画後) | 完了(2026-07-13) | DISTRIBUTION.md |
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
-| WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 進行中(WP-L1/L2/L3 完了、2026-07-14。残は WP-L4 packaging) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md |
+| WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
 
 ## 作業ログ
 
@@ -604,3 +604,14 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   PackageReference/Sokoban と一時 project の raw LSP シナリオおよび Extension Host で
   実測した。extension 0.3.0 は適用状態を status に表示する。
   詳細は `27-vscode-project-workspace-log.md`。
+- 2026-07-14: WP-L4(packaging と end-to-end test)完了。WP-L はこれで全完了。
+  extension 0.4.0 は `pack-server.ps1` が staging する LspServer の Release 出力
+  ディレクトリ全体(71 files。CoreEmit は emission 専用のため不要と実測で確定)を
+  VSIX の `server/` に同梱し、既定で bundled server を起動(`nemerle.server.path` は
+  開発 override)、起動前に `dotnet --list-runtimes` で .NET 10 runtime を検査する。
+  隔離 extensions-dir/user-data-dir に VSIX を install して bundled server が無設定で
+  project-aware diagnostics を出す clean-machine 相当テスト(`npm run test:vsix`)と、
+  VSIX 抽出 server だけで WP-L3 raw LSP 全シナリオを回す `test-bundled-server.ps1` を
+  追加。`THIRD-PARTY-NOTICES.md` + `npm run verify-server` で同梱物の license 記録を
+  機械検証する。全 build 0 warning、unit 21/21、Extension Host trusted 3/3 +
+  untrusted 1/1 + vsix 1/1、npm/NuGet audit 0 件。詳細は `28-vscode-packaging-log.md`。

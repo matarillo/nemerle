@@ -1,0 +1,11 @@
+{
+  "name": "nemerle-vsix-test-driver",
+  "displayName": "Nemerle VSIX test driver",
+  "description": "Manifest-only development extension used as --extensionDevelopmentPath while the packaged vscode-nemerle VSIX under test is loaded from an isolated --extensions-dir.",
+  "version": "0.0.1",
+  "publisher": "nemerle-project",
+  "license": "BSD-3-Clause",
+  "engines": {
+    "vscode": "^1.125.0"
+  }
+}

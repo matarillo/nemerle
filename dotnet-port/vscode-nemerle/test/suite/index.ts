@@ -7,9 +7,12 @@ export function run(): Promise<void> {
     timeout: 90_000,
     ui: 'tdd',
   });
-  const testFile = process.env.NEMERLE_TEST_MODE === 'untrusted'
+  const mode = process.env.NEMERLE_TEST_MODE;
+  const testFile = mode === 'untrusted'
     ? 'untrusted.test.js'
-    : 'extension.test.js';
+    : mode === 'vsix'
+      ? 'vsix.test.js'
+      : 'extension.test.js';
   mocha.addFile(path.resolve(__dirname, testFile));
 
   return new Promise((resolve, reject) => {

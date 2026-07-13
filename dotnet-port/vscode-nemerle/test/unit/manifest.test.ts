@@ -36,6 +36,13 @@ test('manifest registers Nemerle language, commands, settings, and restricted mo
   const trust = manifest.capabilities.untrustedWorkspaces;
   assert.equal(trust.supported, 'limited');
   assert.deepEqual(trust.restrictedConfigurations, ['nemerle.server.path', 'nemerle.dotnet.path']);
+
+  // WP-L4: the bundled server is the default, the setting only overrides it,
+  // and the VSIX file name always matches the manifest version.
+  assert.equal(properties['nemerle.server.path'].default, '');
+  assert.match(properties['nemerle.server.path'].markdownDescription, /bundled/u);
+  assert.ok(manifest.scripts['package:vsix'].includes(`vscode-nemerle-${manifest.version}.vsix`));
+  assert.ok(fs.existsSync(path.join(extensionRoot, 'THIRD-PARTY-NOTICES.md')));
 });
 
 test('language configuration provides comments, brackets, closing, surrounding, and indentation', () => {
