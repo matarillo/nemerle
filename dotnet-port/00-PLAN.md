@@ -108,6 +108,37 @@ ncc は Roslyn のようなメタデータベースのコンパイラーでは�
 - 強名署名(Nemerle.snk): CoreCLR は署名生成不可 → 公開鍵のみ埋める(delay-sign 相当)か署名廃止
 - multi-module / x86 固有(ncc32/ncc64)は廃止方向
 
+## 作業パッケージ一覧
+
+WP(Work Package)は作業単位。完了時に下の「作業ログ」へ「WP-X 完了」と記録する。
+「フェーズ」列は上記「ブートストラップ計画」のフェーズ分割表(フェーズ0〜6)との対応。
+WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6完了 = WP-I2 で配布可能な
+ツールチェーンが揃った時点)達成後に発生した、計画のスコープ外の作業パッケージ。
+
+> **命名注意**: WP-A2/WP-A3 の「A」は WP-A(フェーズ3、ExternalTypeInfo修正)の続きではない。
+> 「dotnet ネイティブ化 レベル A(= フロントエンド)」という別系列の通し番号で、
+> WP-A2(rsp撤廃・参照配線・PDB/clean・dotnet tool更新・Linux版等)の残項目のうち
+> インプロセスホスト化が独立タスクとして切り出されたものが WP-A3。内容的には無関係だが
+> 接頭辞が衝突しており紛らわしい(以後の類似作業は別系列名を検討すること)。
+
+| WP | 内容 | フェーズ | 状態 | 詳細ログ |
+|---|---|---|---|---|
+| WP-A | `ExternalTypeInfo` のメンバー取り込みフィルタ(モダン BCL のref return/byref-like構造体をスキップ) | 3 | 完了(2026-07-11) | 10-metadata-import-log.md |
+| WP-B | emission 層のデュアルパス化(CLR4 / CoreCLR) | 3 → 4(**M1 達成**) | 完了(2026-07-12) | 11-emission-log.md |
+| WP-C | SELF-HOST ブロッカー3件の解消(StrongNameKeyPair除去、codedom除外等) | 5(準備) | 完了(2026-07-12) | 12-selfhost-blockers-log.md |
+| WP-D | stage2 セルフホスト on CoreCLR | 5(**M2 達成**) | 完了(2026-07-12) | 13-stage2-log.md |
+| WP-E | `-debug` の PDB 出力を CoreCLR パスに配線 | 6 | 完了(2026-07-12) | 14-pdb-log.md |
+| WP-F | `-res`(Win32)/`-linkres`/`/doc:` の CoreCLR 対応 | 6 | 完了(2026-07-12) | 17-resources-fixes-log.md |
+| WP-G | attributes-01(CustomAttributeBuilder)の修正 | 6 | 完了(2026-07-12) | 17-resources-fixes-log.md |
+| WP-H | stage2/stage3 の非決定性(MacroClassGen のtmpname)修正 | 6 | 完了(2026-07-12) | 17-resources-fixes-log.md |
+| WP-I1 | Nemerle.Compiler.Test.exe の core 対応 + testsuite 全数実行 | 5(検証) | 完了(2026-07-12) | 18-testsuite-log.md |
+| WP-I2 | 配布形態の整備(pack-tool.ps1 / Nemerle.Tool / MSBuild targets) | 6 | 完了(2026-07-12) | DISTRIBUTION.md |
+| WP-J | overloading-01 regression 修正 + string-template-3 診断・修正 | 5(検証中に発見した回帰の修正) | 完了(2026-07-12) | 19-overload-stringtemplate-log.md |
+| WP-A2 | dotnet ネイティブ化「レベル A」: 参照自動解決・rsp撤廃(`LoadCoreStdlibReferences`)、`@(ReferencePath)`→`-ref:`配線、`-debug`/PDB・`dotnet clean`対応、dotnet tool rspフリー化、Linux版targets | —(計画後) | 完了(2026-07-13) | DISTRIBUTION.md |
+| WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
+| WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
+| WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 計画中 | 24-vscode-development-plan.md |
+
 ## 作業ログ
 
 - 2026-07-11: 計画作成。AL.exe(パブリッシャーポリシー)を SDK 不在時スキップに
@@ -510,6 +541,39 @@ ncc は Roslyn のようなメタデータベースのコンパイラーでは�
     testsuite 全数実行で新規 regression なし(positive 434/469, negative 166/167 ──
     18-testsuite-log.md 時点の 431/469, 165/167 から string-template-3 と
     overloading-01 の分だけ改善、失敗の残りは全て既知の環境・ハーネス制約)。
+- 2026-07-13: WP-A2(dotnet ネイティブ化「レベル A」= フロントエンド)完了。ncc 自体を
+  native 化する方針(corencc 併存は不要)のもと、以下を実施:
+  - **参照自動解決・rsp 撤廃**(コミット `56964d879`): `ncc/passes.n` の
+    `LoadExternalLibraries` に `CoreEmitBridge.IsCoreClr` 分岐を追加し、新メソッド
+    `LoadCoreStdlibReferences()` が CoreCLR 時に `UseLoadedCorlib=true`・
+    `GreedyReferences=false` を設定、mscorlib/System(loaded 実体)+ 実行中共有
+    フレームワークの split アセンブリ11個 + Nemerle を自動 `-ref`。`dotnet ncc.dll
+    hello.n` が `ncc.default.rsp` なしで動くようになった。`-no-stdlib` は従来通り
+    エスケープハッチとして残し、`build-stage2-core.ps1` 等は無影響。フォローアップ
+    (コミット `041986537`)で `Nemerle.Core.targets` から不要になった
+    `NccDefaultRsp` プロパティを削除。
+  - **参照配線**(コミット `ee2ae06f3`): `Nemerle.Core.targets` が `@(ReferencePath)`
+    を `-ref:` として ncc に渡すよう配線。フレームワーク ref パック facade は
+    `%(ReferencePath.FrameworkReferenceName) == 'Microsoft.NETCore.App'` で除外
+    (ncc がフレームワーク実体を自動解決するため)。新サンプル
+    `dotnet-port/samples/RefDemo`(MathLib→App の ProjectReference)で
+    `dotnet build App.nproj` の成功を実証。
+  - **`-debug`/PDB + `dotnet clean` 対応**(コミット `0de978022`):
+    `DebugType`/`DebugSymbols` を見て `-debug` を ncc に渡す配線を追加。ncc の
+    standalone Portable PDB は SDK 期待パスにそのまま一致するため copy/clean は
+    共通ターゲットが自動処理。ランタイム dll コピーを
+    `AfterTargets=CopyFilesToOutputDirectory` に移し `@(FileWrites)` へ登録したことで
+    `dotnet clean` が `bin\` を完全に空にできるようになった(HelloCore/RefDemo で検証)。
+  - **`dotnet tool` 更新**(コミット `06d9aa375`): `Nemerle.Tool` シムを rsp フリー化し
+    `<Version>` を 0.2.0-poc1 に bump。install→`nemerle-ncc -out:x.exe hello2.n`
+    (rsp なし)の compile+run を実証。
+  - **Linux 版 targets**(コミット `253d2ecb3`): `dotnet-port/msbuild/linux/
+    Nemerle.Core.targets` を新設(差分は NccLayoutDir 既定・`dotnet exec` 起動・
+    スラッシュパスの3点のみ)。**WSL で end-to-end 実証**: Windows でビルドした core
+    ncc の DLL 群がそのまま Linux 上で `dotnet build`→`dotnet exec` まで成功(managed
+    IL は OS 非依存、Windows ネイティブ P/Invoke 無し)。
+  - 残項目(b)「インプロセスホスト(MSBuild タスク直呼び)」は独立タスクとして
+    分離し WP-A3 で完遂(次項)。詳細は `DISTRIBUTION.md` の更新注記を参照。
 - 2026-07-13: WP-A3(in-process MSBuild task)完了。`Nemerle.Compiler.Hosting` と
   `Nemerle.MSBuild.Tasks` により、SDK-style `.nproj` の `dotnet build` が compiler API を
   collectible AssemblyLoadContext 内で直接呼び、構造化 diagnostics を MSBuild へ返す。
