@@ -114,7 +114,7 @@
        target (copy-to-output, runtimeconfig/deps generation, Clean, incremental up-to-date
        checks via Inputs/Outputs below) working exactly as the SDK expects. -->
   <Target Name="CoreCompile"
-          Inputs="@(NemerleCompile);@(ReferencePath);$(NccDll);$(NemerleTaskAssembly)"
+          Inputs="@(NemerleCompile);@(ReferencePath);@(NemerleMacroReference);$(NccDll);$(NemerleTaskAssembly)"
           Outputs="@(IntermediateAssembly)">
     <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
     <!-- Pass this project's own ProjectReference/PackageReference outputs to ncc as -ref:.
@@ -128,12 +128,20 @@
       <_NemerleUserReference Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == ''" />
     </ItemGroup>
 
-    <!-- Default path: in-process NccCompile task (WP-A3). No process launch, no command-line
-         string quoting (argv is built directly from task parameters), structured diagnostics
-         via Log.LogError/LogWarning/LogMessage. -->
+    <!-- Macro-only project references (compile-time-only, mirrors the legacy .nproj's
+         MacroProjectReference/"-macros:" split; see tools\msbuild-task\Nemerle.MSBuild.targets
+         and MSBuildTask.cs). A consuming project writes an ordinary ProjectReference with
+         OutputItemType="NemerleMacroReference" ReferenceOutputAssembly="false": the SDK's own
+         ResolveProjectReferences (Microsoft.Common.CurrentVersion.targets) still builds the
+         referenced project first (build-order dependency preserved) but emits its output path
+         ONLY into @(NemerleMacroReference), not into @(ReferencePath), so it is never added
+         to this project's -ref: list, never copied to the output directory, and its types
+         never enter scope; ncc loads its macros only (LoadPluginsFrom(loadMacros = true) via
+         Options.MacrosToLoad, ncc\passes.n). -->
     <NccCompile Condition="'$(NemerleUseExec)' != 'true'"
                 Sources="@(NemerleCompile)"
                 References="@(_NemerleUserReference)"
+                MacroReferences="@(NemerleMacroReference)"
                 OutputAssembly="%(IntermediateAssembly.FullPath)"
                 TargetType="$(NemerleTargetType)"
                 EmitDebug="$(NemerleEmitDebug)"
@@ -141,12 +149,13 @@
                 NccLayoutDir="$(NccLayoutDir)" />
 
     <!-- Escape hatch: original out-of-process path, byte-for-byte the same command line this
-         target used before WP-A3. ncc auto-resolves the standard reference set (the shared
+         target used before WP-A3 (plus -macros: for NemerleMacroReference, added alongside the
+         in-process path above). ncc auto-resolves the standard reference set (the shared
          framework's real split BCL assemblies + this layout's Nemerle.dll) on CoreCLR since
          the LoadCoreStdlibReferences change in ncc\passes.n, so no -from-file:ncc.default.rsp
          is needed here either. -->
     <Exec Condition="'$(NemerleUseExec)' == 'true'"
-          Command="dotnet &quot;$(NccDll)&quot; -target:$(NemerleTargetType) $(NemerleDebugSwitch) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') $(NemerleAdditionalOptions) @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
+          Command="dotnet &quot;$(NccDll)&quot; -target:$(NemerleTargetType) $(NemerleDebugSwitch) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') @(NemerleMacroReference->'-macros:&quot;%(FullPath)&quot;', ' ') $(NemerleAdditionalOptions) @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
           WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 

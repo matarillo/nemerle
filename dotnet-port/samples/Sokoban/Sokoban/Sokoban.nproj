@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-A4 sample (macro-only project references): the Sokoban solver itself
+    (snippets\sokoban\*.n, copied verbatim except macros.n which lives in
+    ..\SokobanMacros\macros.n). Demonstrates the new NemerleMacroReference wiring
+    (dotnet-port\msbuild\Nemerle.Core.targets / Nemerle.MSBuild.Tasks\NccCompile.cs):
+    a plain ProjectReference to a macro-only library, tagged with OutputItemType +
+    ReferenceOutputAssembly="false", builds the referenced project first and feeds ncc's
+    "-macros:" switch, exactly mirroring the legacy .nproj's
+    MacroProjectReference (tools\msbuild-task\Nemerle.MSBuild.targets) but reusing the
+    modern SDK's own ProjectReference/OutputItemType mechanism (the same one Roslyn analyzer
+    project references use) instead of inventing a new item type from scratch.
+
+    Usage:
+      dotnet build dotnet-port\samples\Sokoban\Sokoban\Sokoban.nproj
+      dotnet exec dotnet-port\samples\Sokoban\Sokoban\bin\Debug\net10.0\Sokoban.dll zestaw1.xml 1 IDFS
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="sokoban.n" />
+    <NemerleCompile Include="main.n" />
+    <NemerleCompile Include="treesearch.n" />
+    <NemerleCompile Include="splayheap.n" />
+    <NemerleCompile Include="localsearch.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SokobanMacros\SokobanMacros.nproj"
+                       OutputItemType="NemerleMacroReference"
+                       ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="zestaw1.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

@@ -24,6 +24,11 @@ namespace Nemerle.MSBuild.Tasks
 
         public ITaskItem[] References { get; set; } = Array.Empty<ITaskItem>();
 
+        /// <summary>Assemblies passed as ncc's <c>-macros:</c> (loads macros from the library
+        /// without adding its types to scope -- ncc\CompilationOptions.n's "-macros" option),
+        /// as opposed to <see cref="References"/>'s <c>-ref:</c> which does both.</summary>
+        public ITaskItem[] MacroReferences { get; set; } = Array.Empty<ITaskItem>();
+
         [Required]
         public string OutputAssembly { get; set; } = "";
 
@@ -138,6 +143,9 @@ namespace Nemerle.MSBuild.Tasks
 
             foreach (var r in References)
                 list.Add("-ref:" + r.ItemSpec);
+
+            foreach (var m in MacroReferences)
+                list.Add("-macros:" + m.ItemSpec);
 
             if (!string.IsNullOrWhiteSpace(AdditionalOptions))
             {

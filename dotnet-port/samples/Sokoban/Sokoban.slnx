@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="SokobanMacros/SokobanMacros.nproj" Type="{00000000-0000-0000-0000-000000000000}" />
+  <Project Path="Sokoban/Sokoban.nproj" Type="{00000000-0000-0000-0000-000000000000}" />
+</Solution>
