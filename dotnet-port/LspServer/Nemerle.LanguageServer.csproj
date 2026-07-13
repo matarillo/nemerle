@@ -1,0 +1,71 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Minimal stdio LSP host for the .NET 10 Nemerle IDE engine.  The protocol
+    transport uses OmniSharp.Extensions.LanguageServer 0.19.9.  The Roslyn
+    Microsoft.CommonLanguageServerProtocol.Framework is a prerelease source
+    package with no compatibility promise and does not include LSP DTOs.
+    OmniSharp is pinned and kept outside the IIdeProject/IIdeSource adapter so
+    the engine boundary remains independent of the protocol framework.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Nemerle.LanguageServer</AssemblyName>
+    <RootNamespace>Nemerle.LanguageServer</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- DisableImplicitFrameworkReferences is necessary for compilation, so
+         the SDK cannot infer the executable's runtime framework.  Supply the
+         framework-dependent runtimeconfig explicitly instead. -->
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+    <!-- Compiling against the real shared-framework assemblies (required by
+         Nemerle.Compiler.dll) confuses CA1416's platform annotations for
+         Console.  The response pump intentionally awaits work created by the
+         engine's process-wide worker, which trips the VS threading analyzers. -->
+    <NoWarn>$(NoWarn);CA1416;VSTHRD003;VSTHRD103</NoWarn>
+
+    <!-- The core-built Nemerle assemblies reference the real runtime
+         assemblies rather than the Microsoft.NETCore.App.Ref facades.  Use
+         the same reference shape as Nemerle.Compiler.Hosting.csproj. -->
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <NetCoreSharedFrameworkDir Condition="'$(NetCoreSharedFrameworkDir)' == ''">$(NetCoreRoot)shared\Microsoft.NETCore.App\$(BundledNETCoreAppPackageVersion)\</NetCoreSharedFrameworkDir>
+    <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)..\dist\ncc\</NccLayoutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LspFeasibility\Nemerle.Compiler.Utils\Nemerle.Compiler.Utils.nproj" />
+    <PackageReference Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
+    <None Include="Nemerle.LanguageServer.runtimeconfig.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Nemerle">
+      <HintPath>$(NccLayoutDir)Nemerle.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Nemerle.Compiler">
+      <HintPath>$(NccLayoutDir)Nemerle.Compiler.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Nemerle.Macros">
+      <HintPath>$(NccLayoutDir)Nemerle.Macros.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+
+    <Reference Include="$(NetCoreSharedFrameworkDir)System.*.dll;$(NetCoreSharedFrameworkDir)Microsoft.*.dll;$(NetCoreSharedFrameworkDir)mscorlib.dll;$(NetCoreSharedFrameworkDir)netstandard.dll;$(NetCoreSharedFrameworkDir)WindowsBase.dll"
+               Exclude="$(NetCoreSharedFrameworkDir)Microsoft.DiaSymReader.Native.*.dll;$(NetCoreSharedFrameworkDir)System.IO.Compression.Native.dll">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="EnsureNccLayoutExists" BeforeTargets="Build">
+    <Error Condition="!Exists('$(NccLayoutDir)Nemerle.Compiler.dll')"
+           Text="NccLayoutDir ($(NccLayoutDir)) does not contain Nemerle.Compiler.dll: run dotnet-port\pack-tool.ps1 first." />
+  </Target>
+
+</Project>
