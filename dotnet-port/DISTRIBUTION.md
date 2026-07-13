@@ -244,13 +244,15 @@ dotnet tool uninstall --global Nemerle.Ncc.DevTool
   上書き**(csc/fsc/vbc など「本物のコンパイラー」が使うのと全く同じ
   拡張ポイント。旧 `Nemerle.MSBuild.targets` の Ncc タスクも同じ
   `CoreCompile` を上書きしていた、02-build-flow.md §3 参照)。中身は
-  `<Exec Command="dotnet ncc.dll -from-file:ncc.default.rsp -target:... -out:@(IntermediateAssembly) @(NemerleCompile)" />` の1行。
+  `<Exec Command="dotnet ncc.dll -target:... $(NemerleDebugSwitch) -out:@(IntermediateAssembly) @(参照->-ref:) @(NemerleCompile)" />`
+  (auto-ref により **`-from-file:ncc.default.rsp` は不要**。`@(ReferencePath)` を `-ref:` に配線、
+  `-debug` は DebugType/DebugSymbols に応じて付与)。
   `@(IntermediateAssembly)` は SDK の共通ターゲットが csc 用に計算済みの
   パスをそのまま再利用するため、以降の `CopyFilesToOutputDirectory`・
   `GenerateBuildRuntimeConfigurationFiles`・`Clean`・増分ビルドの
   最新判定(`Inputs`/`Outputs`)がすべて無改造で機能する。
-- ビルド後(`AfterTargets="Build"`)に `Nemerle*.dll` を出力ディレクトリへ
-  コピー(1節と同じ、実行時スタドライブラリ依存への対処)。
+- ビルド中(`AfterTargets="CopyFilesToOutputDirectory"`)に `Nemerle*.dll` を出力ディレクトリへ
+  コピーし `@(FileWrites)` に登録(実行時スタドライブラリ依存への対処 + `dotnet clean` 対応)。
 
 ### ハマった点(重要な制約として残る)
 
@@ -287,25 +289,25 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 
 `hello.n`(`printf` + `Nemerle.Collections` の `list`/`Map`、generics)で
 ビルド成功・実行成功・**増分ビルド(2回目は `CoreCompile` をスキップ)**
-まで確認済み。`dotnet clean` は `obj\` 配下は正しく消すが、
-**`bin\` 配下(`HelloCore.dll`・コピーした `Nemerle*.dll`)までは消さない**
-(`<Exec>`/`<Copy>` ベースの独自ステップが SDK の `@(FileWrites)` 追跡に
-完全には乗っていないため)— 既知の残課題として記録。
+まで確認済み。~~`dotnet clean` が `bin\` 配下を消さない~~ 問題は **0de978022 で解消**
+(ランタイム dll コピーを `@(FileWrites)` に登録)— `dotnet clean` 後に bin が空になることを実測。
 
 ### 既知の制約・今後
 
-- 参照アセンブリ(`ProjectReference`/`PackageReference`)を持つ Nemerle
-  プロジェクト間の依存関係解決は未検証(今回のサンプルは単一ファイル・
-  参照なし)。実運用にはコンパイラー引数(`-ref:`)への `@(ReferencePath)`
-  受け渡しの配線が必要 — 旧 `Nemerle.MSBuild.targets`/`MSBuildTask.cs` の
-  スイッチ生成ロジック(02-build-flow.md §3)を参考に実装できるはずだが
-  未着手。
-- `dotnet clean` の bin\ 配下削除、`-debug`/PDB オプションの配線、
-  複数ソースファイル・複数プロジェクトのマルチプロジェクトビルドは未検証。
-- `.nproj` 拡張子を使う制約そのものは実用上大きな障害ではない(Visual
-  Studio 等の IDE 統合まで考えるなら別途「Nemerle 言語 SDK」相当
-  (F#/VB のように専用 SDK を用意する)が必要になるが、CLI ビルドの
-  範囲では `.nproj` で十分機能する)。
+- ~~参照アセンブリ(`ProjectReference`/`PackageReference`)の依存解決~~ →
+  **ProjectReference は実装・実証済み (ee2ae06f3, `samples\RefDemo`)**。`@(ReferencePath)` を
+  `-ref:` に配線し、フレームワーク ref パック facade は `%(FrameworkReferenceName)` で除外
+  (ncc が実体を自動解決するため)。PackageReference は同経路だが未実測。
+- ~~`dotnet clean` の bin\ 削除、`-debug`/PDB 配線、マルチプロジェクトビルド~~ →
+  **完了 (0de978022)**。clean/PDB 配線済み、複数プロジェクト(MathLib→App)も RefDemo で実証。
+- **Linux/Unix 対応**: `dotnet-port\msbuild\linux\Nemerle.Core.targets` を追加 (253d2ecb3)。
+  NccLayoutDir 既定 `../ncc/`・`dotnet exec ncc.dll` 起動・スラッシュパスのみが Windows 版との差分。
+  **WSL で end-to-end 実証済み**: Windows でビルドした core ncc の DLL 群がそのまま Linux で動作し、
+  `dotnet build HelloCore.nproj` → 実行まで成功(PDB・ランタイム dll コピー含む)。生の CLI
+  (`dotnet exec ncc.dll hello.n`)は生成 exe 隣の `Nemerle.dll` 不足で実行時エラー(OS 非依存の
+  既知 gap)だが、MSBuild 統合は自動コピーで解消。
+- `.nproj` 拡張子を使う制約そのものは実用上大きな障害ではない(Visual Studio 等の IDE 統合まで
+  考えるなら別途「Nemerle 言語 SDK」相当が必要になるが、CLI ビルドの範囲では `.nproj` で十分機能する)。
 
 ---
 
@@ -315,16 +317,19 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 |---|---|---|
 | `dotnet <layout>\ncc.dll` 配布レイアウト | **完全動作** | `pack-tool.ps1` で再現可、hello.n/hello2.n 実証済み |
 | `dotnet tool` 化 | **PoC 成功**(C# シム経由) | install→実行の手順を記載、実証済み |
-| SDK スタイル MSBuild 統合 | **PoC 成功**(`.nproj` 拡張子・単一ファイル限定) | `dotnet build` 成功、実証済み |
+| SDK スタイル MSBuild 統合 | **動作**(`.nproj` 拡張子。参照/PDB/clean/マルチプロジェクト/Linux 対応済み) | Windows・WSL で `dotnet build`→実行を実証 |
 | 既存 CLR4 ビルド(`NemerleAll.nproj`/`build-stage2-core.ps1`) | **無改造・無回帰** | 新規ファイルのみ追加(`.gitignore` のみ既存ファイルに軽微な追記) |
 
 ## 変更・追加ファイル一覧
 
 - 新規: `dotnet-port\pack-tool.ps1`
-- 新規: `dotnet-port\Nemerle.Tool\Nemerle.Tool.csproj`, `Program.cs`
-- 新規: `dotnet-port\msbuild\Nemerle.Core.targets`
+- 新規: `dotnet-port\Nemerle.Tool\Nemerle.Tool.csproj`, `Program.cs`(0.2.0-poc1 で rsp フリー化)
+- 新規: `dotnet-port\msbuild\Nemerle.Core.targets`(参照配線/PDB/clean 追加)
+- 新規: `dotnet-port\msbuild\linux\Nemerle.Core.targets`(Linux 版, 253d2ecb3)
 - 新規: `dotnet-port\samples\HelloCore\HelloCore.nproj`, `hello.n`
+- 新規: `dotnet-port\samples\RefDemo\`(MathLib ライブラリ → App exe の ProjectReference 例)
 - 新規: `dotnet-port\DISTRIBUTION.md`(本ドキュメント)
+- コンパイラー側: `ncc\passes.n`(CoreCLR デフォルト参照の自動解決 `LoadCoreStdlibReferences`, 56964d879)
 - 既存改変(最小限): `.gitignore`(`dotnet-port/dist/` と `*.nupkg` を追加、
   生成物を誤って追跡しないため)、`dotnet-port\00-PLAN.md`(作業ログ追記)
 - 生成物(既定では git 追跡対象外): `dotnet-port\dist\ncc\`(pack-tool.ps1 の
@@ -335,11 +340,23 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 1. ~~`Nemerle.Core.targets` に `@(ReferencePath)` を `-ref:` として渡す配線~~
    → **完了 (ee2ae06f3)**。`samples\RefDemo` で ProjectReference を実証。
    PackageReference は同じ `@(ReferencePath)` 経路だが未実測。
-2. `dotnet tool` PoC のシムをプロセス起動方式から
-   `Nemerle.Compiler.dll` の直接呼び出し(コンパイラー API 呼び出し)に
-   置き換え、起動オーバーヘッドを削減する。
-3. `dotnet clean` が `bin\` 配下を正しく消せるよう、`@(FileWrites)`
-   への登録を `Nemerle.Core.targets` に追加する。
-4. 実配布を見据えるなら、`Nemerle.Tool` の nupkg メタデータ(README・
-   ライセンス・アイコン)整備と CI での `pack-tool.ps1` → `dotnet pack`
-   自動化。
+2. **(現在の検討ポイント — 着手是非を判断中)** インプロセス化: `dotnet tool` シムの
+   `Process.Start` / MSBuild の `<Exec>` による **ncc.dll 別プロセス起動を、
+   `Nemerle.Compiler.dll` の API 直呼び**(`ManagerClass`/`CompilationOptions`/`Message`)
+   へ置き換える。狙いは (a) 2段プロセス起動の解消、(b) **診断の構造化取得(IDE のエラー
+   一覧向け)**。リスク: ncc は「1プロセス1コンパイル」前提で `Instance` シングルトン等
+   プロセス全体の静的状態を持ち、MSBuild ノード再利用と衝突しうる(→ コンパイル毎に
+   collectible AssemblyLoadContext で隔離する案)。診断のテキストパース方式は脆く
+   (ncc 形式 `path:sl:sc:el:ec: sev: Nnnn: msg`、Windows のドライブレターのコロンで
+   naive split 破綻)、代替は **ncc に構造化診断出力を足す**方向。**live squiggle は
+   build-time 診断とは別物で LSP が別途必要**な点にも注意。
+3. ~~`dotnet clean` が `bin\` 配下を消せるよう `@(FileWrites)` 登録~~
+   → **完了 (0de978022)**。ランタイム dll コピーを `AfterTargets=CopyFilesToOutputDirectory`
+   (IncrementalClean が @(FileWrites) を確定する前)へ移し `DestinationFiles` を @(FileWrites)
+   に登録。**`-debug`/PDB 配線も同コミットで完了**(ncc の Portable PDB が SDK 期待パスに一致
+   するため copy/clean は共通ターゲットが自動処理)。HelloCore/RefDemo で `dotnet clean` 後の
+   bin 空・.pdb 生成コピーを実測。
+4. 実配布を見据えるなら、`Nemerle.Tool` の nupkg メタデータ(README・ライセンス・アイコン)
+   整備と CI での `pack-tool.ps1` → `dotnet pack` 自動化。加えて **Linux 用 ncc レイアウト
+   生成スクリプト**(`pack-tool.ps1` の Linux 版: `ncc.exe` 除外・`ncc.default.rsp` 不要・
+   `msbuild/ncc/` 配置)も未整備。
