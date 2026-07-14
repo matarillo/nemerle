@@ -9,6 +9,7 @@ internal static class Program
             await ParserTests();
             EngineInputTests();
             WarningCodeTests();
+            HoverMarkupTests();
             PathNormalizerTests();
             await ErrorTests();
             await ProviderTests();
@@ -94,6 +95,56 @@ internal static class Program
 
         var (nullCode, nullMessage) = NemerleWarningCode.Extract(null);
         True(nullCode is null && nullMessage.Length == 0, "null message is handled");
+    }
+
+    private static void HoverMarkupTests()
+    {
+        // <lb/> becomes a newline; the spelling variant is tolerated.
+        Equal("a\nb", HoverMarkup.ToPlainText("a<lb/>b"), "<lb/> becomes a newline");
+        Equal("a\nb", HoverMarkup.ToPlainText("a<lb />b"), "<lb /> spelling variant becomes a newline");
+
+        // Decorative tags are removed, their visible content kept.
+        Equal("public Run() : void",
+            HoverMarkup.ToPlainText("<keyword>public</keyword> Run() : void"),
+            "decorative keyword tags are stripped");
+        Equal("Instance property: T.Name : int",
+            HoverMarkup.ToPlainText("Instance property: T.<b>Name</b> : int"),
+            "bold tags are stripped");
+
+        // <hint value='...'>text</hint> keeps only the visible text, never the attribute.
+        var hint = HoverMarkup.ToPlainText("<hint value='name'>the parameter</hint>");
+        Equal("the parameter", hint, "hint tag keeps inner text and drops the value attribute");
+
+        // HtmlMangling is reversed; &amp; is decoded last so &amp;lt; round-trips to &lt;.
+        Equal("List<int> & Map<K,V>",
+            HoverMarkup.ToPlainText("List&lt;int&gt; &amp; Map&lt;K,V&gt;"),
+            "escaped angle brackets and ampersand are restored");
+        Equal("&lt;", HoverMarkup.ToPlainText("&amp;lt;"), "&amp;lt; round-trips to &lt;");
+
+        // No raw pseudo-markup tag ever survives (params/pname/ptype clusters too).
+        var messy = "<params><pname>x</pname> <ptype>: int</ptype></params><lb/><code><pre>y</pre></code>";
+        var plain = HoverMarkup.ToPlainText(messy);
+        True(!plain.Contains('<') && !plain.Contains('>'), "no raw pseudo-markup tag survives");
+        True(plain.Contains("x") && plain.Contains(": int") && plain.Contains("y"), "visible content is preserved");
+
+        Equal(string.Empty, HoverMarkup.ToPlainText(null), "null markup yields empty text");
+        Equal(string.Empty, HoverMarkup.ToPlainText(""), "empty markup yields empty text");
+        Equal(string.Empty, HoverMarkup.ToMarkdown("   "), "whitespace-only markup yields empty markdown");
+
+        // Markdown fences the whole hint so metacharacters render literally.
+        var md = HoverMarkup.ToMarkdown("<keyword>public</keyword> M(a : int) : void");
+        Equal("```nemerle\npublic M(a : int) : void\n```", md, "markdown fences the hint as a Nemerle code block");
+        True(md.StartsWith("```nemerle\n", StringComparison.Ordinal) && md.EndsWith("\n```", StringComparison.Ordinal),
+            "markdown result is a fenced code block");
+
+        // Metacharacters and residual identifiers are never interpreted as markdown.
+        var meta = HoverMarkup.ToMarkdown("value *n* _k_ [x](y) : int");
+        True(meta.Contains("*n*") && meta.Contains("[x](y)"), "markdown metacharacters are kept literal inside the fence");
+
+        // A hint containing a backtick run gets a longer fence so it cannot close early.
+        var withTicks = HoverMarkup.ToMarkdown("a ``` b");
+        True(withTicks.StartsWith("````nemerle\n", StringComparison.Ordinal) && withTicks.EndsWith("\n````", StringComparison.Ordinal),
+            "fence grows past an embedded backtick run");
     }
 
     private static void PathNormalizerTests()

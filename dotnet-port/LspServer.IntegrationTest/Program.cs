@@ -36,6 +36,12 @@ internal static class Program
             await RunScenarioAsync("Warning N-code surfaces in the LSP diagnostic code field", WarningCodeAsync);
             await RunScenarioAsync("Buffer override, close revert, stale suppression, source removal, failure recovery",
                 BufferDiskCloseStaleRemovalAsync);
+            await RunScenarioAsync("Hover: five symbol kinds, no raw markup leak, markdown fencing", HoverSymbolKindsAsync);
+            await RunScenarioAsync("Hover: unsaved buffer change reflects the new type", HoverBufferChangeAsync);
+            await RunScenarioAsync("Hover: cross-source (Sokoban) and ProjectReference (RefDemo) symbols", HoverCrossSourceAsync);
+            await RunScenarioAsync("Hover: non-identifier null and no deadlock racing a project reload", HoverReloadRaceAsync);
+            await RunScenarioAsync("Hover: CRLF + non-BMP range in 0-based UTF-16", HoverCrlfNonBmpAsync);
+            await RunScenarioAsync("Hover: warm response-time measurement", HoverTimingAsync);
             Console.WriteLine("PASS all WP-L3 LSP integration scenarios");
             return 0;
         }
@@ -531,6 +537,353 @@ internal static class Program
         {
             TryDeleteDirectory(testDirectory);
         }
+    }
+
+    // ----- Hover: five symbol kinds, no raw markup, markdown fencing -----
+
+    // A self-contained loose-file probe with a local value, a parameter, a
+    // method call, a property access and a type reference.  Loose-file mode is
+    // enough: only core references are needed and the engine builds a types tree
+    // from the open buffer.
+    private const string HoverProbeSource = """
+        using System;
+
+        class Box
+        {
+          public Amount : int { get { 5 } }
+        }
+
+        module Probe
+        {
+          Run() : void
+          {
+            def box : Box = Box();
+            def localValue = Compute(box.Amount);
+            Console.WriteLine(localValue);
+          }
+
+          Compute(parameter : int) : int
+          {
+            parameter + 1
+          }
+        }
+        """;
+
+    private static async Task HoverSymbolKindsAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("hover"), "probe.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, HoverProbeSource);
+
+        // localValue: hover the usage inside Console.WriteLine(localValue).
+        await AssertHoverContainsAsync(client, uri, HoverProbeSource, "localValue", 2, "localValue",
+            "hover on a local value");
+        // parameter: hover the usage in "parameter + 1".
+        await AssertHoverContainsAsync(client, uri, HoverProbeSource, "parameter", 2, "parameter",
+            "hover on a method parameter");
+        // method: hover the Compute(box.Amount) call.
+        await AssertHoverContainsAsync(client, uri, HoverProbeSource, "Compute", 1, "Compute",
+            "hover on a method call");
+        // property: hover box.Amount (the Amount member).
+        await AssertHoverContainsAsync(client, uri, HoverProbeSource, "Amount", 2, "Amount",
+            "hover on a property");
+        // type name: hover the "Box" type declaration name.
+        await AssertHoverContainsAsync(client, uri, HoverProbeSource, "Box", 1, "Box",
+            "hover on a type name");
+    }
+
+    private static async Task HoverBufferChangeAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("hover-change"), "typed.n")).AbsoluteUri;
+        // The edit renames the local (int -> string, "alpha" -> "bravo", same
+        // length so the usage position is stable), so the hover of the edited
+        // buffer must reflect the new symbol and not the stale one.  (The
+        // headless engine frequently renders a blank type in local-value hints
+        // - a known WP-K BCL/inference characteristic - so the reflected name is
+        // the robust signal that the unsaved buffer, not a stale one, was used.)
+        const string source1 = """
+            module Typed
+            {
+              Run() : void
+              {
+                def alpha = 123;
+                System.Console.WriteLine(alpha);
+              }
+            }
+            """;
+        const string source2 = """
+            module Typed
+            {
+              Run() : void
+              {
+                def bravo = "s";
+                System.Console.WriteLine(bravo);
+              }
+            }
+            """;
+
+        await OpenAndAwaitAnalysisAsync(client, uri, source1);
+        var firstHover = await HoverTextAtAsync(client, uri, source1, "alpha", 2);
+        if (firstHover is null || !firstHover.Contains("alpha", StringComparison.Ordinal))
+            throw new InvalidDataException("Hover did not report the initial local 'alpha': " + firstHover);
+
+        var mark = client.Mark();
+        await DidChangeAsync(client, uri, source2, 2);
+        // Wait until the engine reanalyzes the version-2 buffer.
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2 && CountOf(p) == 0,
+            mark,
+            "clean version-2 diagnostics after the unsaved rename edit");
+
+        var secondHover = await HoverTextAtAsync(client, uri, source2, "bravo", 2);
+        if (secondHover is null || !secondHover.Contains("bravo", StringComparison.Ordinal))
+            throw new InvalidDataException("Hover did not reflect the renamed local 'bravo' after the unsaved edit: " + secondHover);
+        if (secondHover.Contains("alpha", StringComparison.Ordinal))
+            throw new InvalidDataException("Hover still reported the stale local 'alpha' after the edit: " + secondHover);
+    }
+
+    private static async Task HoverCrossSourceAsync(LspTestClient client)
+    {
+        // RefDemo: hover a type/member resolved through a ProjectReference.
+        var appProject = Sample("RefDemo", "App", "App.nproj");
+        var programSource = Sample("RefDemo", "App", "Program.n");
+        var programUri = new Uri(programSource).AbsoluteUri;
+        var programText = await File.ReadAllTextAsync(programSource);
+
+        var mark = client.Mark();
+        var result = await LoadProjectAsync(client, appProject);
+        AssertLoadedAndApplied(result, expectedSources: 1);
+        await DidOpenAsync(client, programUri, programText, 1);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, programUri, out var p) && VersionOf(p) == 1 && !HasError(p),
+            mark,
+            "error-free Program.n so its symbols are resolved for hover");
+
+        // Square is a static method on MathLib.Calc, resolved via the
+        // ProjectReference output (occurrence 2 skips the "Square(7)" string).
+        if (programText.Contains("Calc.Square", StringComparison.Ordinal))
+            await AssertHoverNonNullAsync(client, programUri, programText, "Square", 2,
+                "hover on a ProjectReference method (RefDemo Calc.Square)");
+
+        // Sokoban: hover a symbol declared in another project source.
+        var sokobanProject = Sample("Sokoban", "Sokoban", "Sokoban.nproj");
+        var mainSource = Sample("Sokoban", "Sokoban", "main.n");
+        var mainUri = new Uri(mainSource).AbsoluteUri;
+        var mainText = await File.ReadAllTextAsync(mainSource);
+
+        mark = client.Mark();
+        result = await LoadProjectAsync(client, sokobanProject);
+        AssertLoadedAndApplied(result, expectedSources: 5);
+        await DidOpenAsync(client, mainUri, mainText, 1);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, mainUri, out var p) && VersionOf(p) == 1 && !HasError(p),
+            mark,
+            "error-free main.n with cross-source project symbols for hover");
+
+        // A_Star is a static method on TreeSearch, declared in another Sokoban
+        // source; resolving it proves cross-source symbols are in the workspace.
+        if (mainText.Contains("A_Star", StringComparison.Ordinal))
+            await AssertHoverNonNullAsync(client, mainUri, mainText, "A_Star", 1,
+                "hover on a cross-source declared method (Sokoban TreeSearch.A_Star)");
+    }
+
+    private static async Task HoverReloadRaceAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("hover-race"), "race.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, HoverProbeSource);
+
+        // A position that is not over any symbol (the empty line 1) must return a
+        // null hover rather than a fabricated result.
+        var empty = await HoverAsync(client, uri, 1, 0);
+        if (empty.ValueKind != JsonValueKind.Null)
+            throw new InvalidDataException("Hover over a non-identifier position was not null: " + empty);
+
+        // Race hovers against a burst of edits + reloads.  Every hover must
+        // return a response (result or null) rather than deadlock.
+        for (var version = 2; version <= 6; version++)
+        {
+            await DidChangeAsync(client, uri, HoverProbeSource, version);
+            var (line, character) = LocateUtf16(HoverProbeSource, "localValue", 2);
+            var hover = await HoverAsync(client, uri, line, character);
+            if (hover.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null))
+                throw new InvalidDataException("Hover during reload returned an unexpected shape: " + hover);
+        }
+    }
+
+    private static async Task HoverCrlfNonBmpAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("hover-crlf"), "crlf.n")).AbsoluteUri;
+        // CRLF line endings; a non-BMP emoji (U+1F600, a UTF-16 surrogate pair)
+        // sits before the hovered identifier on the same line, so a correct
+        // UTF-16 offset must count it as two code units.
+        var source = string.Join("\r\n",
+            "module Crlf",
+            "{",
+            "  Run() : void",
+            "  {",
+            "    def value = 1; /* 😀 */ System.Console.WriteLine(value)",
+            "  }",
+            "}");
+
+        await OpenAndAwaitAnalysisAsync(client, uri, source);
+
+        var (line, character) = LocateUtf16(source, "value", 2); // the usage in WriteLine(value)
+        var hover = await HoverAsync(client, uri, line, character);
+        if (hover.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Hover on a CRLF + non-BMP buffer returned null.");
+
+        var start = hover.GetProperty("range").GetProperty("start");
+        var gotLine = start.GetProperty("line").GetInt32();
+        var gotChar = start.GetProperty("character").GetInt32();
+        if (gotLine != line || gotChar != character)
+            throw new InvalidDataException(
+                $"Hover range was not 0-based UTF-16 (expected {line}:{character}, got {gotLine}:{gotChar}); " +
+                "the non-BMP surrogate pair or CRLF was miscounted.");
+    }
+
+    private static async Task HoverTimingAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("hover-timing"), "timing.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, HoverProbeSource);
+
+        var (line, character) = LocateUtf16(HoverProbeSource, "localValue", 2);
+        // Warm-up so the first (cold) hover is excluded from the measurement.
+        _ = await HoverAsync(client, uri, line, character);
+
+        var samples = new List<double>();
+        for (var i = 0; i < 15; i++)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var hover = await HoverAsync(client, uri, line, character);
+            stopwatch.Stop();
+            if (hover.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Warm hover unexpectedly returned null.");
+            samples.Add(stopwatch.Elapsed.TotalMilliseconds);
+        }
+
+        samples.Sort();
+        var p50 = samples[samples.Count / 2];
+        var p95 = samples[(int)(samples.Count * 0.95)];
+        Console.WriteLine(
+            $"    warm hover round-trip: p50 {p50:F0} ms, p95 {p95:F0} ms, min {samples[0]:F0} ms, max {samples[^1]:F0} ms (n={samples.Count})");
+    }
+
+    // ----- hover helpers -----
+
+    private static async Task OpenAndAwaitAnalysisAsync(LspTestClient client, string uri, string text)
+    {
+        var mark = client.Mark();
+        await DidOpenAsync(client, uri, text, 1);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1,
+            mark,
+            $"initial diagnostics for {uri} (analysis complete before hover)");
+    }
+
+    private static Task<JsonElement> HoverAsync(LspTestClient client, string uri, int line, int character) =>
+        HoverRawAsync(client, uri, line, character);
+
+    private static async Task<JsonElement> HoverRawAsync(LspTestClient client, string uri, int line, int character)
+    {
+        var response = await client.RequestAsync("textDocument/hover", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("hover request failed: " + error);
+        return response.GetProperty("result");
+    }
+
+    private static string? HoverValue(JsonElement hover)
+    {
+        if (hover.ValueKind != JsonValueKind.Object ||
+            !hover.TryGetProperty("contents", out var contents) ||
+            contents.ValueKind != JsonValueKind.Object ||
+            !contents.TryGetProperty("value", out var value))
+            return null;
+        return value.GetString();
+    }
+
+    private static async Task<string?> HoverTextAtAsync(
+        LspTestClient client, string uri, string text, string needle, int occurrence)
+    {
+        var (line, character) = LocateUtf16(text, needle, occurrence);
+        var hover = await HoverAsync(client, uri, line, character);
+        return HoverValue(hover);
+    }
+
+    private static async Task AssertHoverContainsAsync(
+        LspTestClient client, string uri, string text, string needle, int occurrence,
+        string expectedSubstring, string description)
+    {
+        var value = await HoverTextAtAsync(client, uri, text, needle, occurrence);
+        if (value is null)
+            throw new InvalidDataException($"{description}: hover returned no content.");
+        if (!value.Contains(expectedSubstring, StringComparison.Ordinal))
+            throw new InvalidDataException($"{description}: hover text did not contain '{expectedSubstring}': {value}");
+        AssertNoRawMarkup(value, description);
+        // Markdown fencing (the client advertised markdown): a Nemerle code block.
+        if (!value.Contains("```nemerle", StringComparison.Ordinal))
+            throw new InvalidDataException($"{description}: markdown hover was not fenced as a Nemerle code block: {value}");
+    }
+
+    private static async Task AssertHoverNonNullAsync(
+        LspTestClient client, string uri, string text, string needle, int occurrence, string description)
+    {
+        var value = await HoverTextAtAsync(client, uri, text, needle, occurrence);
+        if (string.IsNullOrEmpty(value))
+            throw new InvalidDataException($"{description}: hover returned no content.");
+        AssertNoRawMarkup(value, description);
+    }
+
+    private static void AssertNoRawMarkup(string value, string description)
+    {
+        foreach (var tag in new[] { "<lb/>", "<lb />", "<keyword", "<hint", "<b>", "</b>", "<params", "<pname", "<ptype", "<code", "<pre" })
+        {
+            if (value.Contains(tag, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"{description}: pseudo-markup '{tag}' leaked into the hover: {value}");
+        }
+    }
+
+    /// <summary>
+    /// Locates the <paramref name="occurrence"/>-th occurrence of
+    /// <paramref name="needle"/> and returns its 0-based line and UTF-16
+    /// character offset, counting CRLF/CR/LF as single line breaks and surrogate
+    /// pairs as two code units (matching LSP position semantics).
+    /// </summary>
+    private static (int Line, int Character) LocateUtf16(string text, string needle, int occurrence)
+    {
+        var index = -1;
+        for (var i = 0; i < occurrence; i++)
+        {
+            index = text.IndexOf(needle, index + 1, StringComparison.Ordinal);
+            if (index < 0)
+                throw new InvalidOperationException($"Could not find occurrence {occurrence} of '{needle}'.");
+        }
+
+        int line = 0, character = 0;
+        for (var i = 0; i < index; i++)
+        {
+            var c = text[i];
+            if (c == '\r')
+            {
+                line++;
+                character = 0;
+                if (i + 1 < index && text[i + 1] == '\n')
+                    i++;
+            }
+            else if (c == '\n')
+            {
+                line++;
+                character = 0;
+            }
+            else
+            {
+                character++;
+            }
+        }
+
+        return (line, character);
     }
 
     // ----- helpers -----

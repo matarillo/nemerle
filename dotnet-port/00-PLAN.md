@@ -138,7 +138,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
-| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | WP-M1 完了(2026-07-14)、WP-M2〜M6 計画 | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md |
+| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | WP-M1・M2 完了(2026-07-14)、WP-M3〜M6 計画 | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md |
 
 ## 作業ログ
 
@@ -634,3 +634,16 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   Stage3 を 0 error、testsuite 新規 regression 0。raw LSP 7/7、`npm test` 21/21、
   Extension Host trusted 3 + untrusted 1 + vsix 1、`test-bundled-server` 7/7、audit 0 件。
   詳細は `30-devenv2-wp-m1-log.md`。
+- 2026-07-14: WP-M2(hover + EngineRequestBridge)完了。(1) `EngineRequestBridge`(§6.2): IDE
+  engine の `Begin*` を await 可能な `Task` 化する汎用境界。`_engineOperations` lock 内で enqueue し
+  lock 外で完了をポーリング検知、AsyncWorker force-out(`Stop`)と document version を尊重して
+  cancel/stale を捏造せず返す。LSP `CancellationToken` を `Stop` に写像、10 s timeout。M3/M4 が再利用。
+  (2) 擬似 markup → `MarkupContent` 変換の純関数 `HoverMarkup`(ProjectInfo、unit test 化): `<lb/>`→
+  改行、装飾 tag 除去、HtmlMangling 復元、markdown は Nemerle fenced code block で包みメタ文字を
+  literal 化、client 非対応時は plaintext。(3) `NemerleHoverHandler`(`textDocument/hover`)+
+  `NemerleProject.GetHoverAsync`: `BeginGetQuickTipInfo` 配線、`QuickTipInfo.Location`→0-origin
+  UTF-16 range。extension は capability 追従(無変更)、ServerInfo 0.4.0、README 更新。compiler/
+  engine 無改造で Stage リビルド不要。raw LSP 13/13(既存 7 + hover 6)、bundled server 13/13、
+  `ProjectInfo.Test` unit(`HoverMarkupTests`)+ integration、`npm test` 21/21、Extension Host
+  trusted 3 + untrusted 1 + vsix 1、audit 0 件。warm hover **p50 31 ms**(目標 < 300 ms)。
+  詳細は `31-devenv2-wp-m2-log.md`。

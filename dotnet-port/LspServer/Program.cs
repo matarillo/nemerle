@@ -23,7 +23,7 @@ internal static class Program
             .WithServerInfo(new ServerInfo
             {
                 Name = "nemerle-language-server",
-                Version = "0.3.0",
+                Version = "0.4.0",
             })
             .WithServices(services =>
             {
@@ -33,7 +33,8 @@ internal static class Program
                 services.AddSingleton(log);
             })
             .WithHandler<NemerleTextDocumentSyncHandler>()
-            .WithHandler<NemerleProjectInfoHandler>()).ConfigureAwait(false);
+            .WithHandler<NemerleProjectInfoHandler>()
+            .WithHandler<NemerleHoverHandler>()).ConfigureAwait(false);
 
         log.Attach(server);
         await server.WaitForExit.ConfigureAwait(false);

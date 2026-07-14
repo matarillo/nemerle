@@ -70,7 +70,11 @@ refresh: `.nproj`, imported `*.targets`/`*.props`, and
 edits and rebuilt referenced assemblies re-apply the cached snapshot. Errors
 are recoverable: a failed reload keeps the previous engine workspace.
 
-Hover/completion/definition are not implemented yet (next work packages).
+**Hover** (`textDocument/hover`) is available: hovering an identifier shows its
+type/signature (and documentation when present), converted from the engine's
+hints to markdown. It works across all project sources and resolved references,
+and reflects unsaved editor buffers. Completion and definition are the next work
+packages.
 
 ## Troubleshooting
 

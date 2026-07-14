@@ -44,7 +44,15 @@ internal sealed class LspTestClient : IAsyncDisposable
         {
             processId = Environment.ProcessId,
             rootUri = new Uri(rootDirectory).AbsoluteUri,
-            capabilities = new { },
+            capabilities = new
+            {
+                textDocument = new
+                {
+                    // Advertise markdown so the hover handler exercises the
+                    // fenced-code-block path (WP-M2).
+                    hover = new { contentFormat = new[] { "markdown", "plaintext" } },
+                },
+            },
             clientInfo = new { name = "nemerle-lsp-integration-test", version = "2.0" },
         }).ConfigureAwait(false);
         if (!initialize.TryGetProperty("result", out _))

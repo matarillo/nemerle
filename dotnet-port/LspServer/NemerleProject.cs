@@ -30,6 +30,16 @@ internal sealed record DocumentDiagnostics(
     int? Version,
     IReadOnlyList<EngineDiagnostic>? Diagnostics);
 
+/// <summary>Engine location of a hover target, in the engine's 1-based line/column.</summary>
+internal sealed record EngineHoverRange(int Line, int Column, int EndLine, int EndColumn);
+
+/// <summary>
+/// A hover result carrying the raw engine hint text (still pseudo-markup; the
+/// handler converts it with <see cref="Nemerle.ProjectInfo.HoverMarkup"/>) and
+/// the optional target range.
+/// </summary>
+internal sealed record EngineHover(string Text, EngineHoverRange? Range);
+
 /// <summary>
 /// IIdeProject adapter for the single engine workspace: all sources of the
 /// applied WP-L2 project snapshot (open LSP buffers override disk-backed text)
@@ -69,6 +79,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     private readonly Task _responsePump;
     private readonly IIdeEngine _engine;
     private readonly ServerLog _log;
+    private readonly EngineRequestBridge _bridge = new();
 
     public NemerleProject(ServerLog log)
     {
@@ -234,6 +245,60 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             RaiseDiagnosticsChanged();
             RequestEngineReload(immediate: true);
         }
+    }
+
+    /// <summary>
+    /// Computes hover (QuickTip) information for an open document at an LSP
+    /// position (0-based line/character, UTF-16 code units).  Returns null when
+    /// the document is not open, the position is not over a symbol, or the
+    /// request was cancelled/superseded/stale.  The request is enqueued under
+    /// <c>_engineOperations</c> (serialized with document changes and reloads)
+    /// but awaited off the lock via <see cref="EngineRequestBridge"/>, so a
+    /// hover during a project reload resolves to null/result/cancel without
+    /// deadlocking.
+    /// </summary>
+    public async Task<EngineHover?> GetHoverAsync(
+        string uri,
+        int lspLine,
+        int lspCharacter,
+        CancellationToken token)
+    {
+        Task<EngineRequestBridge.RequestResult<QuickTipInfo?>> pending;
+        lock (_engineOperations)
+        {
+            InMemoryNemerleSource source;
+            int expectedVersion;
+            lock (_gate)
+            {
+                if (_disposed ||
+                    !_openUriToPath.TryGetValue(uri, out var path) ||
+                    !_documentsByPath.TryGetValue(path, out var state))
+                    return null;
+                source = state.Source;
+                expectedVersion = source.CurrentVersion;
+            }
+
+            // Engine coordinates are 1-based; the LSP character is a UTF-16 code
+            // unit offset, matching the source's .NET string indexing.
+            var line = lspLine + 1;
+            var column = lspCharacter + 1;
+            pending = _bridge.RunAsync<QuickTipInfo?>(
+                () => _engine.BeginGetQuickTipInfo(source, line, column),
+                () => source.CurrentVersion,
+                expectedVersion,
+                static request => ((QuickTipInfoAsyncRequest)request).QuickTipInfo,
+                token);
+        }
+
+        var result = await pending.ConfigureAwait(false);
+        if (!result.IsUsable || result.Value is not { } tip || string.IsNullOrEmpty(tip.Text))
+            return null;
+
+        var location = tip.Location;
+        var range = location.IsEmpty || string.IsNullOrEmpty(location.File)
+            ? null
+            : new EngineHoverRange(location.Line, location.Column, location.EndLine, location.EndColumn);
+        return new EngineHover(tip.Text, range);
     }
 
     public IEnumerable<string> GetAssemblyReferences()
