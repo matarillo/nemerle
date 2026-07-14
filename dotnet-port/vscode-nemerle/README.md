@@ -34,7 +34,7 @@ pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # builds LspServer, stages se
 cd dotnet-port\vscode-nemerle
 npm ci
 npm run package                                    # lint + tests + verify-server + vsce package
-code --install-extension vscode-nemerle-0.5.0.vsix
+code --install-extension vscode-nemerle-0.6.0.vsix
 ```
 
 Then open a trusted folder containing a `.nproj` project. The server starts
@@ -81,7 +81,14 @@ type (including project references, NuGet packages, and types declared in other
 project sources), and global-scope completion offers keywords and visible
 symbols. Item documentation (overloads and XmlDoc summaries) is filled in on
 demand via `completionItem/resolve`. Completion reflects unsaved editor buffers.
-Definition/references are the next work package.
+
+**Go to definition** (`textDocument/definition`) and **find all references**
+(`textDocument/references`) are available: they resolve locals, parameters,
+members, and types to their declaring source — across project sources — and
+reflect unsaved editor buffers. Definitions on a BCL/NuGet member return no
+location (generated-source display is not provided). References honor
+`includeDeclaration`. Semantic tokens, signature help, and incremental rebuild
+are the next work packages.
 
 ## Troubleshooting
 

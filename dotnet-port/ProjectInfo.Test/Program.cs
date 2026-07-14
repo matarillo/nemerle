@@ -11,6 +11,7 @@ internal static class Program
             WarningCodeTests();
             HoverMarkupTests();
             CompletionMappingTests();
+            GotoMappingTests();
             PathNormalizerTests();
             await ErrorTests();
             await ProviderTests();
@@ -181,6 +182,53 @@ internal static class Program
         Equal("(local) value : int\ndefined in M",
             HoverMarkup.ToPlainText("(local) value : int<lb/>defined in M"),
             "completion documentation reuses the hover markup stripper");
+    }
+
+    private static void GotoMappingTests()
+    {
+        // A cross-platform source path so the URI/range assertions do not depend
+        // on the OS-specific drive-letter handling (checked separately below).
+        var file = OperatingSystem.IsWindows() ? @"C:\repo\App\Program.n" : "/repo/App/Program.n";
+
+        // An in-workspace source target (FileIndex > 0) converts from 1-based
+        // engine coordinates to a 0-based UTF-16 LSP range.
+        var def = new NemerleGotoTarget(file, FileIndex: 3, Line: 5, Column: 7, EndLine: 5, EndColumn: 12, IsDefinition: true);
+        var one = GotoMapping.ToLocations([def], includeDeclaration: true);
+        Equal(1, one.Count, "an in-workspace source target yields one location");
+        Equal(4, one[0].StartLine, "line is converted to 0-based");
+        Equal(6, one[0].StartCharacter, "column is converted to 0-based");
+        Equal(4, one[0].EndLine, "end line is converted to 0-based");
+        Equal(11, one[0].EndCharacter, "end column is converted to 0-based");
+        Equal(GotoMapping.ToUri(file), one[0].Uri, "location URI matches the shared path->URI helper");
+
+        // A metadata / external member (FileIndex 0, no source path) is dropped so
+        // definition on a BCL/NuGet symbol yields an empty result (acceptance 4).
+        var external = new NemerleGotoTarget(null, FileIndex: 0, Line: 0, Column: 0, EndLine: 0, EndColumn: 0, IsDefinition: true);
+        Equal(0, GotoMapping.ToLocations([external], includeDeclaration: true).Count,
+            "a metadata/external target is not navigable");
+        // A target with a FileIndex but no end position is not navigable either.
+        var noRange = new NemerleGotoTarget(file, FileIndex: 3, Line: 5, Column: 7, EndLine: 0, EndColumn: 0, IsDefinition: false);
+        Equal(0, GotoMapping.ToLocations([noRange], includeDeclaration: true).Count,
+            "a target without an end position is not navigable");
+
+        // includeDeclaration drops/keeps the declaration entries (references).
+        var usage = new NemerleGotoTarget(file, FileIndex: 3, Line: 9, Column: 3, EndLine: 9, EndColumn: 8, IsDefinition: false);
+        var withDecl = GotoMapping.ToLocations([def, usage], includeDeclaration: true);
+        Equal(2, withDecl.Count, "includeDeclaration=true keeps the declaration alongside the usage");
+        var withoutDecl = GotoMapping.ToLocations([def, usage], includeDeclaration: false);
+        Equal(1, withoutDecl.Count, "includeDeclaration=false drops the declaration entry");
+        Equal(8, withoutDecl[0].StartLine, "the surviving reference is the usage");
+
+        // Exact duplicates (e.g. partial types reporting the same location) collapse.
+        Equal(1, GotoMapping.ToLocations([def, def], includeDeclaration: true).Count, "exact duplicate locations collapse");
+
+        // Windows: the URI carries an upper-cased drive letter and file scheme.
+        if (OperatingSystem.IsWindows())
+        {
+            var uri = GotoMapping.ToUri(@"c:\repo\App\Program.n");
+            True(uri.StartsWith("file:///C:/", StringComparison.Ordinal), $"URI has an upper-cased drive letter and file scheme: {uri}");
+            True(uri.EndsWith("/Program.n", StringComparison.Ordinal), $"URI ends with the source file: {uri}");
+        }
     }
 
     private static void PathNormalizerTests()

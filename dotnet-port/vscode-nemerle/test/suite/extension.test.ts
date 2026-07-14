@@ -144,6 +144,79 @@ suite('Nemerle extension', () => {
     await vscode.commands.executeCommand('nemerle.showOutput');
     await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
   });
+
+  test('resolves go-to-definition to the declaration and returns an openable URI', async () => {
+    const serverPath = process.env.NEMERLE_TEST_SERVER_PATH;
+    assert.ok(serverPath, 'NEMERLE_TEST_SERVER_PATH was not supplied to the extension host');
+    await vscode.workspace
+      .getConfiguration('nemerle')
+      .update('server.path', serverPath, vscode.ConfigurationTarget.Global);
+
+    const uri = vscode.Uri.file(path.join(workspaceRoot(), 'Editing.n'));
+    const document = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(document);
+
+    const extension = vscode.extensions.getExtension<NemerleExtensionApi>(extensionId);
+    assert.ok(extension, `Extension ${extensionId} was not found`);
+    const api = await extension.activate();
+    await waitUntil(() => api.projectStatus?.state === 'applied', 'the single .nproj project snapshot to apply');
+
+    const probeLines = [
+      'module Editing',
+      '{',
+      '  Run() : void',
+      '  {',
+      '    def target = 1;',
+      '    System.Console.WriteLine(target);',
+      '  }',
+      '}',
+      '',
+    ];
+    const probe = probeLines.join('\n');
+    await editor.edit((edit) => {
+      const all = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+      edit.replace(all, probe);
+    });
+    // The usage of "target" inside WriteLine(target) is on line 5 (0-based); its
+    // declaration "def target" is on line 4.
+    const usageLine = 5;
+    const usageChar = (probeLines[usageLine] ?? '').indexOf('target');
+    const position = new vscode.Position(usageLine, usageChar);
+
+    // The empty starting content is already diagnostic-free, so waiting on
+    // diagnostics would not prove the edited buffer was analyzed; instead poll
+    // the definition provider until the engine has rebuilt the new buffer.
+    let result: Array<vscode.Location | vscode.LocationLink> = [];
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      result =
+        (await vscode.commands.executeCommand<Array<vscode.Location | vscode.LocationLink>>(
+          'vscode.executeDefinitionProvider',
+          uri,
+          position,
+        )) ?? [];
+      if (result.length > 0) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.ok(result.length > 0, 'the definition provider returned at least one location');
+
+    const first = result[0];
+    assert.ok(first, 'the definition result had a first location');
+    const targetUri = first instanceof vscode.Location ? first.uri : first.targetUri;
+    const targetRange = first instanceof vscode.Location ? first.range : first.targetRange;
+    // VS Code parsed the server's file URI into a Uri it can open: its fsPath
+    // resolves to the same source file (drive-letter case aside).
+    assert.equal(
+      targetUri.fsPath.toLowerCase(),
+      uri.fsPath.toLowerCase(),
+      'the definition location is an openable URI for the same source file',
+    );
+    assert.equal(targetRange.start.line, 4, 'the definition points at the declaration line');
+
+    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+  });
 });
 
 function workspaceRoot(): string {

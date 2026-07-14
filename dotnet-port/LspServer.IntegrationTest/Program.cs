@@ -47,6 +47,11 @@ internal static class Program
             await RunScenarioAsync("Completion: resolve computes deferred overload documentation", CompletionResolveAsync);
             await RunScenarioAsync("Completion: racing edits do not crash or throw on stale positions", CompletionRaceAsync);
             await RunScenarioAsync("Completion: warm response-time measurement", CompletionTimingAsync);
+            await RunScenarioAsync("Definition: local declaration and unsaved-buffer move", DefinitionLocalAndBufferAsync);
+            await RunScenarioAsync("Definition: cross-source declaration (Sokoban)", DefinitionCrossSourceAsync);
+            await RunScenarioAsync("Definition: external (BCL/NuGet) member is an empty result", DefinitionExternalEmptyAsync);
+            await RunScenarioAsync("Definition: CRLF + non-BMP position", DefinitionCrlfNonBmpAsync);
+            await RunScenarioAsync("References: cross-source usages and includeDeclaration toggle", ReferencesAsync);
             Console.WriteLine("PASS all WP-L3 LSP integration scenarios");
             return 0;
         }
@@ -1014,6 +1019,276 @@ internal static class Program
         var p95 = samples[(int)(samples.Count * 0.95)];
         Console.WriteLine(
             $"    warm completion round-trip: p50 {p50:F0} ms, p95 {p95:F0} ms, min {samples[0]:F0} ms, max {samples[^1]:F0} ms (n={samples.Count})");
+    }
+
+    // ----- Definition: local declaration + unsaved-buffer move -----
+
+    private const string DefinitionProbeSource = """
+        module Probe
+        {
+          Run() : void
+          {
+            def target = 1;
+            System.Console.WriteLine(target);
+          }
+        }
+        """;
+
+    private static async Task DefinitionLocalAndBufferAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("definition-local"), "probe.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, DefinitionProbeSource);
+
+        // Definition on the usage (occurrence 2 of "target", inside WriteLine)
+        // points to the declaration (occurrence 1, "def target").
+        var (declLine, declChar) = LocateUtf16(DefinitionProbeSource, "target", 1);
+        var (useLine, useChar) = LocateUtf16(DefinitionProbeSource, "target", 2);
+        var locations = await DefinitionAsync(client, uri, useLine, useChar);
+        if (locations.Length == 0)
+            throw new InvalidDataException("Definition on a local usage returned no location.");
+        var (locUri, locLine, locChar) = LocationAt(locations[0]);
+        if (!AreEquivalentDocumentUris(locUri, uri))
+            throw new InvalidDataException($"Definition URI did not point at the same document: {locUri}");
+        if (locLine != declLine || locChar != declChar)
+            throw new InvalidDataException(
+                $"Definition did not point at the declaration (expected {declLine}:{declChar}, got {locLine}:{locChar}).");
+
+        // Prepending a line shifts the declaration down; the buffer (not stale
+        // disk/text) must drive the new definition position (acceptance 2).
+        var moved = "// shifted\n" + DefinitionProbeSource;
+        var mark = client.Mark();
+        await DidChangeAsync(client, uri, moved, 2);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2 && CountOf(p) == 0,
+            mark, "clean version-2 diagnostics after prepending a line");
+
+        var (movedDeclLine, movedDeclChar) = LocateUtf16(moved, "target", 1);
+        var (movedUseLine, movedUseChar) = LocateUtf16(moved, "target", 2);
+        var movedLocations = await DefinitionAsync(client, uri, movedUseLine, movedUseChar);
+        if (movedLocations.Length == 0)
+            throw new InvalidDataException("Definition after the unsaved move returned no location.");
+        var (_, movedLine, movedChar) = LocationAt(movedLocations[0]);
+        if (movedLine != movedDeclLine || movedChar != movedDeclChar)
+            throw new InvalidDataException(
+                $"Definition did not follow the moved declaration (expected {movedDeclLine}:{movedDeclChar}, got {movedLine}:{movedChar}).");
+        if (movedLine == declLine)
+            throw new InvalidDataException("Definition still pointed at the pre-edit declaration line (stale buffer).");
+    }
+
+    // ----- Definition: cross-source declaration (Sokoban) -----
+
+    private static async Task DefinitionCrossSourceAsync(LspTestClient client)
+    {
+        var project = Sample("Sokoban", "Sokoban", "Sokoban.nproj");
+        var mainSource = Sample("Sokoban", "Sokoban", "main.n");
+        var mainUri = new Uri(mainSource).AbsoluteUri;
+        var mainText = await File.ReadAllTextAsync(mainSource);
+
+        var mark = client.Mark();
+        AssertLoadedAndApplied(await LoadProjectAsync(client, project), expectedSources: 5);
+        await DidOpenAsync(client, mainUri, mainText, 1);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, mainUri, out var p) && VersionOf(p) == 1 && !HasError(p),
+            mark, "error-free main.n so cross-source symbols resolve for definition");
+
+        // MapCollection is a struct declared in sokoban.n; TreeSearch.A_Star is a
+        // method declared in treesearch.n.  Definition from main.n must land in
+        // the declaring source (a different file), proving cross-source goto.
+        await AssertDefinitionInFileAsync(client, mainUri, mainText, "MapCollection", 1, "sokoban.n",
+            "definition on the cross-source struct MapCollection");
+        await AssertDefinitionInFileAsync(client, mainUri, mainText, "A_Star", 1, "treesearch.n",
+            "definition on the cross-source method TreeSearch.A_Star");
+    }
+
+    private static async Task AssertDefinitionInFileAsync(
+        LspTestClient client, string uri, string text, string needle, int occurrence,
+        string expectedFileSuffix, string description)
+    {
+        var (line, character) = LocateUtf16(text, needle, occurrence);
+        var locations = await DefinitionAsync(client, uri, line, character);
+        if (locations.Length == 0)
+            throw new InvalidDataException($"{description}: returned no location.");
+        var (locUri, locLine, _) = LocationAt(locations[0]);
+        if (!Uri.TryCreate(locUri, UriKind.Absolute, out var parsed) || !parsed.IsFile)
+            throw new InvalidDataException($"{description}: returned a non-file URI {locUri}.");
+        if (!parsed.LocalPath.EndsWith(expectedFileSuffix, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"{description}: expected a location in {expectedFileSuffix}, got {locUri}.");
+        if (locLine < 0)
+            throw new InvalidDataException($"{description}: returned a negative line.");
+    }
+
+    // ----- Definition: external (BCL/NuGet) member is empty -----
+
+    private static async Task DefinitionExternalEmptyAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("definition-external"), "external.n")).AbsoluteUri;
+        const string source = """
+            module External
+            {
+              Run() : void
+              {
+                System.Console.WriteLine("x");
+              }
+            }
+            """;
+        await OpenAndAwaitAnalysisAsync(client, uri, source);
+
+        // WriteLine resolves to the external System.Console.WriteLine member (in a
+        // BCL assembly, no in-workspace source): the result is empty and the
+        // resolution is logged at Info level (acceptance 4).
+        var mark = client.Mark();
+        var (wlLine, wlChar) = LocateUtf16(source, "WriteLine", 1);
+        var writeLine = await DefinitionAsync(client, uri, wlLine, wlChar);
+        if (writeLine.Length != 0)
+        {
+            var (locUri, _, _) = LocationAt(writeLine[0]);
+            throw new InvalidDataException($"Definition on an external member was not empty: {locUri}");
+        }
+
+        var externalLogs = client.LogMessages(mark)
+            .Where(entry => entry.Message.Contains("metadata (external assembly)", StringComparison.Ordinal))
+            .ToArray();
+        if (externalLogs.Length == 0)
+            throw new InvalidDataException("An external-member definition did not emit the Info log (acceptance 4).");
+        if (externalLogs.Any(entry => entry.Type != 3 /* Info */))
+            throw new InvalidDataException("The external-definition log was not emitted at Info level.");
+
+        // A qualifier that resolves to nothing (System.Console the type path) must
+        // also stay empty and never return a bogus obj/-style URI.
+        var (cLine, cChar) = LocateUtf16(source, "Console", 1);
+        var console = await DefinitionAsync(client, uri, cLine, cChar);
+        if (console.Length != 0)
+        {
+            var (locUri, _, _) = LocationAt(console[0]);
+            throw new InvalidDataException($"Definition on an external type qualifier was not empty: {locUri}");
+        }
+    }
+
+    // ----- Definition: CRLF + non-BMP position -----
+
+    private static async Task DefinitionCrlfNonBmpAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("definition-crlf"), "crlf.n")).AbsoluteUri;
+        // CRLF line endings; a non-BMP emoji (U+1F600, a UTF-16 surrogate pair)
+        // sits before the declaration, so both the request position and the
+        // returned declaration range must count it as two UTF-16 code units.
+        var source = string.Join("\r\n",
+            "module Crlf",
+            "{",
+            "  Run() : void",
+            "  {",
+            "    /* 😀 */ def value = 1; System.Console.WriteLine(value)",
+            "  }",
+            "}");
+
+        await OpenAndAwaitAnalysisAsync(client, uri, source);
+
+        var (declLine, declChar) = LocateUtf16(source, "value", 1); // declaration, after the emoji
+        var (useLine, useChar) = LocateUtf16(source, "value", 2); // usage in WriteLine
+        var locations = await DefinitionAsync(client, uri, useLine, useChar);
+        if (locations.Length == 0)
+            throw new InvalidDataException("Definition on a CRLF + non-BMP buffer returned no location.");
+        var (_, locLine, locChar) = LocationAt(locations[0]);
+        if (locLine != declLine || locChar != declChar)
+            throw new InvalidDataException(
+                $"Definition range was not 0-based UTF-16 (expected {declLine}:{declChar}, got {locLine}:{locChar}); " +
+                "the non-BMP surrogate pair or CRLF was miscounted.");
+    }
+
+    // ----- References: usages + includeDeclaration toggle -----
+
+    private const string ReferencesProbeSource = """
+        module Refs
+        {
+          Run() : void
+          {
+            def counter = 1;
+            System.Console.WriteLine(counter);
+            System.Console.WriteLine(counter + counter);
+          }
+        }
+        """;
+
+    private static async Task ReferencesAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("references"), "refs.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, ReferencesProbeSource);
+
+        // The local "counter" is declared once and used three times.  With
+        // includeDeclaration the declaration is part of the result; without it the
+        // declaration is dropped and only the usages remain.
+        var (declLine, declChar) = LocateUtf16(ReferencesProbeSource, "counter", 1);
+        var (useLine, useChar) = LocateUtf16(ReferencesProbeSource, "counter", 2);
+
+        var withDecl = await ReferencesAtAsync(client, uri, useLine, useChar, includeDeclaration: true);
+        if (withDecl.Length == 0)
+            throw new InvalidDataException("References returned no locations.");
+        foreach (var location in withDecl)
+        {
+            var (locUri, _, _) = LocationAt(location);
+            if (!AreEquivalentDocumentUris(locUri, uri))
+                throw new InvalidDataException($"A reference pointed outside the document: {locUri}");
+        }
+        var includesDeclaration = withDecl.Any(l =>
+        {
+            var (_, line, character) = LocationAt(l);
+            return line == declLine && character == declChar;
+        });
+        if (!includesDeclaration)
+            throw new InvalidDataException("includeDeclaration=true did not include the declaration location.");
+
+        var withoutDecl = await ReferencesAtAsync(client, uri, useLine, useChar, includeDeclaration: false);
+        if (withoutDecl.Any(l =>
+        {
+            var (_, line, character) = LocationAt(l);
+            return line == declLine && character == declChar;
+        }))
+            throw new InvalidDataException("includeDeclaration=false still returned the declaration location.");
+        if (withoutDecl.Length != withDecl.Length - 1)
+            throw new InvalidDataException(
+                $"includeDeclaration=false should drop exactly the declaration (with={withDecl.Length}, without={withoutDecl.Length}).");
+    }
+
+    // ----- definition/references helpers -----
+
+    private static async Task<JsonElement[]> DefinitionAsync(LspTestClient client, string uri, int line, int character)
+    {
+        var response = await client.RequestAsync("textDocument/definition", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("definition request failed: " + error);
+        return LocationsOf(response.GetProperty("result"));
+    }
+
+    private static async Task<JsonElement[]> ReferencesAtAsync(
+        LspTestClient client, string uri, int line, int character, bool includeDeclaration)
+    {
+        var response = await client.RequestAsync("textDocument/references", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+            context = new { includeDeclaration },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("references request failed: " + error);
+        return LocationsOf(response.GetProperty("result"));
+    }
+
+    private static JsonElement[] LocationsOf(JsonElement result) => result.ValueKind switch
+    {
+        JsonValueKind.Array => result.EnumerateArray().ToArray(),
+        JsonValueKind.Object => [result],
+        _ => [],
+    };
+
+    private static (string Uri, int Line, int Character) LocationAt(JsonElement location)
+    {
+        var uri = location.GetProperty("uri").GetString() ?? "";
+        var start = location.GetProperty("range").GetProperty("start");
+        return (uri, start.GetProperty("line").GetInt32(), start.GetProperty("character").GetInt32());
     }
 
     // ----- completion helpers -----

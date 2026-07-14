@@ -58,6 +58,10 @@ internal sealed class LspTestClient : IAsyncDisposable
                         contextSupport = true,
                         completionItem = new { documentationFormat = new[] { "plaintext", "markdown" } },
                     },
+                    // Advertise definition/references so those handlers register
+                    // (WP-M4).
+                    definition = new { linkSupport = false },
+                    references = new { },
                 },
             },
             clientInfo = new { name = "nemerle-lsp-integration-test", version = "2.0" },

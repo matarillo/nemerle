@@ -61,6 +61,18 @@ internal sealed record EngineCompletionItem(
 internal sealed record EngineCompletionResult(long Generation, IReadOnlyList<EngineCompletionItem> Items);
 
 /// <summary>
+/// A definition/references result: the navigable source locations plus
+/// <see cref="ExternalOnly"/>, which is true when the engine resolved the symbol
+/// to at least one target but none had an in-workspace source location (a
+/// metadata / external-assembly member).  The handler logs that case at Info
+/// level and returns an empty result (WP-M4 acceptance 4).
+/// </summary>
+internal sealed record EngineGotoResult(IReadOnlyList<NemerleGotoLocation> Locations, bool ExternalOnly)
+{
+    public static readonly EngineGotoResult Empty = new([], false);
+}
+
+/// <summary>
 /// IIdeProject adapter for the single engine workspace: all sources of the
 /// applied WP-L2 project snapshot (open LSP buffers override disk-backed text)
 /// plus any open loose files.  Without an applied snapshot it degrades to the
@@ -434,6 +446,74 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         // and the generation guard drops results whose snapshot was replaced.
         var description = HoverMarkup.ToPlainText(elem.Description);
         return string.IsNullOrEmpty(description) ? null : description;
+    }
+
+    /// <summary>
+    /// Computes definition locations for an open document at an LSP position.
+    /// Unlike hover/completion, <c>GetGotoInfo</c> is a synchronous engine API, so
+    /// it runs directly under <c>_engineOperations</c> (serialized with document
+    /// changes and reloads, §6.2 "the synchronous API is serialized under the
+    /// lock") rather than through the async bridge.
+    /// </summary>
+    public EngineGotoResult GetDefinition(string uri, int lspLine, int lspCharacter) =>
+        GetGoto(uri, lspLine, lspCharacter, GotoKind.Definition, includeDeclaration: true);
+
+    /// <summary>
+    /// Computes reference locations for an open document at an LSP position.
+    /// <paramref name="includeDeclaration"/> maps the LSP
+    /// <c>references</c> <c>context.includeDeclaration</c>: when false the
+    /// declaration entries are dropped from the usages.
+    /// </summary>
+    public EngineGotoResult GetReferences(string uri, int lspLine, int lspCharacter, bool includeDeclaration) =>
+        GetGoto(uri, lspLine, lspCharacter, GotoKind.Usages, includeDeclaration);
+
+    private EngineGotoResult GetGoto(
+        string uri,
+        int lspLine,
+        int lspCharacter,
+        GotoKind kind,
+        bool includeDeclaration)
+    {
+        lock (_engineOperations)
+        {
+            InMemoryNemerleSource source;
+            lock (_gate)
+            {
+                if (_disposed ||
+                    !_openUriToPath.TryGetValue(uri, out var path) ||
+                    !_documentsByPath.TryGetValue(path, out var state))
+                    return EngineGotoResult.Empty;
+                source = state.Source;
+            }
+
+            // Engine coordinates are 1-based; the LSP character is a UTF-16 code
+            // unit offset, matching the source's .NET string indexing.
+            var line = lspLine + 1;
+            var column = lspCharacter + 1;
+            var infos = _engine.GetGotoInfo(source, line, column, kind);
+            if (infos is null || infos.Length == 0)
+                return EngineGotoResult.Empty;
+
+            var targets = new NemerleGotoTarget[infos.Length];
+            for (var i = 0; i < infos.Length; i++)
+            {
+                var info = infos[i];
+                targets[i] = new NemerleGotoTarget(
+                    info.FilePath,
+                    info.FileIndex,
+                    info.Line,
+                    info.Column,
+                    info.EndLine,
+                    info.EndColumn,
+                    info.UsageType == UsageType.Definition);
+            }
+
+            var locations = GotoMapping.ToLocations(targets, includeDeclaration);
+            // The engine returned targets but none were navigable source
+            // locations: the symbol resolved to a metadata / external member.
+            var externalOnly = locations.Count == 0;
+            return new EngineGotoResult(locations, externalOnly);
+        }
     }
 
     public IEnumerable<string> GetAssemblyReferences()
