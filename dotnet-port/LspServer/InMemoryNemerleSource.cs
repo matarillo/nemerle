@@ -2,6 +2,7 @@ using Nemerle.Builtins;
 using Nemerle.Compiler;
 using Nemerle.Compiler.Parsetree;
 using Nemerle.Completion2;
+using Nemerle.ProjectInfo;
 
 using TupleIntInt = Nemerle.Builtins.Tuple<int, int>;
 using TupleStringIntInt = Nemerle.Builtins.Tuple<string, int, int>;
@@ -79,6 +80,62 @@ internal sealed class InMemoryNemerleSource : IIdeSource
             _text = text;
             _version = version;
         }
+    }
+
+    /// <summary>
+    /// Applies a batch of LSP content changes in order and advances the version.
+    /// Used by the full-reload path (WP-M5), where the resulting text is reparsed
+    /// wholesale; ranged and whole-document changes are both handled.
+    /// </summary>
+    public void ApplyChanges(IReadOnlyList<NemerleContentChange> changes, int version)
+    {
+        lock (_gate)
+        {
+            foreach (var change in changes)
+                _text = IncrementalSync.ApplyChange(_text, change);
+            _version = version;
+        }
+    }
+
+    /// <summary>
+    /// Applies a single ranged change, advances the version, and returns the
+    /// engine relocation (Begin/Old/New) derived from it — the incremental path
+    /// (WP-M5).  The relocation is enqueued separately via
+    /// <see cref="EnqueueRelocation"/> so the caller controls the source version
+    /// stamped onto the queued request.
+    /// </summary>
+    public NemerleRelocation ApplyRangedChange(NemerleContentChange change, int version)
+    {
+        lock (_gate)
+        {
+            var relocation = IncrementalSync.ComputeRelocation(change);
+            _text = IncrementalSync.ApplyChange(_text, change);
+            _version = version;
+            return relocation;
+        }
+    }
+
+    /// <summary>
+    /// Enqueues a relocation request for the engine's <c>BeginUpdateCompileUnit</c>
+    /// to consume (mirrors the VS integration's <c>OnChangeLineText</c> path).
+    /// </summary>
+    public void EnqueueRelocation(NemerleRelocation relocation, int version) =>
+        RelocationQueue.AddRelocationRequest(
+            RelocationRequestsQueue,
+            FileIndex,
+            version,
+            relocation.NewEndLine,
+            relocation.NewEndCharacter,
+            relocation.OldEndLine,
+            relocation.OldEndCharacter,
+            relocation.BeginLine,
+            relocation.BeginCharacter);
+
+    /// <summary>Drops any queued relocations (used when falling back to a full reload).</summary>
+    public void ClearRelocationRequests()
+    {
+        lock (RelocationRequestsQueue)
+            RelocationRequestsQueue.Clear();
     }
 
     public string GetText()

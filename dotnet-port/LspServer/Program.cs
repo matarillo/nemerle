@@ -14,7 +14,8 @@ internal static class Program
         // then it is buffered.  Only a pre-initialize fatal (before the facade can
         // exist) falls back to stderr (ServerLog.Fatal).
         var log = new ServerLog();
-        await using var project = new NemerleProject(log);
+        var serverOptions = ServerOptions.FromEnvironment();
+        await using var project = new NemerleProject(log, serverOptions);
         var workspace = new WorkspaceManager(project, log);
         await using var projectInfo = new ProjectInfoProvider();
         var server = await OmniSharp.Extensions.LanguageServer.Server.LanguageServer.From(options => options
@@ -23,7 +24,7 @@ internal static class Program
             .WithServerInfo(new ServerInfo
             {
                 Name = "nemerle-language-server",
-                Version = "0.6.0",
+                Version = "0.7.0",
             })
             .WithServices(services =>
             {
@@ -31,6 +32,7 @@ internal static class Program
                 services.AddSingleton(workspace);
                 services.AddSingleton(projectInfo);
                 services.AddSingleton(log);
+                services.AddSingleton(serverOptions);
             })
             .WithHandler<NemerleTextDocumentSyncHandler>()
             .WithHandler<NemerleProjectInfoHandler>()

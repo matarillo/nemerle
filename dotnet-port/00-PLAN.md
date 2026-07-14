@@ -138,7 +138,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
-| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | WP-M1〜M4 完了(2026-07-14)、WP-M5〜M6 計画 | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md |
+| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | WP-M1〜M5 完了(2026-07-15)、WP-M6 計画 | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md / 34-devenv2-wp-m5-log.md |
 
 ## 作業ログ
 
@@ -677,3 +677,19 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   (`GotoMappingTests`)+ integration、`npm test` 21/21、Extension Host trusted 4(定義 provider の
   `vscode.executeDefinitionProvider` 実クリック相当を追加)+ untrusted 1 + vsix 1、audit 0 件。
   詳細は `33-devenv2-wp-m4-log.md`。
+- 2026-07-15: WP-M5(incremental rebuild / relocation + 応答性計測)完了。(1) document sync を
+  `TextDocumentSyncKind.Incremental` に切替え、range 付き change → engine の relocation 経路
+  (`BeginUpdateCompileUnit`)へ配線。method body 内編集は該当 method のみ再型付け(full rebuild
+  不発)、構造変化・relocation 失敗は engine 判定で full types-tree rebuild へ fallback。
+  (2) UTF-16(0-origin)→ 1-origin の change → `RelocationRequest` 変換とバッファ range 適用を
+  `ProjectInfo.IncrementalSync`(純関数、`IncrementalSyncTests` で unit 化)に固定。
+  (3) fallback 駆動は `BeginUpdateCompileUnit` 完了後に `ProcessPendingTypesTreeRequest` を1回呼ぶ
+  monitor(relocation 成立時は no-op)。interface 既存 API のみ使用で **engine 無改造**。
+  (4) escape hatch `NEMERLE_INCREMENTAL_UPDATE=0` で full sync + 従来 reload に復帰。
+  (5) 実測(Sokoban、debounce 込み edit-to-diagnostics):incremental ON p50 **327 ms** /
+  OFF p50 556〜590 ms(目標 p50 ≤ 400 ms 達成、full 比 約 45% 短縮)。
+  extension は sync 切替 capability 追従で TypeScript src 無変更、ServerInfo/extension 0.7.0、
+  README 更新。compiler/engine 無改造で Stage リビルド不要(assembly version 601 のまま)。
+  raw LSP 27/27(既存 23 + incremental 4)、bundled server 27/27、`ProjectInfo.Test` unit + integration、
+  `npm test` 21/21、Extension Host trusted 4 + untrusted 1 + vsix 1、audit 0 件。
+  詳細は `34-devenv2-wp-m5-log.md`。

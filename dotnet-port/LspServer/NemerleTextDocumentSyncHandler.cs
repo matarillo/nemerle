@@ -1,6 +1,7 @@
 using MediatR;
 using Nemerle.Compiler;
 using Nemerle.LanguageServer.Engine;
+using Nemerle.ProjectInfo;
 using OmniSharp.Extensions.LanguageServer.Protocol;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
@@ -25,14 +26,19 @@ internal sealed class NemerleTextDocumentSyncHandler : TextDocumentSyncHandlerBa
 
     private readonly ILanguageServerFacade _server;
     private readonly WorkspaceManager _workspace;
+    private readonly ServerOptions _options;
     private readonly object _publishGate = new();
     private readonly Dictionary<string, (int? Version, int PayloadHash)> _published =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public NemerleTextDocumentSyncHandler(ILanguageServerFacade server, WorkspaceManager workspace)
+    public NemerleTextDocumentSyncHandler(
+        ILanguageServerFacade server,
+        WorkspaceManager workspace,
+        ServerOptions options)
     {
         _server = server;
         _workspace = workspace;
+        _options = options;
         _workspace.DiagnosticsChanged += PublishDiagnostics;
     }
 
@@ -51,16 +57,35 @@ internal sealed class NemerleTextDocumentSyncHandler : TextDocumentSyncHandlerBa
     public override Task<Unit> Handle(DidChangeTextDocumentParams request, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var changes = request.ContentChanges.ToArray();
-        if (changes.Length != 1 || changes[0].Range is not null)
+        var changes = request.ContentChanges
+            .Select(ToContentChange)
+            .ToArray();
+        if (changes.Length == 0)
+            return Unit.Task;
+
+        // With full sync (escape hatch off) the client sends exactly one
+        // whole-document change; with incremental sync it sends ranged changes.
+        // NemerleProject decides per batch whether the edit is eligible for the
+        // relocation path or must fall back to a full reload.
+        if (!_options.IncrementalUpdate && (changes.Length != 1 || changes[0].HasRange))
             throw new InvalidOperationException("The server advertised full document synchronization.");
 
         _workspace.ChangeDocument(
             request.TextDocument.Uri.ToString(),
-            changes[0].Text,
+            changes,
             request.TextDocument.Version ?? 0);
         return Unit.Task;
     }
+
+    private static NemerleContentChange ToContentChange(TextDocumentContentChangeEvent change) =>
+        change.Range is { } range
+            ? NemerleContentChange.Ranged(
+                range.Start.Line,
+                range.Start.Character,
+                range.End.Line,
+                range.End.Character,
+                change.Text)
+            : NemerleContentChange.FullReplace(change.Text);
 
     public override Task<Unit> Handle(DidSaveTextDocumentParams request, CancellationToken token) =>
         Unit.Task;
@@ -77,7 +102,11 @@ internal sealed class NemerleTextDocumentSyncHandler : TextDocumentSyncHandlerBa
         ClientCapabilities clientCapabilities) => new()
         {
             DocumentSelector = Selector,
-            Change = TextDocumentSyncKind.Full,
+            // WP-M5: advertise incremental sync so range-based changes drive the
+            // engine's relocation path; the escape hatch restores full sync.
+            Change = _options.IncrementalUpdate
+                ? TextDocumentSyncKind.Incremental
+                : TextDocumentSyncKind.Full,
             Save = false,
         };
 

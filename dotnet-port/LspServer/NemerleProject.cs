@@ -112,16 +112,23 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     private EngineWorkspaceInputs? _appliedInputs;
     private readonly Timer _reloadTimer;
     private long _reloadStartedTimestamp;
+    // Coalesced reload state, guarded by _engineOperations.  A pending full
+    // reload always wins over queued incremental updates (it re-analyzes every
+    // source, so the individual edits it would relocate are already covered).
+    private readonly HashSet<InMemoryNemerleSource> _pendingIncrementalSources = [];
+    private bool _pendingFullReload;
     private bool _disposed;
     private readonly CancellationTokenSource _pumpCancellation = new();
     private readonly Task _responsePump;
     private readonly IIdeEngine _engine;
     private readonly ServerLog _log;
+    private readonly bool _incrementalEnabled;
     private readonly EngineRequestBridge _bridge = new();
 
-    public NemerleProject(ServerLog log)
+    public NemerleProject(ServerLog log, ServerOptions options)
     {
         _log = log;
+        _incrementalEnabled = options.IncrementalUpdate;
         _reloadTimer = new Timer(OnReloadTimer);
         _engine = EngineFactory.Create(this, log.AsTextWriter(), false);
         _responsePump = Task.Run(PumpResponsesAsync);
@@ -158,23 +165,54 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
                 _openUriToPath[uri] = path;
             }
 
-            RequestEngineReload(immediate: true);
+            RequestFullReload(immediate: true);
         }
     }
 
-    public void Change(string uri, string text, int version)
+    public void Change(string uri, IReadOnlyList<NemerleContentChange> changes, int version)
     {
         lock (_engineOperations)
         {
+            InMemoryNemerleSource source;
+            bool useIncremental;
             lock (_gate)
             {
                 if (!_openUriToPath.TryGetValue(uri, out var path) ||
                     !_documentsByPath.TryGetValue(path, out var state))
                     throw new InvalidOperationException($"didChange received for unopened document: {uri}");
-                state.Source.Update(text, version);
+                source = state.Source;
+
+                // The relocation path applies only to a single ranged edit of a
+                // project source with a loaded project: UpdateCompileUnit compares
+                // the reparsed structure against the built types tree, and the
+                // relocation-queue merge assumes consecutive per-change versions
+                // (one didChange == one version), so a multi-change batch, a
+                // whole-document replacement, a loose file, or a not-yet-loaded
+                // project falls back to a full reload.
+                useIncremental = _incrementalEnabled
+                    && state.IsProjectSource
+                    && _appliedInputs is not null
+                    && changes.Count == 1
+                    && changes[0].HasRange;
+
+                if (useIncremental)
+                {
+                    var relocation = source.ApplyRangedChange(changes[0], version);
+                    source.EnqueueRelocation(relocation, version);
+                }
+                else
+                {
+                    // Drop any queued relocations so a later incremental edit never
+                    // merges its request across this rebuild boundary.
+                    source.ClearRelocationRequests();
+                    source.ApplyChanges(changes, version);
+                }
             }
 
-            RequestEngineReload(immediate: false);
+            if (useIncremental)
+                RequestIncrementalUpdate(source);
+            else
+                RequestFullReload(immediate: false);
         }
     }
 
@@ -216,7 +254,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             if (deletedFileIndex is { } index)
                 _engine.NotifySourceDeleted(index);
             RaiseDiagnosticsChanged();
-            RequestEngineReload(immediate: true);
+            RequestFullReload(immediate: true);
         }
     }
 
@@ -281,7 +319,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             foreach (var fileIndex in deletedFileIndexes)
                 _engine.NotifySourceDeleted(fileIndex);
             RaiseDiagnosticsChanged();
-            RequestEngineReload(immediate: true);
+            RequestFullReload(immediate: true);
         }
     }
 
@@ -658,20 +696,34 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     }
 
     /// <summary>Caller must hold <c>_engineOperations</c>.</summary>
-    private void RequestEngineReload(bool immediate)
+    private void RequestFullReload(bool immediate)
     {
         if (_disposed)
             return;
 
+        // A full reload supersedes any queued incremental updates.
+        _pendingFullReload = true;
+        _pendingIncrementalSources.Clear();
+
         if (immediate)
         {
             _reloadTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            BeginEngineReload();
+            FlushPending();
         }
         else
         {
             _reloadTimer.Change(ChangeReloadDebounce, Timeout.InfiniteTimeSpan);
         }
+    }
+
+    /// <summary>Caller must hold <c>_engineOperations</c>.</summary>
+    private void RequestIncrementalUpdate(InMemoryNemerleSource source)
+    {
+        if (_disposed || _pendingFullReload)
+            return;
+
+        _pendingIncrementalSources.Add(source);
+        _reloadTimer.Change(ChangeReloadDebounce, Timeout.InfiniteTimeSpan);
     }
 
     private void OnReloadTimer(object? state)
@@ -680,8 +732,45 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         {
             if (_disposed)
                 return;
-            BeginEngineReload();
+            FlushPending();
         }
+    }
+
+    /// <summary>Caller must hold <c>_engineOperations</c>.</summary>
+    private void FlushPending()
+    {
+        if (_disposed)
+            return;
+
+        if (_pendingFullReload)
+        {
+            _pendingFullReload = false;
+            _pendingIncrementalSources.Clear();
+            BeginEngineReload();
+            return;
+        }
+
+        if (_pendingIncrementalSources.Count == 0)
+            return;
+
+        var sources = _pendingIncrementalSources.ToArray();
+        _pendingIncrementalSources.Clear();
+
+        // Any edit invalidates the cached completion elements (and the members
+        // they point at), whether the engine relocates a method or rebuilds the
+        // types tree; bump the generation so a pending resolve returns nothing
+        // rather than stale documentation.
+        BumpCompletionGeneration();
+        Interlocked.Exchange(ref _reloadStartedTimestamp, Stopwatch.GetTimestamp());
+
+        var requests = new List<AsyncRequest>(sources.Length);
+        foreach (var source in sources)
+        {
+            _log.Log($"nemerle engine incremental update (relocation) for {source.Path}");
+            requests.Add(_engine.BeginUpdateCompileUnit(source));
+        }
+
+        _ = MonitorUpdateForRebuildAsync(requests);
     }
 
     /// <summary>Caller must hold <c>_engineOperations</c>.</summary>
@@ -692,12 +781,51 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         // (and the members they point at) belong to the old generation; bump the
         // generation and drop them so a pending resolve returns nothing rather
         // than stale documentation.
+        BumpCompletionGeneration();
+        _ = _engine.BeginReloadProject();
+    }
+
+    private void BumpCompletionGeneration()
+    {
         lock (_gate)
         {
             _completionGeneration++;
             _completionElems = [];
         }
-        _ = _engine.BeginReloadProject();
+    }
+
+    /// <summary>
+    /// Waits (off any lock) for the enqueued <c>BeginUpdateCompileUnit</c>
+    /// requests to finish, then drives any pending types-tree rebuild the engine
+    /// flagged during them.  <c>ProcessPendingTypesTreeRequest</c> is a no-op when
+    /// the edit relocated cleanly (a method-body change never rebuilds the types
+    /// tree, WP-M5 acceptance 1); it runs <c>BuildTypesTree</c> only when the
+    /// compile unit's structure changed or the relocation failed (acceptance 3/5).
+    /// </summary>
+    private async Task MonitorUpdateForRebuildAsync(IReadOnlyList<AsyncRequest> requests)
+    {
+        try
+        {
+            foreach (var request in requests)
+            {
+                while (!request.IsCompleted)
+                {
+                    if (_disposed)
+                        return;
+                    await Task.Delay(10).ConfigureAwait(false);
+                }
+            }
+
+            if (_disposed)
+                return;
+
+            _engine.ProcessPendingTypesTreeRequest();
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed)
+                _log.Error($"nemerle incremental rebuild follow-up failed: {ex}");
+        }
     }
 
     private void DropMessagesForFile(int fileIndex)

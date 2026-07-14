@@ -31,8 +31,8 @@ internal sealed class WorkspaceManager
     public void OpenDocument(string uri, string fileSystemPath, string text, int version) =>
         _project.Open(uri, fileSystemPath, text, version);
 
-    public void ChangeDocument(string uri, string text, int version) =>
-        _project.Change(uri, text, version);
+    public void ChangeDocument(string uri, IReadOnlyList<NemerleContentChange> changes, int version) =>
+        _project.Change(uri, changes, version);
 
     public void CloseDocument(string uri) =>
         _project.Close(uri);

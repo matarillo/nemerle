@@ -52,6 +52,14 @@ internal static class Program
             await RunScenarioAsync("Definition: external (BCL/NuGet) member is an empty result", DefinitionExternalEmptyAsync);
             await RunScenarioAsync("Definition: CRLF + non-BMP position", DefinitionCrlfNonBmpAsync);
             await RunScenarioAsync("References: cross-source usages and includeDeclaration toggle", ReferencesAsync);
+            await RunScenarioAsync("Incremental: method-body relocation avoids full rebuild; stale/hover/definition hold",
+                IncrementalRelocationAsync);
+            await RunScenarioAsync("Incremental: structural edit falls back to a full types-tree rebuild",
+                IncrementalStructuralFallbackAsync);
+            await RunScenarioAsync("Incremental vs full-reload edit-to-diagnostics measurement (Sokoban)",
+                IncrementalTimingAsync);
+            await RunScenarioAsync("Incremental escape hatch off restores full-document sync + reload",
+                IncrementalDisabledAsync);
             Console.WriteLine("PASS all WP-L3 LSP integration scenarios");
             return 0;
         }
@@ -1249,6 +1257,272 @@ internal static class Program
                 $"includeDeclaration=false should drop exactly the declaration (with={withDecl.Length}, without={withoutDecl.Length}).");
     }
 
+    // ----- Incremental rebuild (relocation) scenarios (WP-M5) -----
+
+    private const string IncrementalBaseSource = """
+        module IncrementalProbe
+        {
+          public Run() : void
+          {
+            def value : int = 1;
+            System.Console.WriteLine(value);
+          }
+
+          public Other() : int
+          {
+            42
+          }
+        }
+        """;
+
+    private static async Task<string> SetupIncrementalProjectAsync(
+        LspTestClient client, string suffix, string source)
+    {
+        var dir = CreateTempDirectory(suffix);
+        var projectPath = Path.Combine(dir, "Temp.nproj");
+        var sourcePath = Path.Combine(dir, "probe.n");
+        var uri = new Uri(sourcePath).AbsoluteUri;
+        var coreTargets = Path.Combine(_repoRoot, "dotnet-port", "msbuild", "Nemerle.Core.targets");
+        await File.WriteAllTextAsync(sourcePath, source);
+        await File.WriteAllTextAsync(projectPath, TempProjectXml(coreTargets, ["probe.n"]));
+        RunDotnet($"restore \"{projectPath}\"", dir);
+        AssertLoadedAndApplied(await LoadProjectAsync(client, projectPath), expectedSources: 1);
+        return uri;
+    }
+
+    private static async Task IncrementalRelocationAsync(LspTestClient client)
+    {
+        var uri = await SetupIncrementalProjectAsync(client, "incremental-reloc", IncrementalBaseSource);
+        var text = IncrementalBaseSource;
+
+        var openMark = client.Mark();
+        await DidOpenAsync(client, uri, text, 1);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1 && CountOf(p) == 0,
+            openMark, "clean analysis of the opened project source");
+
+        // 1. A method-body edit that introduces a type error is answered by a
+        //    relocation (method re-typing), not a full types-tree rebuild.
+        var editMark = client.Mark();
+        var stopwatch = Stopwatch.StartNew();
+        text = await ReplaceRangedAsync(client, uri, text, "= 1;", "= \"x\";", 2);
+
+        // Acceptance 1: the edit takes the relocation path.  Anchor the "no full
+        // rebuild" check just after the relocation trace so a late-arriving
+        // rebuild-finished trace from the initial open (its logMessage can trail
+        // the version-1 publish this scenario already waited for) is not mistaken
+        // for one caused by the edit.
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "incremental update (relocation)", out _),
+            editMark, "the incremental relocation trace for the in-body edit");
+        var quietMark = client.Mark();
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2 && HasError(p),
+            editMark, "error diagnostics after the in-body type error edit (version 2)");
+        stopwatch.Stop();
+        Console.WriteLine($"    in-body edit-to-error: {stopwatch.Elapsed.TotalMilliseconds:F0} ms");
+
+        await client.AssertQuietAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "nemerle engine rebuild finished", out _),
+            quietMark, TimeSpan.FromSeconds(2),
+            "a full types-tree rebuild trace after a method-body relocation");
+
+        // 2. Fixing the body clears the error, again via relocation.
+        var fixMark = client.Mark();
+        text = await ReplaceRangedAsync(client, uri, text, "= \"x\";", "= 2;", 3);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 3 && CountOf(p) == 0,
+            fixMark, "cleared diagnostics after fixing the in-body error (version 3)");
+
+        // 3. Rapid stale sequence: version 4 (broken) is immediately superseded by
+        //    version 5 (fixed); no error may survive the clean version-5 publish.
+        var staleMark = client.Mark();
+        text = await ReplaceRangedAsync(client, uri, text, "= 2;", "= \"y\";", 4);
+        text = await ReplaceRangedAsync(client, uri, text, "= \"y\";", "= 3;", 5);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 5 && CountOf(p) == 0,
+            staleMark, "clean version-5 diagnostics after the rapid relocation sequence");
+        var afterStale = client.Mark();
+        await client.AssertQuietAsync(
+            message => IsPublishFor(message, uri, out var p) && HasError(p),
+            afterStale, TimeSpan.FromSeconds(2), "stale error diagnostics after the clean version-5 publish");
+
+        // 4. hover + definition remain correct with incremental enabled (acceptance 7).
+        var (vLine, vChar) = LocateUtf16(text, "value", 2);
+        var hover = await HoverAsync(client, uri, vLine, vChar);
+        if (HoverValue(hover) is not { Length: > 0 } hoverText)
+            throw new InvalidDataException("Hover after incremental edits returned no content.");
+        AssertNoRawMarkup(hoverText, "hover after incremental edits");
+        if ((await DefinitionAsync(client, uri, vLine, vChar)).Length == 0)
+            throw new InvalidDataException("Definition after incremental edits returned no location.");
+    }
+
+    private static async Task IncrementalStructuralFallbackAsync(LspTestClient client)
+    {
+        var uri = await SetupIncrementalProjectAsync(client, "incremental-struct", IncrementalBaseSource);
+        var text = IncrementalBaseSource;
+
+        var openMark = client.Mark();
+        await DidOpenAsync(client, uri, text, 1);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1 && CountOf(p) == 0,
+            openMark, "clean analysis before the structural edit");
+
+        // Inserting a whole new method changes the compile unit's structure, so the
+        // engine falls back from relocation to a full types-tree rebuild.
+        var editMark = client.Mark();
+        var (line, ch) = LocateUtf16(text, "public Other()", 1);
+        var index = LineCharToIndex(text, line, ch);
+        const string inserted = "public Added() : int\n  {\n    7\n  }\n\n  ";
+        await DidChangeRangedAsync(client, uri, 2, line, ch, line, ch, inserted);
+        text = string.Concat(text.AsSpan(0, index), inserted, text.AsSpan(index));
+
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2 && CountOf(p) == 0,
+            editMark, "clean diagnostics after the structural (added method) edit");
+        // Acceptance 3: the fallback rebuilt the types tree.
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "nemerle engine rebuild finished", out _),
+            editMark, "a full types-tree rebuild trace after the structural edit");
+
+        // hover / definition are correct after the fallback rebuild.
+        var (aLine, aChar) = LocateUtf16(text, "Added", 1);
+        if (HoverValue(await HoverAsync(client, uri, aLine, aChar)) is not { Length: > 0 })
+            throw new InvalidDataException("Hover on the newly added method returned nothing after the rebuild.");
+        if ((await DefinitionAsync(client, uri, aLine, aChar)).Length == 0)
+            throw new InvalidDataException("Definition on the newly added method returned no location after the rebuild.");
+    }
+
+    private static async Task IncrementalTimingAsync(LspTestClient client)
+    {
+        var sokobanProject = Sample("Sokoban", "Sokoban", "Sokoban.nproj");
+        var mainPath = Sample("Sokoban", "Sokoban", "main.n");
+        var mainUri = new Uri(mainPath).AbsoluteUri;
+        var mainText = await File.ReadAllTextAsync(mainPath);
+
+        var on = await MeasureEditToDiagnosticsAsync(client, sokobanProject, mainUri, mainText, incremental: true);
+        Console.WriteLine($"    incremental ON  edit-to-diagnostics: p50 {on.P50:F0} ms, p95 {on.P95:F0} ms (n={on.N})");
+
+        await using var offClient = await LspTestClient.StartAsync(_serverDll, _repoRoot,
+            new Dictionary<string, string> { ["NEMERLE_INCREMENTAL_UPDATE"] = "0" });
+        var off = await MeasureEditToDiagnosticsAsync(offClient, sokobanProject, mainUri, mainText, incremental: false);
+        Console.WriteLine($"    incremental OFF edit-to-diagnostics: p50 {off.P50:F0} ms, p95 {off.P95:F0} ms (n={off.N})");
+        await offClient.ShutdownAsync();
+
+        if (on.P50 > 2000)
+            throw new InvalidDataException(
+                $"Incremental edit-to-diagnostics p50 {on.P50:F0} ms exceeded the 2000 ms sanity ceiling.");
+    }
+
+    private static async Task IncrementalDisabledAsync(LspTestClient defaultClient)
+    {
+        _ = defaultClient; // The escape hatch needs its own server; the default client stays idle.
+        await using var client = await LspTestClient.StartAsync(_serverDll, _repoRoot,
+            new Dictionary<string, string> { ["NEMERLE_INCREMENTAL_UPDATE"] = "0" });
+
+        // Acceptance 6: with the escape hatch off the server advertises full-document
+        // sync (change kind 1), not incremental (2).
+        var sync = client.InitializeResult.GetProperty("capabilities").GetProperty("textDocumentSync");
+        var change = sync.ValueKind == JsonValueKind.Number ? sync.GetInt32() : sync.GetProperty("change").GetInt32();
+        if (change != 1)
+            throw new InvalidDataException($"Escape hatch off should advertise full sync (1); got {change}.");
+
+        var uri = await SetupIncrementalProjectAsync(client, "incremental-off", IncrementalBaseSource);
+        var text = IncrementalBaseSource;
+        var openMark = client.Mark();
+        await DidOpenAsync(client, uri, text, 1);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1 && CountOf(p) == 0,
+            openMark, "clean analysis (escape hatch off)");
+
+        // Full-document changes still drive diagnostics (previous behavior).
+        var brokenText = text.Replace("= 1;", "= \"x\";", StringComparison.Ordinal);
+        var editMark = client.Mark();
+        await DidChangeAsync(client, uri, brokenText, 2);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2 && HasError(p),
+            editMark, "error diagnostics with the escape hatch off (full reload)");
+        if (client.LogMessages(openMark).Any(m =>
+                m.Message.Contains("incremental update (relocation)", StringComparison.Ordinal)))
+            throw new InvalidDataException("The relocation path ran even though the escape hatch is off.");
+
+        var fixMark = client.Mark();
+        await DidChangeAsync(client, uri, text, 3);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 3 && CountOf(p) == 0,
+            fixMark, "cleared diagnostics with the escape hatch off");
+
+        await client.ShutdownAsync();
+    }
+
+    private static async Task<(double P50, double P95, int N)> MeasureEditToDiagnosticsAsync(
+        LspTestClient client, string projectPath, string uri, string baseText, bool incremental)
+    {
+        AssertLoadedAndApplied(await LoadProjectAsync(client, projectPath), expectedSources: 5);
+        var text = baseText;
+        var openMark = client.Mark();
+        await DidOpenAsync(client, uri, text, 1);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1,
+            openMark, "initial Sokoban main.n analysis");
+
+        const string markerA = "//try";
+        const string markerB = "//trz";
+        var version = 1;
+
+        // A warm-up edit excluded from the samples.
+        version++;
+        text = await SendToggleAsync(client, uri, text, markerA, markerB, version, incremental);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == version, openMark,
+            "warm-up edit publish");
+
+        var samples = new List<double>();
+        for (var i = 0; i < 12; i++)
+        {
+            var (from, to) = i % 2 == 0 ? (markerB, markerA) : (markerA, markerB);
+            version++;
+            var editMark = client.Mark();
+            var stopwatch = Stopwatch.StartNew();
+            text = await SendToggleAsync(client, uri, text, from, to, version, incremental);
+            var capturedVersion = version;
+            await client.WaitForAsync(
+                message => IsPublishFor(message, uri, out var p) && VersionOf(p) == capturedVersion, editMark,
+                $"diagnostics publish for version {capturedVersion}");
+            stopwatch.Stop();
+            samples.Add(stopwatch.Elapsed.TotalMilliseconds);
+        }
+
+        samples.Sort();
+        return (samples[samples.Count / 2], samples[(int)(samples.Count * 0.95)], samples.Count);
+    }
+
+    private static async Task<string> SendToggleAsync(
+        LspTestClient client, string uri, string text, string from, string to, int version, bool incremental)
+    {
+        var (line, ch) = LocateUtf16(text, from, 1);
+        var index = LineCharToIndex(text, line, ch);
+        var updated = string.Concat(text.AsSpan(0, index), to, text.AsSpan(index + from.Length));
+        if (incremental)
+            await DidChangeRangedAsync(client, uri, version, line, ch, line, ch + from.Length, to);
+        else
+            await DidChangeAsync(client, uri, updated, version);
+        return updated;
+    }
+
+    /// <summary>
+    /// Sends a single-line ranged replacement of <paramref name="oldText"/> with
+    /// <paramref name="newText"/> and returns the buffer text the client now holds.
+    /// </summary>
+    private static async Task<string> ReplaceRangedAsync(
+        LspTestClient client, string uri, string text, string oldText, string newText, int version)
+    {
+        var (line, ch) = LocateUtf16(text, oldText, 1);
+        var index = LineCharToIndex(text, line, ch);
+        await DidChangeRangedAsync(client, uri, version, line, ch, line, ch + oldText.Length, newText);
+        return string.Concat(text.AsSpan(0, index), newText, text.AsSpan(index + oldText.Length));
+    }
+
     // ----- definition/references helpers -----
 
     private static async Task<JsonElement[]> DefinitionAsync(LspTestClient client, string uri, int line, int character)
@@ -1545,6 +1819,58 @@ internal static class Program
 
     private static Task DidCloseAsync(LspTestClient client, string uri) =>
         client.NotifyAsync("textDocument/didClose", new { textDocument = new { uri } });
+
+    private static Task DidChangeRangedAsync(
+        LspTestClient client, string uri, int version,
+        int startLine, int startCharacter, int endLine, int endCharacter, string newText) =>
+        client.NotifyAsync("textDocument/didChange", new
+        {
+            textDocument = new { uri, version },
+            contentChanges = new[]
+            {
+                new
+                {
+                    range = new
+                    {
+                        start = new { line = startLine, character = startCharacter },
+                        end = new { line = endLine, character = endCharacter },
+                    },
+                    text = newText,
+                },
+            },
+        });
+
+    /// <summary>
+    /// The UTF-16 string index of a 0-based (line, character) position, counting
+    /// CRLF/CR/LF as single line breaks (matching the server's buffer model).
+    /// </summary>
+    private static int LineCharToIndex(string text, int line, int character)
+    {
+        var offset = 0;
+        var currentLine = 0;
+        while (currentLine < line && offset < text.Length)
+        {
+            var c = text[offset];
+            if (c == '\r')
+            {
+                offset++;
+                if (offset < text.Length && text[offset] == '\n')
+                    offset++;
+                currentLine++;
+            }
+            else if (c == '\n')
+            {
+                offset++;
+                currentLine++;
+            }
+            else
+            {
+                offset++;
+            }
+        }
+
+        return offset + character;
+    }
 
     private static bool IsPublishFor(JsonElement message, string pathOrUri, out JsonElement parameters)
     {

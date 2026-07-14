@@ -24,7 +24,13 @@ internal sealed class LspTestClient : IAsyncDisposable
         _stderrTask = process.StandardError.ReadToEndAsync();
     }
 
-    public static async Task<LspTestClient> StartAsync(string serverDll, string rootDirectory)
+    /// <summary>The server's <c>initialize</c> result (capabilities etc.).</summary>
+    public JsonElement InitializeResult { get; private set; }
+
+    public static async Task<LspTestClient> StartAsync(
+        string serverDll,
+        string rootDirectory,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var startInfo = new ProcessStartInfo("dotnet")
         {
@@ -36,6 +42,9 @@ internal sealed class LspTestClient : IAsyncDisposable
         };
         startInfo.ArgumentList.Add("exec");
         startInfo.ArgumentList.Add(serverDll);
+        if (environment is not null)
+            foreach (var (key, value) in environment)
+                startInfo.Environment[key] = value;
         var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Could not start the LSP server.");
         var client = new LspTestClient(process);
@@ -66,8 +75,9 @@ internal sealed class LspTestClient : IAsyncDisposable
             },
             clientInfo = new { name = "nemerle-lsp-integration-test", version = "2.0" },
         }).ConfigureAwait(false);
-        if (!initialize.TryGetProperty("result", out _))
+        if (!initialize.TryGetProperty("result", out var initializeResult))
             throw new InvalidDataException("initialize did not return a result: " + initialize);
+        client.InitializeResult = initializeResult.Clone();
         await client.NotifyAsync("initialized", new { }).ConfigureAwait(false);
         return client;
     }

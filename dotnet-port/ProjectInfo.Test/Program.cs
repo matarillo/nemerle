@@ -12,6 +12,7 @@ internal static class Program
             HoverMarkupTests();
             CompletionMappingTests();
             GotoMappingTests();
+            IncrementalSyncTests();
             PathNormalizerTests();
             await ErrorTests();
             await ProviderTests();
@@ -229,6 +230,88 @@ internal static class Program
             True(uri.StartsWith("file:///C:/", StringComparison.Ordinal), $"URI has an upper-cased drive letter and file scheme: {uri}");
             True(uri.EndsWith("/Program.n", StringComparison.Ordinal), $"URI ends with the source file: {uri}");
         }
+    }
+
+    private static void IncrementalSyncTests()
+    {
+        // --- ApplyChange: the server's buffer must track the client's document ---
+
+        // Single-line insertion.
+        Equal("abcXYdef",
+            IncrementalSync.ApplyChange("abcdef", NemerleContentChange.Ranged(0, 3, 0, 3, "XY")),
+            "single-line insertion splices at the UTF-16 offset");
+
+        // Deletion (empty replacement).
+        Equal("aef",
+            IncrementalSync.ApplyChange("abcdef", NemerleContentChange.Ranged(0, 1, 0, 4, "")),
+            "deletion removes the [start, end) span");
+
+        // Replacement.
+        Equal("aZef",
+            IncrementalSync.ApplyChange("abcdef", NemerleContentChange.Ranged(0, 1, 0, 4, "Z")),
+            "replacement swaps the span for the new text");
+
+        // Multi-line insertion inside a LF document.
+        Equal("abc\nd1\n2ef",
+            IncrementalSync.ApplyChange("abc\ndef", NemerleContentChange.Ranged(1, 1, 1, 1, "1\n2")),
+            "multi-line insertion on line 1 (LF)");
+
+        // CRLF: an insertion on line 1 keeps the CRLF intact.
+        Equal("ab\r\ncXd",
+            IncrementalSync.ApplyChange("ab\r\ncd", NemerleContentChange.Ranged(1, 1, 1, 1, "X")),
+            "CRLF newline is preserved by an insertion after it");
+
+        // CRLF: a range that spans the newline removes the whole "\r\n".
+        Equal("abcd",
+            IncrementalSync.ApplyChange("ab\r\ncd", NemerleContentChange.Ranged(0, 2, 1, 0, "")),
+            "a range across a CRLF removes both code units");
+
+        // Non-BMP: the emoji is two UTF-16 units; an insertion after it lands correctly.
+        Equal("a😀Zb",
+            IncrementalSync.ApplyChange("a😀b", NemerleContentChange.Ranged(0, 3, 0, 3, "Z")),
+            "insertion after a surrogate pair uses UTF-16 offsets");
+
+        // Multi-line range replacement.
+        Equal("aXhi",
+            IncrementalSync.ApplyChange("abc\ndef\nghi", NemerleContentChange.Ranged(0, 1, 2, 1, "X")),
+            "a range spanning multiple lines is replaced");
+
+        // A whole-document change returns its text verbatim.
+        Equal("brand new",
+            IncrementalSync.ApplyChange("anything", NemerleContentChange.FullReplace("brand new")),
+            "a full replacement ignores the previous text");
+
+        // --- ComputeRelocation: 0-based UTF-16 -> engine 1-based Begin/Old/New ---
+
+        // Insertion: Old == Begin (nothing removed), New advances by the inserted length.
+        var insert = IncrementalSync.ComputeRelocation(NemerleContentChange.Ranged(0, 3, 0, 3, "XY"));
+        Equal(new NemerleRelocation(1, 4, 1, 4, 1, 6), insert, "insertion relocation (Begin==Old, New advances)");
+
+        // Deletion: New == Begin (nothing inserted), Old is the removed span's end.
+        var delete = IncrementalSync.ComputeRelocation(NemerleContentChange.Ranged(0, 1, 0, 4, ""));
+        Equal(new NemerleRelocation(1, 2, 1, 5, 1, 2), delete, "deletion relocation (Begin==New, Old is old end)");
+
+        // Replacement: Begin != Old and Begin != New (the engine's "isUpdate" case).
+        var replace = IncrementalSync.ComputeRelocation(NemerleContentChange.Ranged(0, 1, 0, 4, "Z"));
+        Equal(new NemerleRelocation(1, 2, 1, 5, 1, 3), replace, "replacement relocation is an update on both ends");
+
+        // Multi-line insertion: New moves to a later line, its character is the last line's length.
+        var multiLine = IncrementalSync.ComputeRelocation(NemerleContentChange.Ranged(1, 1, 1, 1, "1\n2"));
+        Equal(new NemerleRelocation(2, 2, 2, 2, 3, 2), multiLine, "multi-line insertion New end is on a later line");
+
+        // CRLF inside the inserted text counts as one line break.
+        var crlfInsert = IncrementalSync.ComputeRelocation(NemerleContentChange.Ranged(2, 5, 2, 5, "a\r\nbc"));
+        Equal(new NemerleRelocation(3, 6, 3, 6, 4, 3), crlfInsert, "CRLF in inserted text is a single line break");
+
+        // Non-BMP inserted text: the surrogate pair counts as two UTF-16 units.
+        var emojiInsert = IncrementalSync.ComputeRelocation(NemerleContentChange.Ranged(0, 1, 0, 1, "😀"));
+        Equal(new NemerleRelocation(1, 2, 1, 2, 1, 4), emojiInsert, "inserted surrogate pair advances New by two units");
+
+        // A whole-document change has no relocation.
+        var threw = false;
+        try { IncrementalSync.ComputeRelocation(NemerleContentChange.FullReplace("x")); }
+        catch (ArgumentException) { threw = true; }
+        True(threw, "ComputeRelocation rejects a whole-document change");
     }
 
     private static void PathNormalizerTests()

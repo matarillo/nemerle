@@ -34,7 +34,7 @@ pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # builds LspServer, stages se
 cd dotnet-port\vscode-nemerle
 npm ci
 npm run package                                    # lint + tests + verify-server + vsce package
-code --install-extension vscode-nemerle-0.6.0.vsix
+code --install-extension vscode-nemerle-0.7.0.vsix
 ```
 
 Then open a trusted folder containing a `.nproj` project. The server starts
@@ -87,8 +87,16 @@ demand via `completionItem/resolve`. Completion reflects unsaved editor buffers.
 members, and types to their declaring source — across project sources — and
 reflect unsaved editor buffers. Definitions on a BCL/NuGet member return no
 location (generated-source display is not provided). References honor
-`includeDeclaration`. Semantic tokens, signature help, and incremental rebuild
-are the next work packages.
+`includeDeclaration`.
+
+**Incremental rebuild** is enabled by default: editing inside a method body
+re-types just that method (a relocation) instead of reloading the whole project,
+so diagnostics update faster while typing. Edits that change a source's structure
+(adding/removing a member, a `using`, or a type) automatically fall back to a
+full types-tree rebuild. To restore the previous behavior (a full reload on
+every change) set the `NEMERLE_INCREMENTAL_UPDATE` environment variable to `0`
+for the server process. Semantic tokens and signature help are the next work
+packages.
 
 ## Troubleshooting
 
