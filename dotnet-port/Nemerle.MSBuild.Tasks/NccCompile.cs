@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
@@ -35,6 +36,12 @@ namespace Nemerle.MSBuild.Tasks
         public string TargetType { get; set; } = "library";
 
         public bool EmitDebug { get; set; }
+
+        /// <summary>Preprocessor symbols for conditional compilation, passed to ncc as a single
+        /// <c>-define:</c> switch (ncc splits it on ';', see ncc\CompilationOptions.n).  Fed from
+        /// the project's MSBuild <c>$(DefineConstants)</c> so <c>#if</c> branches type-check the
+        /// same way in <c>dotnet build</c> and the IDE (WP-M1 build/IDE parity).</summary>
+        public string DefineConstants { get; set; } = "";
 
         /// <summary>Extra ncc CLI switches, whitespace-separated (verbatim, same shape as the
         /// old $(CustomArguments)-style escape hatch).</summary>
@@ -109,6 +116,12 @@ namespace Nemerle.MSBuild.Tasks
             return errorCount == 0 && !Log.HasLoggedErrors;
         }
 
+        // ncc prefixes coded warnings with "N####: " (ncc\parsing\Utility.n Message.Warning,
+        // observable from the WarningOccured event since the WP-M1 1-line fix).  Surface the
+        // code in MSBuild's structured warning-code column instead of inline in the text.
+        private static readonly Regex WarningCodePrefix =
+            new(@"^N(?<code>\d+):[ ](?<rest>.*)$", RegexOptions.Singleline | RegexOptions.Compiled);
+
         private void ReportDiagnostic(string file, int line, int col, int endLine, int endCol, int severity, string message)
         {
             var resolvedFile = string.IsNullOrEmpty(file) ? (BuildEngine?.ProjectFileOfTaskNode ?? "") : file;
@@ -119,7 +132,12 @@ namespace Nemerle.MSBuild.Tasks
                     Log.LogError("nemerle", null, null, resolvedFile, line, col, endLine, endCol, message);
                     break;
                 case 1:
-                    Log.LogWarning("nemerle", null, null, resolvedFile, line, col, endLine, endCol, message);
+                    var match = message is null ? Match.Empty : WarningCodePrefix.Match(message);
+                    if (match.Success)
+                        Log.LogWarning("nemerle", "N" + match.Groups["code"].Value, null, resolvedFile,
+                            line, col, endLine, endCol, match.Groups["rest"].Value);
+                    else
+                        Log.LogWarning("nemerle", null, null, resolvedFile, line, col, endLine, endCol, message);
                     break;
                 default:
                     Log.LogMessage(
@@ -140,6 +158,11 @@ namespace Nemerle.MSBuild.Tasks
                 list.Add("-debug");
 
             list.Add("-out:" + OutputAssembly);
+
+            // ncc's -define: splits its value on ';' itself, so the whole
+            // DefineConstants string goes through as a single switch.
+            if (!string.IsNullOrWhiteSpace(DefineConstants))
+                list.Add("-define:" + DefineConstants.Trim());
 
             foreach (var r in References)
                 list.Add("-ref:" + r.ItemSpec);

@@ -1,0 +1,12 @@
+module WarningsSample
+{
+  // A redundant ':>' upcast (a string already IS an object) makes ncc emit
+  // warning N10001 "there is no check needed to cast string to object".  This is
+  // a method-body typing warning, so it appears both in a full `dotnet build`
+  // and in IDE per-method analysis; WP-M1 surfaces the N10001 code structurally.
+  public Widen() : object
+  {
+    def text = "hello";
+    text :> object
+  }
+}

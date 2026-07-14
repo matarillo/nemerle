@@ -198,12 +198,17 @@ namespace Nemerle.Compiler {
     {
       def loc = findLoc (loc);
       when (code == -1 || Manager.Options.Warnings.IsEnabledAt (loc, code)) {
+        // WP-M1: prefix "N<code>:" BEFORE firing WarningOccured, so the warning
+        // code is observable from the event (the in-process build task in
+        // dotnet-port\Nemerle.MSBuild.Tasks reads it into MSBuild's structured
+        // warning-code column).  The report/MessageOccured path below still gets
+        // the same prefixed text it did before, so nothing else changes.
+        def m = if (code == -1) m else $"N$code: $m";
+
         Manager.RunWarningOccured (loc, m);
-  
+
         Message.Manager.Message_WarningCount++;
 
-        def m = if (code == -1) m else $"N$code: $m";
-        
         if (Manager.Options.Warnings.TreatWarningsAsErrors) {
           Message.Error(loc, "warning: " + m)
         } else {

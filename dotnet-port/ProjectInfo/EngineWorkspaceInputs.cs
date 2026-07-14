@@ -21,32 +21,25 @@ public sealed record EngineWorkspaceInputs(
     /// build gives ncc:
     /// - sources, assembly references, and macro-only references are used as-is
     ///   (macro references never join the assembly reference list);
-    /// - defines come only from supported "-define" values inside
-    ///   NemerleAdditionalOptions, because Nemerle.Core.targets does not pass
-    ///   the MSBuild DefineConstants property to the compiler task (documented
-    ///   WP-L2 build gap), so applying it here would diverge from dotnet build;
+    /// - defines are the snapshot's full <see cref="NemerleProjectSnapshot.DefineConstants"/>,
+    ///   which already unions the MSBuild DefineConstants property with any
+    ///   "-define" values inside NemerleAdditionalOptions.  WP-M1 wired
+    ///   Nemerle.Core.targets to pass DefineConstants to ncc as "-define:", so
+    ///   the engine now applies the same set the build does (the earlier WP-L2/L3
+    ///   gap where DefineConstants was reported as a warning is closed);
     /// - unsupported semantic/diagnostic options remain warnings.
     /// </summary>
     public static EngineWorkspaceInputs FromSnapshot(NemerleProjectSnapshot snapshot)
     {
-        var warnings = new List<string>(snapshot.Warnings);
-        if (snapshot.DefineConstants.Except(snapshot.Options.AdditionalDefines, StringComparer.Ordinal).Any())
-        {
-            warnings.Add(
-                "MSBuild DefineConstants (" + string.Join(";", snapshot.DefineConstants) +
-                ") are not applied to the analysis engine because Nemerle.Core.targets does not pass them to ncc; " +
-                "use NemerleAdditionalOptions -define:... for symbols that must affect compilation.");
-        }
-
         return new EngineWorkspaceInputs(
             snapshot.ProjectPath,
             snapshot.ProjectDirectory,
             snapshot.SourceFiles,
             snapshot.AssemblyReferences,
             snapshot.MacroReferences,
-            snapshot.Options.AdditionalDefines,
+            snapshot.DefineConstants,
             snapshot.Options.CheckIntegerOverflow,
             snapshot.Options.IndentationSyntax,
-            warnings);
+            snapshot.Warnings);
     }
 }

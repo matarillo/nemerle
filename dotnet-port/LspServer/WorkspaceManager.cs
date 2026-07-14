@@ -14,10 +14,12 @@ public sealed record WorkspaceApplyResult(bool Applied, IReadOnlyList<string> Wa
 internal sealed class WorkspaceManager
 {
     private readonly NemerleProject _project;
+    private readonly ServerLog _log;
 
-    public WorkspaceManager(NemerleProject project)
+    public WorkspaceManager(NemerleProject project, ServerLog log)
     {
         _project = project;
+        _log = log;
     }
 
     public event Action<IReadOnlyList<DocumentDiagnostics>> DiagnosticsChanged
@@ -62,7 +64,7 @@ internal sealed class WorkspaceManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"nemerle workspace apply failed: {ex}");
+            _log.Error($"nemerle workspace apply failed: {ex}");
             return new WorkspaceApplyResult(false, warnings, ex.Message);
         }
 

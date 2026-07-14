@@ -42,11 +42,13 @@ internal sealed class NemerleProjectInfoHandler
 {
     private readonly ProjectInfoProvider _provider;
     private readonly WorkspaceManager _workspace;
+    private readonly ServerLog _log;
 
-    public NemerleProjectInfoHandler(ProjectInfoProvider provider, WorkspaceManager workspace)
+    public NemerleProjectInfoHandler(ProjectInfoProvider provider, WorkspaceManager workspace, ServerLog log)
     {
         _provider = provider;
         _workspace = workspace;
+        _log = log;
     }
 
     public async Task<ProjectInfoLoadResult> Handle(
@@ -67,20 +69,20 @@ internal sealed class NemerleProjectInfoHandler
                 key,
                 request.ForceReload,
                 cancellationToken).ConfigureAwait(false);
-            Console.Error.WriteLine(
+            _log.Log(
                 $"nemerle project query finished after {queryStopwatch.Elapsed.TotalMilliseconds:F0} ms: {snapshot.ProjectPath}");
         }
         catch (ProjectQueryException ex)
         {
             var details = ex.StandardError.Length > 0 ? ex.StandardError : ex.StandardOutput;
-            Console.Error.WriteLine($"Project query {ex.Kind}: {ex.Message}");
+            _log.Error($"nemerle project query {ex.Kind}: {ex.Message}");
             if (details.Length > 0)
-                Console.Error.WriteLine(details);
+                _log.Error(details);
             return Error(ex.Kind.ToString(), ex.Message, details);
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"Project query configuration error: {ex.Message}");
+            _log.Error($"nemerle project query configuration error: {ex.Message}");
             return Error("Configuration", ex.Message, null);
         }
 

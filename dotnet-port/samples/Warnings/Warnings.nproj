@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-M1 warning-code fixture (dotnet-port\29-devenv2-plan.md, acceptance
+    criterion 3).  warnings.n has a redundant ':>' upcast, so ncc emits
+    warning N10001 "there is no check needed to cast ...".  WP-M1 surfaces the
+    N10001 code as a structured warning code:
+      - dotnet build prints "warning N10001: ..." (code column, via
+        Log.LogWarning's code argument in Nemerle.MSBuild.Tasks.NccCompile);
+      - the IDE puts "N10001" in the LSP diagnostic's `code` field.
+
+    Prerequisite: dotnet-port\dist\ncc must exist (pwsh dotnet-port\pack-tool.ps1).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="warnings.n" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

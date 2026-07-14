@@ -139,6 +139,7 @@ internal sealed class NemerleTextDocumentSyncHandler : TextDocumentSyncHandlerBa
             hash.Add(diagnostic.EndColumn);
             hash.Add(diagnostic.Kind);
             hash.Add(diagnostic.Message, StringComparer.Ordinal);
+            hash.Add(diagnostic.Code, StringComparer.Ordinal);
         }
 
         return hash.ToHashCode();
@@ -170,6 +171,7 @@ internal sealed class NemerleTextDocumentSyncHandler : TextDocumentSyncHandlerBa
             },
             Source = "nemerle",
             Message = diagnostic.Message,
+            Code = diagnostic.Code is { } code ? new DiagnosticCode(code) : default(DiagnosticCode?),
         };
     }
 }

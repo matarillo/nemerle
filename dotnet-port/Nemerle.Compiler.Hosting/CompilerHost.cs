@@ -75,11 +75,10 @@ namespace Nemerle.Compiler.Hosting
 
             man.ErrorOccured += (loc, msg) => { errorCount++; Report(2, loc, msg); };
             man.WarningOccured += (loc, msg) => Report(1, loc, msg);
-            // v1 known limitation (dotnet-port\20-inproc-task-plan.md, confirmed fact 3):
-            // RunWarningOccured fires BEFORE ncc\parsing\Utility.n prefixes the message with
-            // "Nxxxx: ", so the Nxxxx warning code is not observable from this event. Emitted
-            // as a plain message here; recovering the code needs a 1-line ncc\parsing\Utility.n
-            // change (out of scope for a no-compiler-changes v1).
+            // Since the WP-M1 1-line ncc\parsing\Utility.n fix (the "N$code: $m" prefix is now
+            // applied BEFORE RunWarningOccured fires), coded warnings arrive here as
+            // "Nxxxx: message"; Nemerle.MSBuild.Tasks.NccCompile.ReportDiagnostic peels the
+            // "Nxxxx" off into MSBuild's structured warning-code column.
             man.MessageOccured += (loc, msg) => Report(0, loc, msg);
 
             var sources = new List<ISource>();

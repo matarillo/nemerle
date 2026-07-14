@@ -68,6 +68,12 @@
     <!-- Exec-path-only rendering of the same decision, kept for the -p:NemerleUseExec=true
          fallback below. -->
     <NemerleDebugSwitch Condition="'$(NemerleEmitDebug)' == 'true'">-debug</NemerleDebugSwitch>
+    <!-- WP-M1 build/IDE parity: pass the project's MSBuild $(DefineConstants) to ncc as a
+         single -define: switch (ncc splits it on ';' itself, ncc\CompilationOptions.n) so
+         #if branches type-check identically in `dotnet build` and the IDE. Quoted so the
+         ';' separators survive the shell; only emitted when there is something to define.
+         The in-process NccCompile task takes DefineConstants directly instead. -->
+    <NemerleDefineSwitch Condition="'$(DefineConstants)' != ''">-define:&quot;$(DefineConstants)&quot;</NemerleDefineSwitch>
     <!-- Extra ncc CLI switches (whitespace-separated, verbatim), for both the in-process task
          and the Exec fallback, e.g. -p:NemerleAdditionalOptions="-nowarn:10003 -checked". -->
     <NemerleAdditionalOptions Condition="'$(NemerleAdditionalOptions)' == ''"></NemerleAdditionalOptions>
@@ -145,6 +151,7 @@
                 OutputAssembly="%(IntermediateAssembly.FullPath)"
                 TargetType="$(NemerleTargetType)"
                 EmitDebug="$(NemerleEmitDebug)"
+                DefineConstants="$(DefineConstants)"
                 AdditionalOptions="$(NemerleAdditionalOptions)"
                 NccLayoutDir="$(NccLayoutDir)" />
 
@@ -155,7 +162,7 @@
          the LoadCoreStdlibReferences change in ncc\passes.n, so no -from-file:ncc.default.rsp
          is needed here either. -->
     <Exec Condition="'$(NemerleUseExec)' == 'true'"
-          Command="dotnet &quot;$(NccDll)&quot; -target:$(NemerleTargetType) $(NemerleDebugSwitch) -out:&quot;%(IntermediateAssembly.FullPath)&quot; @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') @(NemerleMacroReference->'-macros:&quot;%(FullPath)&quot;', ' ') $(NemerleAdditionalOptions) @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
+          Command="dotnet &quot;$(NccDll)&quot; -target:$(NemerleTargetType) $(NemerleDebugSwitch) -out:&quot;%(IntermediateAssembly.FullPath)&quot; $(NemerleDefineSwitch) @(_NemerleUserReference->'-ref:&quot;%(FullPath)&quot;', ' ') @(NemerleMacroReference->'-macros:&quot;%(FullPath)&quot;', ' ') $(NemerleAdditionalOptions) @(NemerleCompile->'&quot;%(FullPath)&quot;', ' ')"
           WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 

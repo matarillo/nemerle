@@ -10,8 +10,12 @@ internal static class Program
 {
     public static async Task Main()
     {
-        await using var project = new NemerleProject(Console.Error);
-        var workspace = new WorkspaceManager(project);
+        // Trace goes to window/logMessage once the facade is attached below; until
+        // then it is buffered.  Only a pre-initialize fatal (before the facade can
+        // exist) falls back to stderr (ServerLog.Fatal).
+        var log = new ServerLog();
+        await using var project = new NemerleProject(log);
+        var workspace = new WorkspaceManager(project, log);
         await using var projectInfo = new ProjectInfoProvider();
         var server = await OmniSharp.Extensions.LanguageServer.Server.LanguageServer.From(options => options
             .WithInput(Console.OpenStandardInput())
@@ -19,17 +23,19 @@ internal static class Program
             .WithServerInfo(new ServerInfo
             {
                 Name = "nemerle-language-server",
-                Version = "0.2.0",
+                Version = "0.3.0",
             })
             .WithServices(services =>
             {
                 services.AddSingleton(project);
                 services.AddSingleton(workspace);
                 services.AddSingleton(projectInfo);
+                services.AddSingleton(log);
             })
             .WithHandler<NemerleTextDocumentSyncHandler>()
             .WithHandler<NemerleProjectInfoHandler>()).ConfigureAwait(false);
 
+        log.Attach(server);
         await server.WaitForExit.ConfigureAwait(false);
     }
 }

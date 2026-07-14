@@ -8,6 +8,7 @@ internal static class Program
         {
             await ParserTests();
             EngineInputTests();
+            WarningCodeTests();
             PathNormalizerTests();
             await ErrorTests();
             await ProviderTests();
@@ -63,24 +64,36 @@ internal static class Program
         True(inputs.MacroReferences.SequenceEqual(snapshot.MacroReferences), "engine input macro references");
         True(inputs.MacroReferences.All(path => !inputs.AssemblyReferences.Contains(path)),
             "macro-only references never join the assembly reference list");
-        // Build parity: only NemerleAdditionalOptions -define values apply;
-        // the MSBuild DefineConstants property (NET/TRACE here) is reported as
-        // a warning because Nemerle.Core.targets does not pass it to ncc.
-        True(inputs.Defines.SequenceEqual(snapshot.Options.AdditionalDefines), "engine defines come from -define only");
-        True(!inputs.Defines.Contains("NET") && !inputs.Defines.Contains("TRACE"), "MSBuild DefineConstants not applied");
+        // WP-M1 build parity: the engine now applies the full DefineConstants
+        // set (MSBuild DefineConstants property unioned with any -define inside
+        // NemerleAdditionalOptions), because Nemerle.Core.targets passes the same
+        // set to ncc as "-define:".  There is no longer a gap warning.
+        True(inputs.Defines.SequenceEqual(snapshot.DefineConstants), "engine defines are the full DefineConstants set");
+        True(inputs.Defines.Contains("NET") && inputs.Defines.Contains("TRACE"), "MSBuild DefineConstants property is applied");
+        True(inputs.Defines.Contains("FEATURE") && inputs.Defines.Contains("SECOND"), "NemerleAdditionalOptions -define values remain applied");
         Equal(false, inputs.CheckIntegerOverflow, "checked option propagated");
         True(inputs.IndentationSyntax, "indentation option propagated");
-        True(inputs.Warnings.Count == snapshot.Warnings.Count + 1, "DefineConstants gap warning added");
-        True(inputs.Warnings.Any(warning => warning.Contains("DefineConstants", StringComparison.Ordinal)),
-            "DefineConstants gap warning names the property");
+        True(inputs.Warnings.SequenceEqual(snapshot.Warnings), "no DefineConstants gap warning is synthesized anymore");
+        True(!inputs.Warnings.Any(warning => warning.Contains("DefineConstants", StringComparison.Ordinal)),
+            "the DefineConstants gap warning is gone");
+    }
 
-        // Without extra MSBuild defines there is no gap warning.
-        var noExtraDefines = snapshot with
-        {
-            DefineConstants = snapshot.Options.AdditionalDefines,
-        };
-        var quietInputs = EngineWorkspaceInputs.FromSnapshot(noExtraDefines);
-        Equal(snapshot.Warnings.Count, quietInputs.Warnings.Count, "no gap warning without extra defines");
+    private static void WarningCodeTests()
+    {
+        var (code, message) = NemerleWarningCode.Extract("N10003: `Broken.helper' is not externally visible and has never been referenced");
+        Equal("N10003", code, "coded warning prefix is extracted");
+        Equal("`Broken.helper' is not externally visible and has never been referenced", message, "coded warning message is stripped of its prefix");
+
+        var (noCode, unchanged) = NemerleWarningCode.Extract("this match clause is unused");
+        True(noCode is null, "uncoded warning has no extracted code");
+        Equal("this match clause is unused", unchanged, "uncoded warning message is unchanged");
+
+        var (multiCode, multiMessage) = NemerleWarningCode.Extract("N10001: line one\nline two");
+        Equal("N10001", multiCode, "multi-line coded warning still yields the code");
+        Equal("line one\nline two", multiMessage, "multi-line coded warning keeps its full body");
+
+        var (nullCode, nullMessage) = NemerleWarningCode.Extract(null);
+        True(nullCode is null && nullMessage.Length == 0, "null message is handled");
     }
 
     private static void PathNormalizerTests()

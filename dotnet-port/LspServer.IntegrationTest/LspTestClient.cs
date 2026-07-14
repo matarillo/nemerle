@@ -202,4 +202,42 @@ internal sealed class LspTestClient : IAsyncDisposable
     public static bool HasId(JsonElement message, int id) =>
         message.TryGetProperty("id", out var value) &&
         value.ValueKind == JsonValueKind.Number && value.GetInt32() == id;
+
+    /// <summary>
+    /// Every <c>window/logMessage</c> notification received so far (from
+    /// <paramref name="fromMark"/>), as (type, message).  LSP MessageType:
+    /// 1=Error, 2=Warning, 3=Info, 4=Log.
+    /// </summary>
+    public IReadOnlyList<(int Type, string Message)> LogMessages(int fromMark = 0)
+    {
+        var result = new List<(int, string)>();
+        for (var index = fromMark; index < _history.Count; index++)
+        {
+            var message = _history[index];
+            if (message.TryGetProperty("method", out var method) &&
+                method.GetString() == "window/logMessage" &&
+                message.TryGetProperty("params", out var p))
+            {
+                var type = p.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.Number
+                    ? t.GetInt32()
+                    : 0;
+                var text = p.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
+                result.Add((type, text));
+            }
+        }
+
+        return result;
+    }
+
+    public static bool IsLogMessageContaining(JsonElement message, string needle, out int type)
+    {
+        type = 0;
+        if (!message.TryGetProperty("method", out var method) ||
+            method.GetString() != "window/logMessage" ||
+            !message.TryGetProperty("params", out var p))
+            return false;
+        type = p.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetInt32() : 0;
+        return p.TryGetProperty("message", out var m) &&
+               (m.GetString() ?? "").Contains(needle, StringComparison.Ordinal);
+    }
 }

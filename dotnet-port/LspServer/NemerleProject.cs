@@ -14,7 +14,8 @@ internal sealed record EngineDiagnostic(
     int EndLine,
     int EndColumn,
     MessageKind Kind,
-    string Message);
+    string Message,
+    string? Code);
 
 /// <summary>
 /// One document's diagnostics inside a workspace-wide notification.
@@ -67,11 +68,13 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     private readonly CancellationTokenSource _pumpCancellation = new();
     private readonly Task _responsePump;
     private readonly IIdeEngine _engine;
+    private readonly ServerLog _log;
 
-    public NemerleProject(TextWriter engineLog)
+    public NemerleProject(ServerLog log)
     {
+        _log = log;
         _reloadTimer = new Timer(OnReloadTimer);
-        _engine = EngineFactory.Create(this, engineLog, false);
+        _engine = EngineFactory.Create(this, log.AsTextWriter(), false);
         _responsePump = Task.Run(PumpResponsesAsync);
     }
 
@@ -332,8 +335,16 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     }
 
     public void SetStatusText(string text) => Trace.WriteLine(text);
-    public void ShowMessage(string message, MessageType messageType) =>
-        Console.Error.WriteLine($"nemerle engine {messageType}: {message}");
+    public void ShowMessage(string message, MessageType messageType)
+    {
+        switch (messageType)
+        {
+            case MessageType.Error: _log.Error($"nemerle engine: {message}"); break;
+            case MessageType.Warning: _log.Warning($"nemerle engine: {message}"); break;
+            case MessageType.Hint: _log.Log($"nemerle engine: {message}"); break;
+            default: _log.Info($"nemerle engine: {message}"); break;
+        }
+    }
     public GotoInfo[] LookupLocationsFromDebugInformation(GotoInfo info) => [];
     public void SetHighlights(IIdeSource source, IEnumerable<GotoInfo> highlights) { }
     public void AddUnimplementedMembers(
@@ -346,7 +357,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     {
         var startedAt = Interlocked.Read(ref _reloadStartedTimestamp);
         if (startedAt != 0)
-            Console.Error.WriteLine(
+            _log.Log(
                 $"nemerle engine rebuild finished after {Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F0} ms");
         RaiseDiagnosticsChanged();
     }
@@ -409,7 +420,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             _methodMessages.Remove(member);
     }
 
-    private static string? TryReadDiskText(string path)
+    private string? TryReadDiskText(string path)
     {
         try
         {
@@ -417,7 +428,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            Console.Error.WriteLine($"nemerle workspace could not reread project source '{path}': {ex.Message}");
+            _log.Warning($"nemerle workspace could not reread project source '{path}': {ex.Message}");
             return null;
         }
     }
@@ -432,7 +443,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"nemerle response callback failed: {ex}");
+                _log.Error($"nemerle response callback failed: {ex}");
             }
 
             await Task.Delay(10, _pumpCancellation.Token).ConfigureAwait(false);
@@ -469,13 +480,19 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
 
                 if (!perFile.TryGetValue(location.FileIndex, out var list))
                     perFile[location.FileIndex] = list = [];
+                // Coded compiler messages arrive with an "N####: " prefix (via
+                // ncc's report/MessageOccured path, which ProcessTopLevelCompilerMessage
+                // feeds into the engine's CompilerMessage.Msg); surface the code in
+                // Diagnostic.code and keep the prefix out of the human-readable text.
+                var (code, text) = NemerleWarningCode.Extract(message.Msg);
                 list.Add(new EngineDiagnostic(
                     location.Line,
                     location.Column,
                     location.EndLine,
                     location.EndColumn,
                     message.Kind,
-                    message.Msg ?? string.Empty));
+                    text,
+                    code));
             }
 
             result = new List<DocumentDiagnostics>(_documentsByPath.Count);

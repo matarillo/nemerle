@@ -32,6 +32,8 @@ internal static class Program
             await RunScenarioAsync("RefDemo ProjectReference project-aware analysis", RefDemoProjectAwareAsync);
             await RunScenarioAsync("PackageReference resolved assembly in engine workspace", PackageReferenceProjectAwareAsync);
             await RunScenarioAsync("Sokoban macro-only reference and cross-source resolution", SokobanMacroWorkspaceAsync);
+            await RunScenarioAsync("DefineConstants IDE/build parity (#if branch selection)", DefinesParityAsync);
+            await RunScenarioAsync("Warning N-code surfaces in the LSP diagnostic code field", WarningCodeAsync);
             await RunScenarioAsync("Buffer override, close revert, stale suppression, source removal, failure recovery",
                 BufferDiskCloseStaleRemovalAsync);
             Console.WriteLine("PASS all WP-L3 LSP integration scenarios");
@@ -64,11 +66,24 @@ internal static class Program
             throw;
         }
 
+        // WP-M1: measurement/status trace moved from stderr to window/logMessage.
+        foreach (var (type, message) in client.LogMessages())
+        {
+            if (message.StartsWith("nemerle project query finished", StringComparison.Ordinal) ||
+                message.StartsWith("nemerle engine rebuild finished", StringComparison.Ordinal))
+                Console.WriteLine($"    trace (logMessage type {type}): {message}");
+        }
+
+        // The server no longer writes its own trace/diagnostics to stderr, so
+        // vscode-languageclient never forwards a normal session to the Output
+        // Channel as [error] (WP-M1 acceptance criterion 5, safe protocol-level
+        // proxy for the extension Output Channel).
         foreach (var line in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (line.StartsWith("nemerle project query finished", StringComparison.Ordinal) ||
-                line.StartsWith("nemerle engine rebuild finished", StringComparison.Ordinal))
-                Console.WriteLine($"    trace: {line}");
+            if (line.StartsWith("nemerle ", StringComparison.Ordinal) ||
+                line.StartsWith("Project query ", StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"Server wrote its own trace to stderr instead of window/logMessage: {line}");
         }
 
         Console.WriteLine($"    ok ({stopwatch.Elapsed.TotalSeconds:F1} s)");
@@ -94,12 +109,25 @@ internal static class Program
             beforeLoad,
             "error-free unversioned diagnostics for the closed project source hello.n");
 
+        // WP-M1 logging migration: measurement traces arrive via window/logMessage
+        // at Log level (type 4), not as stderr the client would render as [error].
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "project query finished", out var type) && type == 4,
+            beforeLoad,
+            "a project-query timing trace via window/logMessage (Log level)");
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "engine rebuild finished", out var type) && type == 4,
+            beforeLoad,
+            "an engine-rebuild timing trace via window/logMessage (Log level)");
+
         // WP-K/WP-L1 loose-file flow continues to work while the HelloCore
         // workspace stays applied.
         var testDirectory = CreateTempDirectory("loose");
         try
         {
-            // A missing project stays a typed, recoverable result.
+            // A missing project stays a typed, recoverable result, and is still
+            // surfaced at Error level so the failure remains visible.
+            var beforeMissing = client.Mark();
             var missing = await LoadProjectAsync(client, Path.Combine(testDirectory, "Missing.nproj"));
             if (missing.GetProperty("state").GetString() != "error" ||
                 missing.GetProperty("errorKind").GetString() != "NonZeroExit" ||
@@ -107,6 +135,15 @@ internal static class Program
             {
                 throw new InvalidDataException("Missing project did not return the expected recoverable error result: " + missing);
             }
+
+            _ = await client.WaitForAsync(
+                message => LspTestClient.IsLogMessageContaining(message, "project query", out var type) && type == 1,
+                beforeMissing,
+                "the project-query failure reported via window/logMessage at Error level");
+
+            // A normal session (open -> change -> close) must not raise any
+            // Error-level log message (WP-M1 acceptance criterion 5).
+            var beforeNormal = client.Mark();
 
             var loosePath = Path.Combine(testDirectory, "Broken.n");
             var looseUri = new Uri(loosePath).AbsoluteUri;
@@ -154,6 +191,12 @@ internal static class Program
                 message => IsPublishFor(message, looseUri, out var p) && VersionOf(p) is null && CountOf(p) == 0,
                 mark,
                 "unversioned empty diagnostics after closing the loose file");
+
+            var normalErrors = client.LogMessages(beforeNormal).Where(entry => entry.Type == 1).ToArray();
+            if (normalErrors.Length > 0)
+                throw new InvalidDataException(
+                    "A normal open/change/close session produced Error-level log messages: " +
+                    string.Join(" | ", normalErrors.Select(entry => entry.Message)));
         }
         finally
         {
@@ -263,6 +306,74 @@ internal static class Program
             mark,
             "error-free diagnostics for main.n with cross-source project symbols");
     }
+
+    // ----- DefineConstants IDE/build parity -----
+
+    private static async Task DefinesParityAsync(LspTestClient client)
+    {
+        var project = Sample("Defines", "Defines.nproj");
+        var source = Sample("Defines", "defines.n");
+        var sourceUri = new Uri(source).AbsoluteUri;
+        var sourceText = await File.ReadAllTextAsync(source);
+
+        // Negative control: as a loose file (no CUSTOM_FEATURE), the #else
+        // branch is a type error.
+        var mark = client.Mark();
+        await DidOpenAsync(client, sourceUri, sourceText, 1);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, sourceUri, out var p) && VersionOf(p) == 1 && HasError(p),
+            mark,
+            "a type error in defines.n's #else branch when CUSTOM_FEATURE is not defined");
+
+        // Applying the project defines CUSTOM_FEATURE (via DefineConstants ->
+        // -define:), selecting the clean #if branch: the same buffer is now
+        // error-free.  This is the IDE side of the DefineConstants build parity.
+        mark = client.Mark();
+        var result = await LoadProjectAsync(client, project);
+        AssertLoadedAndApplied(result, expectedSources: 1);
+        if (!result.GetProperty("defineConstants").EnumerateArray()
+                .Any(define => define.GetString() == "CUSTOM_FEATURE"))
+            throw new InvalidDataException("Defines snapshot did not carry CUSTOM_FEATURE: " + result);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, sourceUri, out var p) && VersionOf(p) == 1 && CountOf(p) == 0,
+            mark,
+            "error-free diagnostics for defines.n once CUSTOM_FEATURE is applied from the project");
+    }
+
+    // ----- Warning N-code in the LSP diagnostic code field -----
+
+    private static async Task WarningCodeAsync(LspTestClient client)
+    {
+        var project = Sample("Warnings", "Warnings.nproj");
+        var source = Sample("Warnings", "warnings.n");
+
+        var beforeLoad = client.Mark();
+        var result = await LoadProjectAsync(client, project);
+        AssertLoadedAndApplied(result, expectedSources: 1);
+
+        // The redundant ':>' upcast produces warning N10001; the engine keeps the
+        // code out of the message text and puts it in Diagnostic.code (WP-M1).
+        var publish = await client.WaitForAsync(
+            message => IsPublishFor(message, source, out var p) &&
+                       DiagnosticsOf(p).Any(IsN10001Warning),
+            beforeLoad,
+            "an N10001 warning with a structured code for the redundant upcast in warnings.n");
+
+        var diagnostic = DiagnosticsOf(publish.GetProperty("params")).First(IsN10001Warning);
+        var message = diagnostic.GetProperty("message").GetString() ?? "";
+        if (message.StartsWith("N10001", StringComparison.Ordinal))
+            throw new InvalidDataException("The N10001 code leaked into the diagnostic message text: " + message);
+        if (!message.Contains("no check needed", StringComparison.Ordinal))
+            throw new InvalidDataException("Unexpected N10001 warning message: " + message);
+    }
+
+    private static IEnumerable<JsonElement> DiagnosticsOf(JsonElement parameters) =>
+        parameters.GetProperty("diagnostics").EnumerateArray();
+
+    private static bool IsN10001Warning(JsonElement diagnostic) =>
+        diagnostic.TryGetProperty("severity", out var severity) && severity.GetInt32() == 2 &&
+        diagnostic.TryGetProperty("code", out var code) &&
+        (code.ValueKind == JsonValueKind.String ? code.GetString() : null) == "N10001";
 
     // ----- Scenario 5: buffer/disk precedence, close revert, stale suppression, removal, recovery -----
 
@@ -545,6 +656,7 @@ internal static class Program
                      Sample("RefDemo", "App", "App.nproj"),
                      Sample("PackageReference", "PackageReference.nproj"),
                      Sample("Sokoban", "Sokoban", "Sokoban.nproj"),
+                     Sample("Warnings", "Warnings.nproj"),
                  })
         {
             Console.WriteLine($"    building fixture {Path.GetFileName(project)}");

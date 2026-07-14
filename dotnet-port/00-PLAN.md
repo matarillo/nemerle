@@ -138,7 +138,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
-| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | 計画(2026-07-14) | 29-devenv2-plan.md(実装結果は 30-*.md 以降) |
+| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | WP-M1 完了(2026-07-14)、WP-M2〜M6 計画 | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md |
 
 ## 作業ログ
 
@@ -623,3 +623,14 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   NuGet package + `dotnet new` template + toolchain provenance。semantic tokens /
   formatting / multi-root / Linux 実地検証 / Marketplace は WP-M 完了後の優先順位リストへ。
   詳細は `29-devenv2-plan.md`。
+- 2026-07-14: WP-M1(IDE/build parity と server ログの地固め)完了。(1) MSBuild
+  `DefineConstants` を ncc に `-define:` 配線(`Nemerle.Core.targets` Windows/Linux +
+  in-process `NccCompile` + Exec fallback)し、`EngineWorkspaceInputs` が engine にも同集合を
+  適用(WP-L3 の gap warning 撤去)。(2) `ncc/parsing/Utility.n` の 1 行修正(N コード prefix を
+  `RunWarningOccured` の前へ)で警告コードを構造化: build は `warning N####:`(コード欄)、
+  IDE は LSP `Diagnostic.code`。(3) server の情報 trace を `window/logMessage`(Log/Error)へ移し
+  stderr を initialize 前 fatal 専用に(`ServerLog`、ServerInfo 0.3.0)。新 fixture
+  `samples/Defines`・`samples/Warnings`。Stage1(full rebuild で version 601 に整合)→Stage2→
+  Stage3 を 0 error、testsuite 新規 regression 0。raw LSP 7/7、`npm test` 21/21、
+  Extension Host trusted 3 + untrusted 1 + vsix 1、`test-bundled-server` 7/7、audit 0 件。
+  詳細は `30-devenv2-wp-m1-log.md`。

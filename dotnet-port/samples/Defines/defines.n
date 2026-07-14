@@ -1,0 +1,17 @@
+module DefinesSample
+{
+  // #if CUSTOM_FEATURE selects a valid Int32 body; the #else branch is a
+  // deliberate type error (a string where an int is required), so the
+  // CUSTOM_FEATURE preprocessor symbol alone decides whether this compiles.
+  // WP-M1 wires the MSBuild DefineConstants property (which carries
+  // CUSTOM_FEATURE) to ncc as -define:, so `dotnet build` and the IDE both
+  // analyze the same branch.
+  public Feature() : int
+  {
+  #if CUSTOM_FEATURE
+    42
+  #else
+    "CUSTOM_FEATURE is not defined"
+  #endif
+  }
+}
