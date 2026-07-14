@@ -51,6 +51,13 @@ internal sealed class LspTestClient : IAsyncDisposable
                     // Advertise markdown so the hover handler exercises the
                     // fenced-code-block path (WP-M2).
                     hover = new { contentFormat = new[] { "markdown", "plaintext" } },
+                    // Advertise completion with resolve + documentation so the
+                    // completion handler exercises the deferred-doc path (WP-M3).
+                    completion = new
+                    {
+                        contextSupport = true,
+                        completionItem = new { documentationFormat = new[] { "plaintext", "markdown" } },
+                    },
                 },
             },
             clientInfo = new { name = "nemerle-lsp-integration-test", version = "2.0" },

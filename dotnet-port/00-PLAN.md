@@ -138,7 +138,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
-| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | WP-M1・M2 完了(2026-07-14)、WP-M3〜M6 計画 | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md |
+| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | WP-M1・M2・M3 完了(2026-07-14)、WP-M4〜M6 計画 | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md |
 
 ## 作業ログ
 
@@ -647,3 +647,18 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   `ProjectInfo.Test` unit(`HoverMarkupTests`)+ integration、`npm test` 21/21、Extension Host
   trusted 3 + untrusted 1 + vsix 1、audit 0 件。warm hover **p50 31 ms**(目標 < 300 ms)。
   詳細は `31-devenv2-wp-m2-log.md`。
+- 2026-07-14: WP-M3(completion)完了。(1) `NemerleCompletionHandler`
+  (`textDocument/completion`、triggerCharacters `.`)+ `completionItem/resolve`
+  (`resolveProvider: true`)。engine 無改造のまま、公開 `CompletionAsyncRequest` +
+  `AsyncWorker.AddWork` で `BeginCompletion` を再現し WP-M2 の `EngineRequestBridge` を再利用
+  (async。reload 中の completion は force-out → cancel、version 照合で stale を捏造しない)。
+  (2) glyph → kind 変換の純関数 `CompletionMapping.GlyphToKind`(ProjectInfo、unit test 化)。
+  detail/documentation の擬似 markup は `HoverMarkup` を再利用して除去。(3) 高コストな
+  Description(overload 列挙・XmlDoc)は resolve 側で遅延計算し、直近 1 世代を cache
+  (completion / engine reload で世代を進め、古い世代の resolve は documentation なし)。
+  extension は capability 追従(無変更)、ServerInfo/extension 0.5.0、README 更新。compiler/
+  engine 無改造で Stage リビルド不要(assembly version 601 のまま)。raw LSP 18/18
+  (既存 13 + completion 5)、bundled server 18/18、`ProjectInfo.Test` unit
+  (`CompletionMappingTests`)+ integration、`npm test` 21/21、Extension Host
+  trusted 3 + untrusted 1 + vsix 1、audit 0 件。warm completion **p50 31 ms / p95 61 ms**
+  (目標 < 500 ms)。詳細は `32-devenv2-wp-m3-log.md`。

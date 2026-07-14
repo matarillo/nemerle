@@ -41,6 +41,26 @@ internal sealed record EngineHoverRange(int Line, int Column, int EndLine, int E
 internal sealed record EngineHover(string Text, EngineHoverRange? Range);
 
 /// <summary>
+/// One completion item.  <see cref="Detail"/> is the cheap inline hint;
+/// the expensive documentation is computed lazily by
+/// <see cref="NemerleProject.ResolveCompletionDescription"/> using
+/// <see cref="Generation"/> + <see cref="Index"/>.
+/// </summary>
+internal sealed record EngineCompletionItem(
+    NemerleCompletionKind Kind,
+    string Label,
+    string? Detail,
+    long Generation,
+    int Index);
+
+/// <summary>
+/// A completion result: the items and the generation they belong to.  The
+/// generation lets <c>completionItem/resolve</c> confirm the cached element list
+/// is still the one it is resolving against (WP-M3 §, "one-generation cache").
+/// </summary>
+internal sealed record EngineCompletionResult(long Generation, IReadOnlyList<EngineCompletionItem> Items);
+
+/// <summary>
 /// IIdeProject adapter for the single engine workspace: all sources of the
 /// applied WP-L2 project snapshot (open LSP buffers override disk-backed text)
 /// plus any open loose files.  Without an applied snapshot it degrades to the
@@ -71,6 +91,12 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     private readonly Dictionary<MemberBuilder, CompilerMessage[]> _methodMessages =
         new(ReferenceEqualityComparer.Instance);
     private CompilerMessage[] _topLevelMessages = [];
+    // Last completion result kept for completionItem/resolve.  Incremented on
+    // every completion and on every engine reload, so a resolve whose generation
+    // no longer matches is answered without (stale) documentation.  Guarded by
+    // _gate.
+    private long _completionGeneration;
+    private CompletionElem[] _completionElems = [];
     private EngineWorkspaceInputs? _appliedInputs;
     private readonly Timer _reloadTimer;
     private long _reloadStartedTimestamp;
@@ -301,6 +327,115 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         return new EngineHover(tip.Text, range);
     }
 
+    /// <summary>
+    /// Computes completion items for an open document at an LSP position (0-based
+    /// line/character, UTF-16 code units).  Returns null when the document is not
+    /// open or the request was cancelled/superseded/stale.  Like hover, the
+    /// request is enqueued under <c>_engineOperations</c> but awaited off the lock
+    /// via <see cref="EngineRequestBridge"/> (reused from WP-M2); the completion
+    /// request is forced out by an in-flight rebuild, which the bridge reports as
+    /// a cancellation rather than a fabricated empty list.  The returned items
+    /// carry only a cheap detail string; each element's expensive documentation
+    /// is deferred to <see cref="ResolveCompletionDescription"/>.
+    /// </summary>
+    public async Task<EngineCompletionResult?> GetCompletionAsync(
+        string uri,
+        int lspLine,
+        int lspCharacter,
+        CancellationToken token)
+    {
+        Task<EngineRequestBridge.RequestResult<CompletionElem[]?>> pending;
+        lock (_engineOperations)
+        {
+            InMemoryNemerleSource source;
+            int expectedVersion;
+            lock (_gate)
+            {
+                if (_disposed ||
+                    !_openUriToPath.TryGetValue(uri, out var path) ||
+                    !_documentsByPath.TryGetValue(path, out var state))
+                    return null;
+                source = state.Source;
+                expectedVersion = source.CurrentVersion;
+            }
+
+            var line = lspLine + 1;
+            var column = lspCharacter + 1;
+            pending = _bridge.RunAsync<CompletionElem[]?>(
+                () =>
+                {
+                    // Replicates Engine.BeginCompletion without waiting: the engine
+                    // exposes only the synchronous Completion() in IIdeEngine, but
+                    // CompletionAsyncRequest is public and AsyncWorker.AddWork lets
+                    // the bridge enqueue it and poll for completion off the lock
+                    // (no engine-source change; keeps the shared engine untouched).
+                    var request = new CompletionAsyncRequest(_engine, source, line, column);
+                    AsyncWorker.AddWork(request);
+                    return request;
+                },
+                () => source.CurrentVersion,
+                expectedVersion,
+                static request => ((CompletionAsyncRequest)request).CompletionElems,
+                token);
+        }
+
+        var result = await pending.ConfigureAwait(false);
+        if (!result.IsUsable || result.Value is not { } elems)
+            return null;
+
+        lock (_gate)
+        {
+            var generation = ++_completionGeneration;
+            _completionElems = elems;
+
+            var items = new List<EngineCompletionItem>(elems.Length);
+            for (var index = 0; index < elems.Length; index++)
+            {
+                var elem = elems[index];
+                if (string.IsNullOrEmpty(elem.DisplayName))
+                    continue;
+
+                // Detail is the cheap inline hint (the engine's Info string, e.g.
+                // "keyword"); documentation is deferred to resolve.  The same
+                // pseudo-markup stripper as hover keeps raw tags out.
+                var detail = HoverMarkup.ToPlainText(elem.Info);
+                items.Add(new EngineCompletionItem(
+                    CompletionMapping.GlyphToKind(elem.GlyphType),
+                    elem.DisplayName,
+                    string.IsNullOrEmpty(detail) ? null : detail,
+                    generation,
+                    index));
+            }
+
+            return new EngineCompletionResult(generation, items);
+        }
+    }
+
+    /// <summary>
+    /// Computes the deferred documentation for a completion item (its overload
+    /// list / XmlDoc summary via <c>CompletionElem.Description</c>).  Returns null
+    /// when the generation no longer matches the cached element list (a newer
+    /// completion or an engine reload happened), so resolve never renders
+    /// documentation for a superseded generation.
+    /// </summary>
+    public string? ResolveCompletionDescription(long generation, int index)
+    {
+        CompletionElem elem;
+        lock (_gate)
+        {
+            if (generation != _completionGeneration ||
+                index < 0 || index >= _completionElems.Length)
+                return null;
+            elem = _completionElems[index];
+        }
+
+        // Description reads cached member metadata / XmlDoc off the worker thread;
+        // it reads immutable snapshots (a concurrent rebuild only orphans them),
+        // and the generation guard drops results whose snapshot was replaced.
+        var description = HoverMarkup.ToPlainText(elem.Description);
+        return string.IsNullOrEmpty(description) ? null : description;
+    }
+
     public IEnumerable<string> GetAssemblyReferences()
     {
         lock (_gate) return _appliedInputs?.AssemblyReferences.ToArray() ?? [];
@@ -473,6 +608,15 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     private void BeginEngineReload()
     {
         Interlocked.Exchange(ref _reloadStartedTimestamp, Stopwatch.GetTimestamp());
+        // A reload rebuilds the types tree, so the cached completion elements
+        // (and the members they point at) belong to the old generation; bump the
+        // generation and drop them so a pending resolve returns nothing rather
+        // than stale documentation.
+        lock (_gate)
+        {
+            _completionGeneration++;
+            _completionElems = [];
+        }
         _ = _engine.BeginReloadProject();
     }
 

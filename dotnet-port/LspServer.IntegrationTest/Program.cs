@@ -42,6 +42,11 @@ internal static class Program
             await RunScenarioAsync("Hover: non-identifier null and no deadlock racing a project reload", HoverReloadRaceAsync);
             await RunScenarioAsync("Hover: CRLF + non-BMP range in 0-based UTF-16", HoverCrlfNonBmpAsync);
             await RunScenarioAsync("Hover: warm response-time measurement", HoverTimingAsync);
+            await RunScenarioAsync("Completion: member completion in RefDemo/PackageReference/Sokoban", CompletionMemberProjectsAsync);
+            await RunScenarioAsync("Completion: global-scope keywords and unsaved-buffer symbols", CompletionGlobalAndUnsavedAsync);
+            await RunScenarioAsync("Completion: resolve computes deferred overload documentation", CompletionResolveAsync);
+            await RunScenarioAsync("Completion: racing edits do not crash or throw on stale positions", CompletionRaceAsync);
+            await RunScenarioAsync("Completion: warm response-time measurement", CompletionTimingAsync);
             Console.WriteLine("PASS all WP-L3 LSP integration scenarios");
             return 0;
         }
@@ -765,6 +770,319 @@ internal static class Program
         var p95 = samples[(int)(samples.Count * 0.95)];
         Console.WriteLine(
             $"    warm hover round-trip: p50 {p50:F0} ms, p95 {p95:F0} ms, min {samples[0]:F0} ms, max {samples[^1]:F0} ms (n={samples.Count})");
+    }
+
+    // ----- Completion: member completion in three project contexts -----
+
+    private static async Task CompletionMemberProjectsAsync(LspTestClient client)
+    {
+        // RefDemo: members of Calc, resolved through a ProjectReference (MathLib).
+        var appProject = Sample("RefDemo", "App", "App.nproj");
+        var programUri = new Uri(Sample("RefDemo", "App", "Program.n")).AbsoluteUri;
+        const string refDemoBuffer = """
+            using MathLib;
+
+            module Program
+            {
+              Main() : void
+              {
+                _ = Calc.Square(7);
+              }
+            }
+            """;
+        var mark = client.Mark();
+        AssertLoadedAndApplied(await LoadProjectAsync(client, appProject), expectedSources: 1);
+        await DidOpenAsync(client, programUri, refDemoBuffer, 1);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, programUri, out var p) && VersionOf(p) == 1,
+            mark, "analysis of the RefDemo completion buffer");
+        var labels = await CompletionLabelsAsync(client, programUri, refDemoBuffer, "Square", 1, atStartOfNeedle: true);
+        AssertContainsLabel(labels, "Square", "RefDemo ProjectReference member completion (Calc.)");
+        AssertContainsLabel(labels, "Sum", "RefDemo ProjectReference member completion (Calc.)");
+
+        // PackageReference: members of Newtonsoft.Json's JsonConvert.
+        var packageProject = Sample("PackageReference", "PackageReference.nproj");
+        var packageUri = new Uri(Sample("PackageReference", "PackageSample.n")).AbsoluteUri;
+        const string packageBuffer = """
+            using Newtonsoft.Json;
+
+            namespace PackageReferenceSample
+            {
+              public module Marker
+              {
+                public Run() : void
+                {
+                  _ = JsonConvert.SerializeObject(42);
+                }
+              }
+            }
+            """;
+        mark = client.Mark();
+        AssertLoadedAndApplied(await LoadProjectAsync(client, packageProject), expectedSources: 1);
+        await DidOpenAsync(client, packageUri, packageBuffer, 1);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, packageUri, out var p) && VersionOf(p) == 1,
+            mark, "analysis of the PackageReference completion buffer");
+        labels = await CompletionLabelsAsync(client, packageUri, packageBuffer, "SerializeObject", 1, atStartOfNeedle: true);
+        AssertContainsLabel(labels, "SerializeObject", "PackageReference member completion (JsonConvert.)");
+
+        // Sokoban: members of TreeSearch, declared in another project source.
+        var sokobanProject = Sample("Sokoban", "Sokoban", "Sokoban.nproj");
+        var mainUri = new Uri(Sample("Sokoban", "Sokoban", "main.n")).AbsoluteUri;
+        const string sokobanBuffer = """
+            using Nemerle.IO;
+
+            namespace NSokoban
+            {
+              public class Sokoban
+              {
+                public static Main (args : array[string]) : void
+                {
+                  _ = TreeSearch.A_Star(args);
+                }
+              }
+            }
+            """;
+        mark = client.Mark();
+        AssertLoadedAndApplied(await LoadProjectAsync(client, sokobanProject), expectedSources: 5);
+        await DidOpenAsync(client, mainUri, sokobanBuffer, 1);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, mainUri, out var p) && VersionOf(p) == 1,
+            mark, "analysis of the Sokoban completion buffer");
+        labels = await CompletionLabelsAsync(client, mainUri, sokobanBuffer, "A_Star", 1, atStartOfNeedle: true);
+        AssertContainsLabel(labels, "A_Star", "Sokoban cross-source member completion (TreeSearch.)");
+    }
+
+    // ----- Completion: global scope keywords and unsaved-buffer symbols -----
+
+    private const string CompletionProbeSource = """
+        using System;
+
+        module Probe
+        {
+          Run() : void
+          {
+            def greeting = "hello";
+            _ = greeting.Length;
+            _ = match;
+          }
+        }
+        """;
+
+    private static async Task CompletionGlobalAndUnsavedAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("completion-global"), "probe.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, CompletionProbeSource);
+
+        // Global (expression) scope: the completion prefix "match" is over the
+        // '_ = match;' statement; the list must not be empty and must contain a
+        // Nemerle keyword.
+        var (line, character) = LocateUtf16(CompletionProbeSource, "match", 1);
+        var globalItems = await CompletionItemsAsync(client, uri, line, character);
+        if (globalItems.Length == 0)
+            throw new InvalidDataException("Global-scope completion returned an empty list.");
+        var globalLabels = globalItems.Select(i => i.GetProperty("label").GetString()).ToArray();
+        if (!globalLabels.Any(l => l == "match"))
+            throw new InvalidDataException(
+                "Global-scope completion did not contain the Nemerle keyword 'match': " + string.Join(", ", globalLabels.Take(40)));
+        // The keyword item is tagged as a keyword kind (glyph -> CompletionItemKind).
+        var keyword = globalItems.First(i => i.GetProperty("label").GetString() == "match");
+        if (!keyword.TryGetProperty("kind", out var kind) || kind.GetInt32() != 14 /* Keyword */)
+            throw new InvalidDataException("The 'match' completion item was not mapped to CompletionItemKind.Keyword.");
+        foreach (var item in globalItems)
+            AssertNoRawMarkup(item.GetProperty("label").GetString() ?? "", "global completion label");
+
+        // Unsaved buffer: a newly declared local becomes completable in the same
+        // buffer without any save.
+        const string edited = """
+            using System;
+
+            module Probe
+            {
+              Run() : void
+              {
+                def zebraLocal = "hello";
+                _ = zebraLoc;
+              }
+            }
+            """;
+        var mark = client.Mark();
+        await DidChangeAsync(client, uri, edited, 2);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2,
+            mark, "analysis of the edited (unsaved) completion buffer");
+        var (zLine, zChar) = LocateUtf16(edited, "zebraLoc", 2); // the usage, not the declaration
+        var editedLabels = await CompletionLabelsAtAsync(client, uri, zLine, zChar);
+        AssertContainsLabel(editedLabels, "zebraLocal",
+            "unsaved-buffer completion of a newly declared local");
+    }
+
+    // ----- Completion: resolve computes the deferred documentation -----
+
+    private static async Task CompletionResolveAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("completion-resolve"), "resolve.n")).AbsoluteUri;
+        const string source = """
+            using System;
+
+            module Resolve
+            {
+              Run() : void
+              {
+                Console.WriteLine("x");
+              }
+            }
+            """;
+        await OpenAndAwaitAnalysisAsync(client, uri, source);
+
+        // Members of System.Console after the dot; WriteLine has many overloads,
+        // so its resolved documentation must enumerate them.
+        var (line, character) = LocateUtf16(source, "WriteLine", 1);
+        var items = await CompletionItemsAsync(client, uri, line, character);
+        var writeLine = items.FirstOrDefault(i => i.GetProperty("label").GetString() == "WriteLine");
+        if (writeLine.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException(
+                "Console member completion did not contain WriteLine: " +
+                string.Join(", ", items.Select(i => i.GetProperty("label").GetString()).Take(40)));
+
+        // Before resolve, the heavy documentation must not be present.
+        if (writeLine.TryGetProperty("documentation", out var predoc) && predoc.ValueKind != JsonValueKind.Null)
+            throw new InvalidDataException("Completion item carried documentation before resolve: " + predoc);
+
+        var resolved = await ResolveAsync(client, writeLine);
+        if (!resolved.TryGetProperty("documentation", out var doc) || doc.ValueKind == JsonValueKind.Null)
+            throw new InvalidDataException("Resolve did not attach documentation to the WriteLine item.");
+        var docText = doc.ValueKind == JsonValueKind.String
+            ? doc.GetString()
+            : doc.GetProperty("value").GetString();
+        if (string.IsNullOrEmpty(docText))
+            throw new InvalidDataException("Resolved documentation was empty.");
+        // Multiple overloads -> the description mentions WriteLine more than once.
+        var occurrences = CountOccurrences(docText!, "WriteLine");
+        if (occurrences < 2)
+            throw new InvalidDataException($"Resolved WriteLine documentation did not enumerate overloads (WriteLine x{occurrences}): {docText}");
+        AssertNoRawMarkup(docText!, "resolved completion documentation");
+    }
+
+    // ----- Completion: racing edits do not crash or throw on stale positions -----
+
+    private static async Task CompletionRaceAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("completion-race"), "race.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, CompletionProbeSource);
+
+        // A position not over any completable construct still returns a valid
+        // (possibly empty) list rather than an error.
+        var empty = await RequestCompletionAsync(client, uri, 1, 0);
+        if (empty.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Null))
+            throw new InvalidDataException("Completion at a blank line returned an unexpected shape: " + empty);
+
+        // Race completion against a burst of edits + reloads.  The bridge's
+        // version check must keep every request from throwing on a superseded
+        // buffer position.
+        var (line, character) = LocateUtf16(CompletionProbeSource, "greeting", 2);
+        for (var version = 2; version <= 6; version++)
+        {
+            await DidChangeAsync(client, uri, CompletionProbeSource, version);
+            var response = await RequestCompletionAsync(client, uri, line, character);
+            if (response.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Null))
+                throw new InvalidDataException("Completion during reload returned an unexpected shape: " + response);
+        }
+    }
+
+    // ----- Completion: warm response-time measurement -----
+
+    private static async Task CompletionTimingAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("completion-timing"), "timing.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, CompletionProbeSource);
+
+        var (line, character) = LocateUtf16(CompletionProbeSource, "Length", 1);
+        _ = await RequestCompletionAsync(client, uri, line, character); // warm-up
+
+        var samples = new List<double>();
+        for (var i = 0; i < 15; i++)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            _ = await RequestCompletionAsync(client, uri, line, character);
+            stopwatch.Stop();
+            samples.Add(stopwatch.Elapsed.TotalMilliseconds);
+        }
+
+        samples.Sort();
+        var p50 = samples[samples.Count / 2];
+        var p95 = samples[(int)(samples.Count * 0.95)];
+        Console.WriteLine(
+            $"    warm completion round-trip: p50 {p50:F0} ms, p95 {p95:F0} ms, min {samples[0]:F0} ms, max {samples[^1]:F0} ms (n={samples.Count})");
+    }
+
+    // ----- completion helpers -----
+
+    private static async Task<JsonElement> RequestCompletionAsync(LspTestClient client, string uri, int line, int character)
+    {
+        var response = await client.RequestAsync("textDocument/completion", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("completion request failed: " + error);
+        return response.GetProperty("result");
+    }
+
+    private static async Task<JsonElement[]> CompletionItemsAsync(LspTestClient client, string uri, int line, int character)
+    {
+        var result = await RequestCompletionAsync(client, uri, line, character);
+        return result.ValueKind switch
+        {
+            JsonValueKind.Array => result.EnumerateArray().ToArray(),
+            JsonValueKind.Object when result.TryGetProperty("items", out var items) => items.EnumerateArray().ToArray(),
+            _ => [],
+        };
+    }
+
+    private static async Task<string[]> CompletionLabelsAtAsync(LspTestClient client, string uri, int line, int character)
+    {
+        var items = await CompletionItemsAsync(client, uri, line, character);
+        return items.Select(i => i.GetProperty("label").GetString() ?? "").ToArray();
+    }
+
+    private static async Task<string[]> CompletionLabelsAsync(
+        LspTestClient client, string uri, string text, string needle, int occurrence, bool atStartOfNeedle)
+    {
+        var (line, character) = LocateUtf16(text, needle, occurrence);
+        // atStartOfNeedle keeps the cursor just past the '.', at the first char of
+        // the member identifier, which is the member-completion point.
+        _ = atStartOfNeedle;
+        return await CompletionLabelsAtAsync(client, uri, line, character);
+    }
+
+    private static async Task<JsonElement> ResolveAsync(LspTestClient client, JsonElement item)
+    {
+        var response = await client.RequestAsync("completionItem/resolve", item);
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("completionItem/resolve failed: " + error);
+        return response.GetProperty("result");
+    }
+
+    private static void AssertContainsLabel(string[] labels, string expected, string description)
+    {
+        if (!labels.Contains(expected, StringComparer.Ordinal))
+            throw new InvalidDataException(
+                $"{description}: completion did not contain '{expected}'. Got: {string.Join(", ", labels.Take(50))}");
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += needle.Length;
+        }
+
+        return count;
     }
 
     // ----- hover helpers -----

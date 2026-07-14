@@ -34,7 +34,7 @@ pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # builds LspServer, stages se
 cd dotnet-port\vscode-nemerle
 npm ci
 npm run package                                    # lint + tests + verify-server + vsce package
-code --install-extension vscode-nemerle-0.4.0.vsix
+code --install-extension vscode-nemerle-0.5.0.vsix
 ```
 
 Then open a trusted folder containing a `.nproj` project. The server starts
@@ -73,8 +73,15 @@ are recoverable: a failed reload keeps the previous engine workspace.
 **Hover** (`textDocument/hover`) is available: hovering an identifier shows its
 type/signature (and documentation when present), converted from the engine's
 hints to markdown. It works across all project sources and resolved references,
-and reflects unsaved editor buffers. Completion and definition are the next work
-packages.
+and reflects unsaved editor buffers.
+
+**Completion** (`textDocument/completion`, triggered on `.` and as you type) is
+available: member completion after a receiver resolves against the receiver's
+type (including project references, NuGet packages, and types declared in other
+project sources), and global-scope completion offers keywords and visible
+symbols. Item documentation (overloads and XmlDoc summaries) is filled in on
+demand via `completionItem/resolve`. Completion reflects unsaved editor buffers.
+Definition/references are the next work package.
 
 ## Troubleshooting
 

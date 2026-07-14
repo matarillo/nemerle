@@ -10,6 +10,7 @@ internal static class Program
             EngineInputTests();
             WarningCodeTests();
             HoverMarkupTests();
+            CompletionMappingTests();
             PathNormalizerTests();
             await ErrorTests();
             await ProviderTests();
@@ -145,6 +146,41 @@ internal static class Program
         var withTicks = HoverMarkup.ToMarkdown("a ``` b");
         True(withTicks.StartsWith("````nemerle\n", StringComparison.Ordinal) && withTicks.EndsWith("\n````", StringComparison.Ordinal),
             "fence grows past an embedded backtick run");
+    }
+
+    private static void CompletionMappingTests()
+    {
+        // Glyph integers mirror Nemerle.Completion2.GlyphType (members spaced by
+        // 6, plus 205/206 for the snippet/keyword glyphs).
+        Equal(NemerleCompletionKind.Class, CompletionMapping.GlyphToKind(0), "class glyph");
+        Equal(NemerleCompletionKind.Constant, CompletionMapping.GlyphToKind(6), "const glyph");
+        Equal(NemerleCompletionKind.Class, CompletionMapping.GlyphToKind(12), "delegate glyph falls back to class");
+        Equal(NemerleCompletionKind.Enum, CompletionMapping.GlyphToKind(18), "enum glyph");
+        Equal(NemerleCompletionKind.EnumMember, CompletionMapping.GlyphToKind(24), "enum value glyph");
+        Equal(NemerleCompletionKind.Event, CompletionMapping.GlyphToKind(30), "event glyph");
+        Equal(NemerleCompletionKind.Field, CompletionMapping.GlyphToKind(42), "field glyph");
+        Equal(NemerleCompletionKind.Interface, CompletionMapping.GlyphToKind(48), "interface glyph");
+        Equal(NemerleCompletionKind.Variable, CompletionMapping.GlyphToKind(54), "block glyph maps to variable");
+        Equal(NemerleCompletionKind.Class, CompletionMapping.GlyphToKind(60), "variant glyph maps to class");
+        Equal(NemerleCompletionKind.EnumMember, CompletionMapping.GlyphToKind(66), "variant option glyph maps to enum member");
+        Equal(NemerleCompletionKind.Method, CompletionMapping.GlyphToKind(72), "method glyph");
+        Equal(NemerleCompletionKind.Function, CompletionMapping.GlyphToKind(78), "function glyph");
+        Equal(NemerleCompletionKind.Module, CompletionMapping.GlyphToKind(90), "namespace/operator glyph maps to module");
+        Equal(NemerleCompletionKind.Property, CompletionMapping.GlyphToKind(102), "property glyph");
+        Equal(NemerleCompletionKind.Struct, CompletionMapping.GlyphToKind(108), "struct glyph");
+        Equal(NemerleCompletionKind.Function, CompletionMapping.GlyphToKind(120), "macro glyph maps to function");
+        Equal(NemerleCompletionKind.Variable, CompletionMapping.GlyphToKind(138), "local glyph maps to variable");
+        Equal(NemerleCompletionKind.Keyword, CompletionMapping.GlyphToKind(205), "snippet glyph maps to keyword");
+        Equal(NemerleCompletionKind.Keyword, CompletionMapping.GlyphToKind(206), "keyword glyph");
+        Equal(NemerleCompletionKind.Text, CompletionMapping.GlyphToKind(999), "unknown glyph falls back to text");
+        Equal(NemerleCompletionKind.Text, CompletionMapping.GlyphToKind(-1), "negative glyph falls back to text");
+
+        // The completion detail/documentation carries the same VS2010 pseudo-markup
+        // as hover (LocalValue.MakeHint emits <lb/>, macro hints emit <keyword>),
+        // so it is stripped by the same pure function (WP-M3 acceptance 5).
+        Equal("(local) value : int\ndefined in M",
+            HoverMarkup.ToPlainText("(local) value : int<lb/>defined in M"),
+            "completion documentation reuses the hover markup stripper");
     }
 
     private static void PathNormalizerTests()
