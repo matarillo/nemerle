@@ -138,6 +138,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
+| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | 計画(2026-07-14) | 29-devenv2-plan.md(実装結果は 30-*.md 以降) |
 
 ## 作業ログ
 
@@ -615,3 +616,10 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   追加。`THIRD-PARTY-NOTICES.md` + `npm run verify-server` で同梱物の license 記録を
   機械検証する。全 build 0 warning、unit 21/21、Extension Host trusted 3/3 +
   untrusted 1/1 + vsix 1/1、npm/NuGet audit 0 件。詳細は `28-vscode-packaging-log.md`。
+- 2026-07-14: WP-L 完了を受け、次期フェーズ WP-M(.NET 10 Nemerle 開発環境2)を計画。
+  スコープは WP-M1 IDE/build parity(DefineConstants 配線・警告 N コード・server ログの
+  `window/logMessage` 化)→ WP-M2 hover → WP-M3 completion → WP-M4 definition/references →
+  WP-M5 incremental rebuild(engine 既存の relocation 経路の活用)→ WP-M6 `Nemerle.Sdk`
+  NuGet package + `dotnet new` template + toolchain provenance。semantic tokens /
+  formatting / multi-root / Linux 実地検証 / Marketplace は WP-M 完了後の優先順位リストへ。
+  詳細は `29-devenv2-plan.md`。

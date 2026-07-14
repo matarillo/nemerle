@@ -50,6 +50,9 @@ extension 0.4.0 は language server を VSIX の `server/` に同梱し（`pack-
 隔離 install の clean-machine 相当自動テスト、third-party notices の機械検証を持つ。
 実装・検証結果は `28-vscode-packaging-log.md` を参照。
 
+進捗更新 (2026-07-14): §11 の優先順位リストを具体化した後継計画は
+`29-devenv2-plan.md`(WP-M)を参照。
+
 ## 3. ゴール
 
 Windows 11、.NET 10 SDK、VS Code がある環境で、repository 内の SDK-style Nemerle project を
