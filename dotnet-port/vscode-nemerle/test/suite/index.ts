@@ -12,7 +12,9 @@ export function run(): Promise<void> {
     ? 'untrusted.test.js'
     : mode === 'vsix'
       ? 'vsix.test.js'
-      : 'extension.test.js';
+      : mode === 'sdk'
+        ? 'sdk.test.js'
+        : 'extension.test.js';
   mocha.addFile(path.resolve(__dirname, testFile));
 
   return new Promise((resolve, reject) => {

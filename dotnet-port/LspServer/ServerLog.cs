@@ -21,6 +21,7 @@ internal sealed class ServerLog
 {
     private readonly object _gate = new();
     private readonly List<LogMessageParams> _buffered = [];
+    private readonly List<ShowMessageParams> _bufferedShow = [];
     private ILanguageServerFacade? _server;
 
     /// <summary>Connects the log to the server facade and replays anything that
@@ -28,15 +29,20 @@ internal sealed class ServerLog
     public void Attach(ILanguageServerFacade server)
     {
         LogMessageParams[] pending;
+        ShowMessageParams[] pendingShow;
         lock (_gate)
         {
             _server = server;
             pending = [.. _buffered];
             _buffered.Clear();
+            pendingShow = [.. _bufferedShow];
+            _bufferedShow.Clear();
         }
 
         foreach (var message in pending)
             server.Window.LogMessage(message);
+        foreach (var message in pendingShow)
+            server.Window.ShowMessage(message);
     }
 
     /// <summary>Notable state changes worth surfacing by default.</summary>
@@ -50,6 +56,35 @@ internal sealed class ServerLog
 
     /// <summary>Recoverable failures (project query/apply failure).</summary>
     public void Error(string message) => Send(MessageType.Error, message);
+
+    /// <summary>
+    /// Puts a warning in front of the user (LSP 3.17 <c>window/showMessage</c>), which
+    /// vscode-languageclient renders as a notification. Reserved for conditions the user must
+    /// act on and would otherwise misdiagnose - currently only a toolchain/language-server
+    /// version mismatch (WP-M6, §6.8), whose symptom is an unexplained FileLoadException or
+    /// analysis that silently disagrees with `dotnet build`.
+    ///
+    /// This is why the extension needs no TypeScript for that warning: showMessage is a
+    /// protocol-level notification the client already handles, so the server can surface it
+    /// directly. Use sparingly - unlike <see cref="Warning"/> (Output Channel), this interrupts.
+    /// </summary>
+    public void ShowWarning(string message)
+    {
+        var payload = new ShowMessageParams { Type = MessageType.Warning, Message = message };
+        ILanguageServerFacade? server;
+        lock (_gate)
+        {
+            if (_server is null)
+            {
+                _bufferedShow.Add(payload);
+                return;
+            }
+
+            server = _server;
+        }
+
+        server.Window.ShowMessage(payload);
+    }
 
     /// <summary>
     /// A <see cref="TextWriter"/> that forwards whole lines to <see cref="Log"/>,

@@ -30,6 +30,10 @@ public static class MsBuildJsonParser
                 var platform = RequiredString(properties, "Platform");
                 var defineText = OptionalString(properties, "DefineConstants");
                 var additionalOptions = OptionalString(properties, "NemerleAdditionalOptions");
+                // Optional: a project built by some other means may not define it at all, and an
+                // unknown toolchain is not a reason to fail the query -- it only means the
+                // provenance check has nothing to compare (WP-M6).
+                var nccLayoutDir = OptionalString(properties, "NccLayoutDir");
 
                 var sources = ReadPaths(items, "NemerleCompile", static _ => true);
                 var references = ReadPaths(items, "ReferencePath", static item =>
@@ -62,7 +66,8 @@ public static class MsBuildJsonParser
                     defines,
                     optionSnapshot,
                     warnings,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    nccLayoutDir.Length == 0 ? string.Empty : ProjectPathNormalizer.NormalizeDirectory(nccLayoutDir));
             }
             catch (ProjectQueryException)
             {

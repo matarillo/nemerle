@@ -44,7 +44,14 @@ public sealed record NemerleProjectSnapshot(
     IReadOnlyList<string> DefineConstants,
     ProjectOptionSnapshot Options,
     IReadOnlyList<string> Warnings,
-    DateTimeOffset LoadedAtUtc);
+    DateTimeOffset LoadedAtUtc,
+    /// <summary>The compiler layout this project builds with ($(NccLayoutDir)): the repository's
+    /// dist\ncc, or a versioned folder in the NuGet global packages folder for a project using
+    /// the Nemerle Sdk package. Empty when the project does not define it. Used to compare the
+    /// toolchain's generation against the language server's own (WP-M6, 29-devenv2-plan.md
+    /// §6.8); mixed generations otherwise surface as FileLoadException, because Nemerle assembly
+    /// versions track the source generation.</summary>
+    string NccLayoutDir = "");
 
 public static class ProjectPathNormalizer
 {

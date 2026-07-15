@@ -138,7 +138,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-A3 | インプロセス MSBuild タスク(`Nemerle.Compiler.Hosting` / `Nemerle.MSBuild.Tasks`)— レベル A の残項目を分離・完遂 | —(計画後) | 完了(2026-07-13) | 20-inproc-task-plan.md / 20-inproc-task-log.md |
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
-| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | WP-M1〜M5 完了(2026-07-15)、WP-M6 計画 | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md / 34-devenv2-wp-m5-log.md |
+| WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | **WP-M1〜M6 完了(2026-07-15)= WP-M 完了** | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md / 34-devenv2-wp-m5-log.md / 35-devenv2-wp-m6-log.md |
 
 ## 作業ログ
 
@@ -693,3 +693,33 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   raw LSP 27/27(既存 23 + incremental 4)、bundled server 27/27、`ProjectInfo.Test` unit + integration、
   `npm test` 21/21、Extension Host trusted 4 + untrusted 1 + vsix 1、audit 0 件。
   詳細は `34-devenv2-wp-m5-log.md`。
+- 2026-07-15: WP-M6(`Nemerle.Sdk` NuGet package + project template + provenance)完了 =
+  **WP-M 完了**。(1) MSBuild project SDK 方式の **`Nemerle.Sdk.Unofficial`** と、別 package の
+  **`Nemerle.Templates.Unofficial`**(`nemerle-console` / `nemerle-classlib`)を
+  `pack-tool.ps1 -Pack` が生成。**repo checkout 無しで** `dotnet new nemerle-console` →
+  `dotnet build` → `dotnet run` が Windows・WSL の両方で成立(local feed のみ、実測)。
+  project file は `<Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">` + OutputType +
+  TargetFramework の 4 行で済む(`**/*.n` は SDK が glob)。
+  (2) **targets を 1 本に統合**。§6.7 は「Windows/Linux 2 系統を package 内で条件分岐統合」を
+  想定していたが、Linux 版は **importer がゼロ**・既定 layout dir(`msbuild/ncc/`)が不在の
+  デッドコードで、差分 3 点はいずれも不要と実測で判明(WSL の repo checkout ビルドが
+  Windows 版 targets の `../dist/ncc/` 既定でそのまま成功)。よって条件分岐ではなく**削除**し、
+  `msbuild/Nemerle.Core.targets` 1 本を repo(両 OS)と package が共有する
+  (package は**バイト同一**で同梱、test で assert)。既存 importer 14 本への影響ゼロ。
+  (3) 配布方針を Project Owner と合意: ID は既存 nuget.org 公開物(`Nemerle.Unofficial` 等、
+  1.2.547)と同じ「公式名 + `.Unofficial`」規約、version は同規約の `1.2.<Nemerle.dll revision>` +
+  prerelease label = `1.2.601-preview.1`(出所は恒久的事実なので ID、成熟度は一時的なので
+  prerelease label)。GitHub Packages は public でも PAT 必須のため不採用。公開は local feed 止まり(WP-N)。
+  (4) provenance: `dist/ncc/ncc-info.json` を追加し package にも同梱。snapshot に `NccLayoutDir` を
+  追加し、server が toolchain と自身の Nemerle.dll 版を比較して不一致時のみ
+  **`window/showMessage`(Warning)**。§6.8 は「extension が警告」を想定していたが showMessage は
+  protocol 通知なので server から直接出せ、**extension TS src 無変更**と受け入れ基準 6 を両立。
+  (5) 検証中に実バグ 2 件を発見・修正: 既存 project の Sdk 形式**変換**時に source が二重に渡る
+  (default glob を `Sdk.props` → `Sdk.targets` へ移し `Exclude="@(NemerleCompile)"`)、
+  macro library が compiler を参照できない(`<NemerleMacroLibrary>true</NemerleMacroLibrary>` を新設。
+  package 内 dll の path はユーザーには書けないため)。
+  ServerInfo/extension 0.8.0、compiler/engine 無改造で Stage リビルド不要(assembly version 601)。
+  raw LSP 29/29(既存 27 + provenance 2)、bundled server 29/29、`ProjectInfo.Test` unit + integration
+  (provenance / package layout / targets byte 同一性 / SDK 評価構造)、`npm test` 22/22、
+  Extension Host trusted 4 + untrusted 1 + **sdk 1(新規 `test:sdk`)** + vsix 1、audit 0 件、
+  `dotnet list package --vulnerable` 全 7 project clean。詳細は `35-devenv2-wp-m6-log.md`。

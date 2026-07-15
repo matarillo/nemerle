@@ -1,0 +1,128 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-M6: packages the already-built "dotnet ncc" layout (dotnet-port\dist\ncc, produced by
+    dotnet-port\pack-tool.ps1) plus the shared MSBuild logic into an MSBuild project SDK
+    package, so a Nemerle project can be built with no repository checkout at all:
+
+      <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">
+
+    Nothing is compiled here; like dotnet-port\Nemerle.Tool this project is pure repackaging of
+    pre-built bits (ncc\*.n is never touched by any C# build). Drive it through
+    dotnet-port\pack-tool.ps1 -Pack, which computes the version from the packaged compiler
+    itself; see the ValidateExplicitVersion target below.
+
+    Package ID (agreed with the Project Owner, 2026-07-15; recorded in
+    dotnet-port\35-devenv2-wp-m6-log.md): this is an UNOFFICIAL build of Nemerle, not a release
+    of the Nemerle project, and the ".Unofficial" suffix continues the naming already used for
+    this author's existing nuget.org packages (Nemerle.Unofficial, Nemerle.Compiler.Unofficial,
+    Nemerle.Macros.Unofficial, Nemerle.Compiler.Utils.Unofficial, all at 1.2.547). Provenance
+    ("who built this") is a permanent fact and belongs in the ID; maturity ("preview") is a
+    temporary one and belongs in the version's prerelease label, where NuGet treats it as a
+    first-class concept. Encoding maturity in the ID would force a rename of a project-SDK
+    identifier - which every consuming .nproj and global.json hardcodes - at exactly the moment
+    the thing became stable and widely used.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Nemerle.Sdk.Unofficial</PackageId>
+    <!-- Tells NuGet/the MSBuild SDK resolver this package is consumable via <Project Sdk="...">
+         / global.json's msbuild-sdks. -->
+    <PackageType>MSBuildSdk</PackageType>
+
+    <!-- Pure repackaging: no compile inputs, no lib/ output, no dependencies to declare. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <Authors>matarillo</Authors>
+    <Copyright>Copyright (c) 2003-2008 The University of Wroclaw. Copyright (c) 2008-2014 Nemerle Project Team.</Copyright>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/matarillo/nemerle</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/matarillo/nemerle</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>Nemerle;MSBuildSdk;compiler;unofficial</PackageTags>
+    <Description>UNOFFICIAL .NET 10 build of the Nemerle compiler, packaged as an MSBuild project SDK. Not a release of the Nemerle project. Provides &lt;Project Sdk="Nemerle.Sdk.Unofficial"&gt; for .nproj files: bundles ncc (self-hosted on .NET 10) and the in-process NccCompile MSBuild task, so `dotnet build` compiles .n sources with structured diagnostics and no repository checkout.</Description>
+
+    <!-- Expected for this package shape and deliberately silenced (same set as
+         dotnet-port\Nemerle.Tool): NU5100 = assemblies outside lib/ (they belong in tools/ and
+         tasks/ here, and are loaded by path, not by the NuGet reference machinery);
+         NU5128 = no lib/ref folder for the declared TFM (this package contributes build logic,
+         not compile-time references). -->
+    <NoWarn>$(NoWarn);NU5100;NU5128</NoWarn>
+
+    <!-- Where dotnet-port\pack-tool.ps1 wrote the runnable layout. Override with
+         -p:NccLayoutDir=... if built elsewhere. -->
+    <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)..\..\dist\ncc\</NccLayoutDir>
+    <NemerleMSBuildDir>$(MSBuildThisFileDirectory)..\..\msbuild\</NemerleMSBuildDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 1. The SDK entry points NuGet's MSBuild SDK resolver looks for, at the package root's
+            Sdk/ folder (this path is a hard convention, not a choice). -->
+    <None Include="$(NemerleMSBuildDir)sdk\Sdk.props;$(NemerleMSBuildDir)sdk\Sdk.targets"
+          Pack="true" PackagePath="Sdk/" Visible="false" />
+
+    <!-- 2. The actual build logic: the very same file a repo checkout imports
+            (dotnet-port\msbuild\Nemerle.Core.targets), shipped verbatim. Sdk.targets imports it
+            from ../targets/ after Microsoft.NET.Sdk. -->
+    <None Include="$(NemerleMSBuildDir)Nemerle.Core.targets"
+          Pack="true" PackagePath="targets/" Visible="false" />
+
+    <!-- 3. The in-process MSBuild task, loaded by <UsingTask AssemblyFile="..."> from
+            Sdk.props's $(NemerleTaskAssembly). Kept out of tools/ncc/ because MSBuild loads it
+            into its own task ALC, whereas everything in tools/ncc/ is loaded into the task's
+            private per-compilation ALC. -->
+    <None Include="$(NccLayoutDir)msbuild-task\Nemerle.MSBuild.Tasks.dll"
+          Pack="true" PackagePath="tasks/" Visible="false" />
+
+    <!-- 4. The compiler layout ($(NccLayoutDir) as seen by the consuming build). Mirrors
+            dist\ncc so NccCompile's same-directory ALC resolution (NccLoadContext.Load, which
+            requires Nemerle.Compiler.Hosting.dll to sit beside Nemerle.Compiler.dll) works
+            unchanged. Deliberately NOT included from dist\ncc: ncc.exe / ncc.cmd /
+            ncc.default.rsp / gen-default-rsp.ps1 (the CLI convenience wrappers - MSBuild calls
+            the compiler in-process, and ncc auto-resolves its reference set since the
+            LoadCoreStdlibReferences change, so the response file and its machine-specific
+            absolute paths are what would make this package non-relocatable) and
+            nunit.framework.dll (a stray from the Stage2 build output that pack-tool.ps1's
+            blanket *.dll copy picks up; the compiler does not load it). ncc-info.json is the
+            WP-M6 provenance record (§6.8). -->
+    <None Include="$(NccLayoutDir)ncc.dll;
+                   $(NccLayoutDir)ncc.runtimeconfig.json;
+                   $(NccLayoutDir)Nemerle.dll;
+                   $(NccLayoutDir)Nemerle.Compiler.dll;
+                   $(NccLayoutDir)Nemerle.Macros.dll;
+                   $(NccLayoutDir)Nemerle.CoreEmit.dll;
+                   $(NccLayoutDir)Nemerle.Compiler.Hosting.dll;
+                   $(NccLayoutDir)ncc-info.json"
+          Pack="true" PackagePath="tools/ncc/" Visible="false" />
+
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <Target Name="ValidateNccLayout" BeforeTargets="Build;Pack">
+    <Error Condition="!Exists('$(NccLayoutDir)ncc.dll')"
+           Text="NccLayoutDir ($(NccLayoutDir)) does not contain ncc.dll: run dotnet-port\pack-tool.ps1 first (or pass -p:NccLayoutDir=&lt;path&gt;)." />
+    <Error Condition="!Exists('$(NccLayoutDir)ncc-info.json')"
+           Text="NccLayoutDir ($(NccLayoutDir)) has no ncc-info.json provenance record: re-run dotnet-port\pack-tool.ps1 (WP-M6 added it; a layout packed by an older revision predates it)." />
+    <Error Condition="!Exists('$(NccLayoutDir)msbuild-task\Nemerle.MSBuild.Tasks.dll')"
+           Text="NccLayoutDir ($(NccLayoutDir)) has no msbuild-task\Nemerle.MSBuild.Tasks.dll: run dotnet-port\pack-tool.ps1 first." />
+  </Target>
+
+  <!-- The package version must describe the compiler actually inside the package
+       (1.2.<revision> of dist\ncc's Nemerle.dll, continuing the 1.2.547 scheme of the existing
+       Nemerle.*.Unofficial packages, plus a prerelease label). pack-tool.ps1 reads that
+       revision off the assembly and passes -p:Version=; deriving it here instead would mean
+       either re-implementing the read in MSBuild or letting the SDK's silent 1.0.0 default
+       through, and a wrong version is worse than a failed pack because NuGet caches by
+       (id, version) and would then serve these bits under a name that lies about them. -->
+  <Target Name="ValidateExplicitVersion" BeforeTargets="Pack">
+    <Error Condition="'$(Version)' == '1.0.0'"
+           Text="No -p:Version was supplied, so the SDK's 1.0.0 default is in effect. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which derives the version from the packaged compiler's own assembly version." />
+  </Target>
+
+</Project>

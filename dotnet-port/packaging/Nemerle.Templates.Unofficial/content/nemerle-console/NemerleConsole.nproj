@@ -1,0 +1,21 @@
+<Project Sdk="Nemerle.Sdk.Unofficial/__NEMERLE_SDK_VERSION__">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <!--
+    The SDK globs **/*.n into @(NemerleCompile) for you, the way Microsoft.NET.Sdk globs
+    **/*.cs, and defaults the properties every Nemerle project needs. To list sources by hand
+    instead, set <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems> and
+    add <NemerleCompile Include="..." /> items.
+
+    The project file must keep a non-.csproj extension (.nproj): a .csproj would make the .NET
+    SDK import C#'s compiler targets, and csc would try to compile these Nemerle sources.
+
+    Resolving the SDK requires a NuGet feed that serves Nemerle.Sdk.Unofficial. This is an
+    unofficial build of Nemerle, not a release of the Nemerle project.
+  -->
+
+</Project>

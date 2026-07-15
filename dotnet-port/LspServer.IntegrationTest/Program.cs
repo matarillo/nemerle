@@ -58,6 +58,10 @@ internal static class Program
                 IncrementalStructuralFallbackAsync);
             await RunScenarioAsync("Incremental vs full-reload edit-to-diagnostics measurement (Sokoban)",
                 IncrementalTimingAsync);
+            await RunScenarioAsync("Provenance: matching toolchain is logged and does not interrupt",
+                ProvenanceMatchAsync);
+            await RunScenarioAsync("Provenance: toolchain/server version mismatch raises window/showMessage",
+                ProvenanceMismatchAsync);
             await RunScenarioAsync("Incremental escape hatch off restores full-document sync + reload",
                 IncrementalDisabledAsync);
             Console.WriteLine("PASS all WP-L3 LSP integration scenarios");
@@ -1751,6 +1755,107 @@ internal static class Program
         }
 
         return (line, character);
+    }
+
+    // ----- WP-M6 provenance (acceptance 6) -----
+
+    /// <summary>
+    /// A project built with the repository's own dist\ncc - the same bits this server was
+    /// packed from - must report the toolchain at Info level and must NOT interrupt the user.
+    /// The negative half matters as much as the positive one: a warning that also fires on
+    /// correct setups is a warning nobody reads.
+    /// </summary>
+    private static async Task ProvenanceMatchAsync(LspTestClient client)
+    {
+        var dir = CreateTempDirectory("provenance-match");
+        var projectPath = Path.Combine(dir, "Temp.nproj");
+        var coreTargets = Path.Combine(_repoRoot, "dotnet-port", "msbuild", "Nemerle.Core.targets");
+        await File.WriteAllTextAsync(Path.Combine(dir, "probe.n"), "module Probe { Value : int = 1; }");
+        await File.WriteAllTextAsync(projectPath, TempProjectXml(coreTargets, ["probe.n"]));
+        RunDotnet($"restore \"{projectPath}\"", dir);
+
+        var mark = client.Mark();
+        AssertLoadedAndApplied(await LoadProjectAsync(client, projectPath), expectedSources: 1);
+
+        var logs = client.LogMessages(mark);
+        var matched = logs.Any(entry =>
+            entry.Message.Contains("nemerle project toolchain:", StringComparison.Ordinal) &&
+            entry.Message.Contains("matches the language server", StringComparison.Ordinal));
+        if (!matched)
+            throw new InvalidDataException(
+                "Expected an Info log naming the project's toolchain as matching. Logs: " +
+                string.Join(" | ", logs.Select(entry => $"[{entry.Type}] {entry.Message}")));
+
+        var shown = client.ShowMessages(mark);
+        if (shown.Count != 0)
+            throw new InvalidDataException(
+                "A same-generation toolchain must not raise window/showMessage, but got: " +
+                string.Join(" | ", shown.Select(entry => entry.Message)));
+    }
+
+    /// <summary>
+    /// A project whose $(NccLayoutDir) holds Nemerle bits of a different assembly version must
+    /// raise a user-facing window/showMessage naming both generations.
+    ///
+    /// Forcing the condition needs a Nemerle.dll whose version differs from the server's, and
+    /// the port only ever produces one generation at a time. So the fixture points
+    /// $(NccLayoutDir) at a directory holding some OTHER managed assembly renamed to
+    /// Nemerle.dll: the check reads the assembly version off that file, which is exactly the
+    /// identity a real mixed install would disagree on. This works because the project-info
+    /// query runs -target:ResolveReferences, which never invokes ncc - so the bogus layout is
+    /// never asked to compile anything.
+    /// </summary>
+    private static async Task ProvenanceMismatchAsync(LspTestClient client)
+    {
+        var dir = CreateTempDirectory("provenance-mismatch");
+        var fakeLayout = Path.Combine(dir, "fake-ncc");
+        Directory.CreateDirectory(fakeLayout);
+
+        // Any managed assembly with a version other than the port's 1.2.0.x will do; the test
+        // asserts on the versions it actually reads rather than hard-coding them.
+        var donor = typeof(System.Text.Json.JsonDocument).Assembly.Location;
+        var fakeNemerle = Path.Combine(fakeLayout, "Nemerle.dll");
+        File.Copy(donor, fakeNemerle, overwrite: true);
+        await File.WriteAllTextAsync(
+            Path.Combine(fakeLayout, "ncc-info.json"),
+            """{"commit":"0000000000000000000000000000000000000000","describe":"0000000","configuration":"Release"}""");
+
+        var fakeVersion = System.Reflection.AssemblyName.GetAssemblyName(fakeNemerle).Version!.ToString();
+        // Derive from _serverDll rather than assuming a path: this suite also runs against the
+        // server extracted from the VSIX (test-bundled-server.ps1), where it lives elsewhere.
+        var serverVersion = System.Reflection.AssemblyName
+            .GetAssemblyName(Path.Combine(Path.GetDirectoryName(_serverDll)!, "Nemerle.dll")).Version!.ToString();
+        if (fakeVersion == serverVersion)
+            throw new InvalidDataException("Fixture is not a mismatch: the donor assembly happens to share the server's version.");
+
+        var coreTargets = Path.Combine(_repoRoot, "dotnet-port", "msbuild", "Nemerle.Core.targets");
+        var projectPath = Path.Combine(dir, "Temp.nproj");
+        await File.WriteAllTextAsync(Path.Combine(dir, "probe.n"), "module Probe { Value : int = 1; }");
+        // NccLayoutDir set in the project body wins over the targets' Condition-guarded default.
+        await File.WriteAllTextAsync(
+            projectPath,
+            TempProjectXml(coreTargets, ["probe.n"])
+                .Replace(
+                    "<OutputType>Library</OutputType>",
+                    $"<OutputType>Library</OutputType>{Environment.NewLine}    <NccLayoutDir>{fakeLayout}{Path.DirectorySeparatorChar}</NccLayoutDir>",
+                    StringComparison.Ordinal));
+        RunDotnet($"restore \"{projectPath}\"", dir);
+
+        var mark = client.Mark();
+        await LoadProjectAsync(client, projectPath);
+
+        var shown = client.ShowMessages(mark);
+        var warning = shown.FirstOrDefault(entry => entry.Message.Contains("version mismatch", StringComparison.Ordinal));
+        if (warning.Message is null)
+            throw new InvalidDataException(
+                "Expected a window/showMessage warning about the toolchain mismatch, got: " +
+                string.Join(" | ", shown.Select(entry => $"[{entry.Type}] {entry.Message}")));
+        if (warning.Type != 2)
+            throw new InvalidDataException($"Expected MessageType.Warning (2) for the mismatch, got {warning.Type}.");
+        if (!warning.Message.Contains(fakeVersion, StringComparison.Ordinal) ||
+            !warning.Message.Contains(serverVersion, StringComparison.Ordinal))
+            throw new InvalidDataException(
+                $"The warning must name both generations ({fakeVersion} and {serverVersion}), got: {warning.Message}");
     }
 
     // ----- helpers -----

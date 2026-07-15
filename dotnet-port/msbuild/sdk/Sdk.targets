@@ -1,0 +1,63 @@
+<Project>
+  <!--
+    Nemerle.Sdk.Unofficial - MSBuild project SDK entry point (targets half).
+    WP-M6, dotnet-port\29-devenv2-plan.md §6.7. See Sdk.props for the rationale.
+
+    Import order is the whole point of this file:
+
+      1. Microsoft.NET.Sdk's Sdk.targets, which brings in Microsoft.Common.targets and (for a
+         .csproj, but NOT for our .nproj) the language-specific targets. It is what defines
+         @(IntermediateAssembly), CopyFilesToOutputDirectory, Clean, the incremental build
+         machinery, and - for a .csproj - a csc-based CoreCompile.
+      2. Nemerle.Core.targets, whose CoreCompile therefore lands LAST and wins. That is the
+         very same file a repository checkout imports directly (dotnet-port\msbuild\
+         Nemerle.Core.targets), shipped here verbatim at targets/; the package and the checkout
+         cannot drift apart because there is nothing to drift.
+
+    Getting this backwards is exactly the failure mode recorded in
+    dotnet-port\DISTRIBUTION.md task 3 (csc runs and reports CS5001 on Nemerle sources).
+  -->
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+  <!--
+    Default source glob: **/*.n into @(NemerleCompile), so an SDK-based project needs no
+    ItemGroup at all, mirroring Microsoft.NET.Sdk's **/*.cs.
+
+    It lives HERE rather than in Sdk.props, and subtracts @(NemerleCompile), for a reason worth
+    stating: MSBuild evaluates items (pass 3) in document order, and Sdk.props precedes the
+    project body. A glob there therefore runs BEFORE the body's own <NemerleCompile Include>
+    items, cannot see them, and the two sets add up - so a project that lists its sources by
+    hand (every pre-SDK Nemerle project does, and converting one is the documented migration
+    path) passes each file to ncc twice and fails with "file 'X.n' occured twice on the list to
+    compile", pointing at the compiler rather than at the cause.
+
+    Microsoft.NET.Sdk hits the same ordering and answers it by detecting the collision and
+    erroring (NETSDK1022: remove the items, or set EnableDefaultCompileItems=false). Importing
+    after the body lets us do better than an error: the Exclude sees the explicit items and
+    simply yields to them, so hand-listed sources keep working and the glob quietly fills in
+    the rest. NemerleCheckForDuplicateCompileItems in Nemerle.Core.targets still catches what
+    Exclude cannot match by string (e.g. an item written as an absolute path).
+  -->
+  <ItemGroup Condition="'$(EnableDefaultNemerleCompileItems)' == 'true'">
+    <NemerleCompile Include="**/*.n"
+                    Exclude="@(NemerleCompile);$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)" />
+  </ItemGroup>
+
+  <!-- Guard-rail for the one project shape this SDK cannot rescue: a .csproj gets
+       Microsoft.CSharp.CurrentVersion.targets (and its csc CoreCompile) from the import above,
+       which would then be overridden by ours in a way that leaves csc's other language targets
+       half-applied. Fail loudly and early with the actionable fix instead of emitting a
+       confusing CS5001 from a compiler the user never asked for. -->
+  <Target Name="NemerleValidateProjectExtension" BeforeTargets="CoreCompile">
+    <Error Condition="'$(MSBuildProjectExtension)' == '.csproj'"
+           Text="Nemerle.Sdk.Unofficial cannot be used from a .csproj: the .NET SDK selects its C# targets (including a csc CoreCompile) from the project extension. Rename the project file to .nproj." />
+  </Target>
+
+  <!-- targets/ is a deliberately NON-conventional folder. Putting this under build/ with the
+       package-id name (build/Nemerle.Sdk.Unofficial.targets) would make NuGet auto-inject it
+       into the consuming project's build - which is precisely the mechanism that lets csc's
+       CoreCompile win (DISTRIBUTION.md task 3). We want to control the import ourselves. -->
+  <Import Project="$(MSBuildThisFileDirectory)../targets/Nemerle.Core.targets" />
+
+</Project>

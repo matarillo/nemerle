@@ -1,4 +1,4 @@
-# Nemerle for VS Code (developer preview, WP-L4 build)
+# Nemerle for VS Code (developer preview, WP-M6 build)
 
 Language support for Nemerle on .NET 10: `.n` language registration, syntax
 highlighting, editing configuration, and project-aware diagnostics from the
@@ -17,12 +17,31 @@ overriding disk content.
   `dotnet --list-runtimes` and reports an actionable error if no
   `Microsoft.NETCore.App 10.x` runtime is found.
 - To **build** Nemerle projects (and for the MSBuild project queries the
-  server relies on) you need the .NET 10 SDK plus this repository's compiler
-  toolchain: `dotnet-port\dist\ncc` (`pack-tool.ps1`) and
-  `dotnet-port\msbuild\Nemerle.Core.targets` imported by your `.nproj`.
-  A standalone `Nemerle.Sdk` NuGet package is planned as a separate work
-  package; until then the developer preview assumes a repository checkout for
-  the build toolchain (the language server itself does not need one).
+  server relies on) you need the .NET 10 SDK plus a Nemerle compiler
+  toolchain. Either:
+  - the **`Nemerle.Sdk.Unofficial` NuGet package** (no repository checkout):
+
+    ```xml
+    <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">
+      <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+      </PropertyGroup>
+    </Project>
+    ```
+
+    It is currently published to a local feed only, produced by
+    `pwsh dotnet-port\pack-tool.ps1 -Pack` into `dotnet-port\dist\nupkg`;
+    point a `NuGet.config` at that directory. `dotnet new install
+    Nemerle.Templates.Unofficial::<version>` adds `nemerle-console` /
+    `nemerle-classlib` templates. See `dotnet-port\DISTRIBUTION.md`.
+  - or a repository checkout: `dotnet-port\dist\ncc` (`pack-tool.ps1`) plus
+    `<Import Project="...\dotnet-port\msbuild\Nemerle.Core.targets" />` in your
+    `.nproj`. This is the same build logic; the package just ships it.
+
+  The project file must not use the `.csproj` extension either way (the .NET
+  SDK would import C#'s compiler targets and try to compile `.n` with csc);
+  use `.nproj`.
 
 ## Install (developer preview)
 
@@ -34,7 +53,7 @@ pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # builds LspServer, stages se
 cd dotnet-port\vscode-nemerle
 npm ci
 npm run package                                    # lint + tests + verify-server + vsce package
-code --install-extension vscode-nemerle-0.7.0.vsix
+code --install-extension vscode-nemerle-0.8.0.vsix
 ```
 
 Then open a trusted folder containing a `.nproj` project. The server starts
@@ -114,11 +133,15 @@ packages.
   failures (missing SDK, unrestored NuGet packages, broken `.nproj`) are
   reported there and do not stop the server. Loose-file diagnostics keep
   working.
-- **`FileLoadException` mentioning Nemerle assemblies** — the bundled server
-  and the workspace's `dist/ncc` toolchain were built from different commits
-  (Nemerle assembly versions derive from `git describe`). Rebuild both from
-  the same commit; `server/bundle-info.json` records the commit the bundle was
-  packed from.
+- **"Nemerle toolchain/language server version mismatch"** — the bundled server
+  and the toolchain your project builds with come from different generations
+  (Nemerle assembly versions track the source generation, so mixing them can
+  also surface as a bare `FileLoadException`). The notification names both
+  versions. Rebuild or repack both from the same commit: `server/bundle-info.json`
+  records the server's generation and the toolchain's `ncc-info.json` (in
+  `dist/ncc`, or `tools/ncc/` inside `Nemerle.Sdk.Unofficial`) records its own.
+  The server logs both at startup and on every project load, so the output
+  channel shows them even when they agree.
 - **Nothing starts** — check that the workspace is trusted and open the
   `Nemerle Language Server` output channel (`Nemerle: Show Output`).
 
@@ -130,6 +153,8 @@ npm run check-types
 npm run lint
 npm test                 # unit tests (includes packaging-structure checks)
 npm run test:integration # trusted + untrusted Extension Host tests
+npm run test:sdk         # Extension Host against a project built from the Nemerle.Sdk package
+                         # (needs `pwsh dotnet-port\pack-tool.ps1 -Pack`; generates test-workspace-sdk/)
 npm run package          # VSIX (requires server/ staged by pack-server.ps1)
 npm run test:vsix        # installs the VSIX into isolated dirs; bundled server end-to-end
 pwsh .\test-bundled-server.ps1  # raw LSP suite against the server extracted from the VSIX

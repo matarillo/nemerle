@@ -59,7 +59,13 @@ public sealed class MsBuildProjectQuery : IProjectSnapshotLoader
             "-verbosity:quiet",
             "-target:ResolveReferences",
             "-getItem:NemerleCompile,ReferencePath,NemerleMacroReference",
-            "-getProperty:MSBuildProjectFullPath,MSBuildProjectDirectory,TargetFramework,Configuration,Platform,DefineConstants,NemerleAdditionalOptions",
+            // NccLayoutDir (WP-M6): the compiler layout this project actually builds with -- the
+            // repo's dist\ncc, or a versioned directory inside the global packages folder when
+            // the project uses the Nemerle.Sdk package. The server reads its provenance from
+            // there to detect a toolchain/server generation mismatch (29-devenv2-plan.md §6.8).
+            // Asking MSBuild is the only honest way to know: it is a property the project,
+            // global.json, the SDK package or the command line may each have set.
+            "-getProperty:MSBuildProjectFullPath,MSBuildProjectDirectory,TargetFramework,Configuration,Platform,DefineConstants,NemerleAdditionalOptions,NccLayoutDir",
             "-property:Configuration=" + key.Configuration,
             "-property:Platform=" + key.Platform,
         };

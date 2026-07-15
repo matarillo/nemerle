@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "matarillo",
+  "classifications": [ "Console", "Nemerle" ],
+  "identity": "Nemerle.Templates.Unofficial.Console",
+  "name": "Nemerle Console Application (unofficial)",
+  "description": "A Nemerle console project that builds with the unofficial .NET 10 Nemerle compiler via Nemerle.Sdk.Unofficial. Requires a NuGet feed that serves that package.",
+  "shortName": "nemerle-console",
+  "tags": {
+    "language": "Nemerle",
+    "type": "project"
+  },
+  "sourceName": "NemerleConsole",
+  "defaultName": "NemerleConsole",
+  "preferNameDirectory": true,
+  "primaryOutputs": [
+    { "path": "NemerleConsole.nproj" }
+  ],
+  "symbols": {
+    "sdkVersion": {
+      "type": "parameter",
+      "datatype": "string",
+      "description": "Version of Nemerle.Sdk.Unofficial the generated project pins in its Sdk attribute.",
+      "defaultValue": "__NEMERLE_SDK_VERSION__",
+      "replaces": "__NEMERLE_SDK_VERSION__"
+    },
+    "framework": {
+      "type": "parameter",
+      "datatype": "choice",
+      "choices": [
+        { "choice": "net10.0", "description": "Target .NET 10" }
+      ],
+      "defaultValue": "net10.0",
+      "replaces": "net10.0",
+      "description": "The target framework for the project."
+    }
+  }
+}

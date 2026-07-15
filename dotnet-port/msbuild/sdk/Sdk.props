@@ -1,0 +1,87 @@
+<Project>
+  <!--
+    Nemerle.Sdk.Unofficial - MSBuild project SDK entry point (props half).
+    WP-M6, dotnet-port\29-devenv2-plan.md §6.7.
+
+    Consumed as:
+      <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">
+    or with the version pinned in global.json:
+      { "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "1.2.601-preview.1" } }
+      <Project Sdk="Nemerle.Sdk.Unofficial">
+
+    Why a project SDK (Sdk/Sdk.props + Sdk/Sdk.targets) and NOT the build/<id>.targets NuGet
+    convention: build/ props+targets are injected around an EXISTING SDK's build, and the
+    trailing implicit "Sdk.targets" import of that SDK would define its own csc-based
+    CoreCompile AFTER ours, which wins (last same-named target definition wins in MSBuild).
+    That is the same conflict documented in dotnet-port\DISTRIBUTION.md task 3. A project SDK
+    lets us import Microsoft.NET.Sdk explicitly and place the Nemerle CoreCompile last, on our
+    own terms (the microsoft/MSBuildSdks NoTargets/Traversal pattern).
+
+    Note the project file must still NOT be named *.csproj: Microsoft.NET.Sdk picks its
+    language target set from $(MSBuildProjectExtension), and a .csproj would pull in
+    Microsoft.CSharp.CurrentVersion.targets (and its CoreCompile) from inside the import below.
+    Use .nproj. See Sdk.targets for the corresponding note.
+  -->
+
+  <PropertyGroup>
+    <!-- Where this package's compiler layout lives. Laid out by dotnet-port\pack-tool.ps1 to
+         mirror dist\ncc (ncc.dll + Nemerle*.dll + Nemerle.Compiler.Hosting.dll), so the
+         in-process task's same-directory AssemblyLoadContext resolution works unchanged.
+         Every path here is relative to this file, so the package is relocatable - which is
+         mandatory: NuGet extracts it into the machine's global packages folder, whose location
+         is not knowable at pack time. -->
+    <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)../tools/ncc/</NccLayoutDir>
+    <NemerleTaskAssembly Condition="'$(NemerleTaskAssembly)' == ''">$(MSBuildThisFileDirectory)../tasks/Nemerle.MSBuild.Tasks.dll</NemerleTaskAssembly>
+    <NemerleLayoutHint Condition="'$(NemerleLayoutHint)' == ''">the Nemerle.Sdk.Unofficial package looks incomplete; clear the NuGet cache for it and restore again</NemerleLayoutHint>
+    <!-- Provenance of the compiler inside this package (commit/describe/packedAtUtc), written
+         by pack-tool.ps1. Surfaced so a project can point tooling at it. -->
+    <NemerleSdkProvenanceFile Condition="'$(NemerleSdkProvenanceFile)' == ''">$(NccLayoutDir)ncc-info.json</NemerleSdkProvenanceFile>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Defaults that every Nemerle project needs and that the samples have all been setting by
+         hand since WP-I2; an SDK exists precisely so they do not have to. All are overridable
+         from the project body: MSBuild evaluates every property (pass 1) before any item
+         (pass 3), so a body-level assignment still wins over these Condition-guarded defaults.
+
+         EnableDefaultCompileItems=false : Nemerle .n sources are NOT C#; keep the SDK's own
+                                           **/*.cs glob out of the picture entirely.
+         UseAppHost=false                : ncc emits a managed PE directly runnable via
+                                           "dotnet <dll>"; no native apphost is needed
+                                           (dotnet-port\DISTRIBUTION.md §1).
+         GenerateDependencyFile=false    : LOAD-BEARING, not a tidy-up. Nemerle.dll and friends
+                                           are copied next to the output by
+                                           NemerleCopyRuntimeAssemblies rather than flowing
+                                           through the package graph, so they are absent from
+                                           any generated deps.json - and when a deps.json IS
+                                           present the host builds its assembly list from it and
+                                           ignores unlisted files sitting beside the app, so the
+                                           program would fail at run time with a missing
+                                           Nemerle.dll. Without deps.json the host falls back to
+                                           probing the application directory, which finds them.
+                                           Every sample .nproj has set this since WP-I2 for the
+                                           same reason. The principled fix is to ship the
+                                           Nemerle runtime as a real PackageReference so it
+                                           lands in deps.json legitimately; that needs a
+                                           published net10.0 runtime package (WP-N). -->
+    <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
+    <UseAppHost Condition="'$(UseAppHost)' == ''">false</UseAppHost>
+    <GenerateDependencyFile Condition="'$(GenerateDependencyFile)' == ''">false</GenerateDependencyFile>
+  </PropertyGroup>
+
+  <!-- Microsoft.NET.Sdk supplies everything that is not Nemerle-specific: TargetFramework
+       handling, NuGet restore, ResolveAssemblyReferences, @(IntermediateAssembly),
+       CopyFilesToOutputDirectory, Clean, and so on. Imported explicitly (rather than being
+       layered on top of implicitly) so that Sdk.targets can place the Nemerle CoreCompile
+       after the SDK's own. -->
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+
+  <PropertyGroup>
+    <EnableDefaultNemerleCompileItems Condition="'$(EnableDefaultNemerleCompileItems)' == ''">true</EnableDefaultNemerleCompileItems>
+  </PropertyGroup>
+
+  <!-- The default **/*.n glob deliberately lives in Sdk.targets, NOT here. See the comment
+       there: globbing in props (where Microsoft.NET.Sdk does its own **/*.cs) would duplicate
+       any source a project also lists by hand. -->
+
+</Project>

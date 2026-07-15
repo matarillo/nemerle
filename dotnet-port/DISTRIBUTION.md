@@ -47,6 +47,21 @@
 > project-aware diagnostics が VS Code extension 0.3.0 で動く。development VSIX が
 > server を同梱しない点は変わらず WP-L4。詳細は `27-vscode-project-workspace-log.md`。
 
+> **更新 (2026-07-15, WP-M6 — Nemerle.Sdk NuGet 化)**: 本文書の中心的な前提
+> 「toolchain は repo checkout(`dist/ncc` + `Nemerle.Core.targets` の `<Import>`)が要る」は
+> **もう当てはまらない**。`pwsh dotnet-port\pack-tool.ps1 -Pack` が **MSBuild project SDK
+> パッケージ `Nemerle.Sdk.Unofficial`** と **`dotnet new` テンプレート
+> `Nemerle.Templates.Unofficial`** を生成し、repo checkout 無しで
+> `dotnet new nemerle-console` → `dotnet build` → `dotnet run` が成立する
+> (Windows / WSL 実測)。project は `<Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">`
+> の1行だけで済み、`<Import>`・`@(NemerleCompile)`・定型 property は不要
+> (`**/*.n` は SDK が glob する)。また **Windows/Linux 2 本あった targets は 1 本に統合**され、
+> package はその同一ファイルを同梱する(下記「3. SDK スタイル MSBuild 統合」の
+> `msbuild/linux/` に関する記述は無効。あの派生は importer ゼロのデッドコードだった)。
+> 併せて `dist/ncc/ncc-info.json`(provenance)を追加し、server 側 `bundle-info.json` と
+> 突き合わせて世代混在を検出する。公開は local feed 止まり(nuget.org 公開は WP-N)。
+> 詳細は `35-devenv2-wp-m6-log.md`。
+
 > **更新 (2026-07-14, WP-L4 — bundled VSIX packaging)**: VS Code extension 0.4.0 は
 > `dotnet-port\vscode-nemerle\pack-server.ps1` が staging する LspServer Release 出力
 > ディレクトリ全体を VSIX の `server/` に同梱し、既定で bundled server を起動する
@@ -338,12 +353,19 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
   `ReferencePath` resolved assembly の両方を実測済み**。
 - ~~`dotnet clean` の bin\ 削除、`-debug`/PDB 配線、マルチプロジェクトビルド~~ →
   **完了 (0de978022)**。clean/PDB 配線済み、複数プロジェクト(MathLib→App)も RefDemo で実証。
-- **Linux/Unix 対応**: `dotnet-port\msbuild\linux\Nemerle.Core.targets` を追加 (253d2ecb3)。
-  NccLayoutDir 既定 `../ncc/`・`dotnet exec ncc.dll` 起動・スラッシュパスのみが Windows 版との差分。
-  **WSL で end-to-end 実証済み**: Windows でビルドした core ncc の DLL 群がそのまま Linux で動作し、
+- ~~**Linux/Unix 対応**: `dotnet-port\msbuild\linux\Nemerle.Core.targets` を追加 (253d2ecb3)。
+  NccLayoutDir 既定 `../ncc/`・`dotnet exec ncc.dll` 起動・スラッシュパスのみが Windows 版との差分~~
+  → **WP-M6 で撤去**。この派生を `<Import>` している .nproj / script / test は**1つも無く**、
+  既定にしていた layout dir `msbuild/ncc/` は存在すらしなかった。WSL の実証は samples が import
+  している **Windows 版**を経由しており(MSBuild は Unix で `\` を正規化する)、
+  `../dist/ncc/` 既定は Linux でそのまま機能していた。3つの差分は条件分岐ではなく**削除**で解消し
+  (layout dir は property、`dotnet exec` は全 OS 共通、パスは `/` に統一)、
+  `msbuild\Nemerle.Core.targets` 1 本を Windows・Linux・NuGet package が共有する。
+  **WSL で再実証済み**: Windows でビルドした core ncc の DLL 群がそのまま Linux で動作し、
   `dotnet build HelloCore.nproj` → 実行まで成功(PDB・ランタイム dll コピー含む)。生の CLI
   (`dotnet exec ncc.dll hello.n`)は生成 exe 隣の `Nemerle.dll` 不足で実行時エラー(OS 非依存の
-  既知 gap)だが、MSBuild 統合は自動コピーで解消。
+  既知 gap)だが、MSBuild 統合は自動コピーで解消。Linux で repo checkout を使う場合の layout は
+  Windows と同じ `dotnet-port/dist/ncc/`(`msbuild/ncc/` ではない)。
 - `.nproj` 拡張子を使う制約そのものは実用上大きな障害ではない(Visual Studio 等の IDE 統合まで
   考えるなら別途「Nemerle 言語 SDK」相当が必要になるが、CLI ビルドの範囲では `.nproj` で十分機能する)。
 
@@ -356,6 +378,9 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 | `dotnet <layout>\ncc.dll` 配布レイアウト | **完全動作** | `pack-tool.ps1` で再現可、hello.n/hello2.n 実証済み |
 | `dotnet tool` 化 | **PoC 成功**(C# シム経由) | install→実行の手順を記載、実証済み |
 | SDK スタイル MSBuild 統合 | **動作**(`.nproj` 拡張子。参照/PDB/clean/マルチプロジェクト/Linux 対応済み) | Windows・WSL で `dotnet build`→実行を実証 |
+| **`Nemerle.Sdk.Unofficial` NuGet package(WP-M6)** | **動作**(repo checkout 不要。project SDK 方式) | `pack-tool.ps1 -Pack` → local feed。repo 外空 dir と WSL で `dotnet new`→build→run を実証(`35-devenv2-wp-m6-log.md`) |
+| **`Nemerle.Templates.Unofficial`(WP-M6)** | **動作**(`nemerle-console` / `nemerle-classlib`) | 同上 |
+| **provenance(WP-M6)** | **動作**(`ncc-info.json` ↔ `bundle-info.json`) | 版不一致で server が `window/showMessage` 警告、同一版では無警告(LSP integration 2 シナリオ) |
 | インプロセス MSBuild タスク(WP-A3) | **動作**(構造化診断、ALC 隔離、Exec フォールバック付き) | HelloCore/RefDemo/一時診断プロジェクトで実証(`20-inproc-task-log.md`) |
 | 既存 CLR4 ビルド(`NemerleAll.nproj`/`build-stage2-core.ps1`) | **無改造・無回帰** | 新規ファイルのみ追加(`.gitignore` のみ既存ファイルに軽微な追記) |
 

@@ -14,10 +14,14 @@ internal static class Program
             GotoMappingTests();
             IncrementalSyncTests();
             PathNormalizerTests();
+            ToolchainProvenanceTests();
             await ErrorTests();
             await ProviderTests();
             if (args.Contains("--integration", StringComparer.Ordinal))
+            {
                 await SampleIntegrationTests();
+                await SdkPackageTests();
+            }
             Console.WriteLine(args.Contains("--integration", StringComparer.Ordinal)
                 ? "PASS project info unit + sample integration tests"
                 : "PASS project info unit tests");
@@ -408,6 +412,169 @@ internal static class Program
         True(snapshots[2].AssemblyReferences.All(path => !path.Contains("Microsoft.NETCore.App.Ref", StringComparison.OrdinalIgnoreCase)), "Package fixture framework facades excluded");
         True(snapshots[3].MacroReferences.Any(path => path.EndsWith("SokobanMacros.dll", StringComparison.OrdinalIgnoreCase)), "Sokoban macro output");
         True(snapshots[3].AssemblyReferences.All(path => !path.EndsWith("SokobanMacros.dll", StringComparison.OrdinalIgnoreCase)), "Sokoban macro output not assembly reference");
+    }
+
+    /// <summary>
+    /// WP-M6 (§6.8): the toolchain/server generation comparison. The rule under test is that
+    /// only a positive disagreement between two KNOWN assembly versions warns - absence of
+    /// evidence must stay silent, or the warning becomes noise users learn to dismiss.
+    /// </summary>
+    private static void ToolchainProvenanceTests()
+    {
+        var server = new NemerleProvenance("5b5e0e4f6dcea9278e469cb377a4b45830ed1b03", "5b5e0e4f6", "1.2.0.601", "language server");
+        var same = new NemerleProvenance("5b5e0e4f6dcea9278e469cb377a4b45830ed1b03", "5b5e0e4f6", "1.2.0.601", "dist/ncc");
+        var older = new NemerleProvenance("aaaaaaaaabbbbbbbbbccccccccc", "aaaaaaaaa", "1.2.0.547", "dist/ncc");
+
+        True(ToolchainProvenance.DescribeMismatch(server, same) is null, "same assembly version does not warn");
+
+        var mismatch = ToolchainProvenance.DescribeMismatch(server, older);
+        True(mismatch is not null, "different assembly versions warn");
+        True(mismatch!.Contains("1.2.0.547", StringComparison.Ordinal) && mismatch.Contains("1.2.0.601", StringComparison.Ordinal),
+            "the warning names BOTH generations (naming one is what the raw FileLoadException already does)");
+
+        // Unknown on either side means "no evidence", not "mismatch".
+        True(ToolchainProvenance.DescribeMismatch(server, NemerleProvenance.Unknown) is null, "unknown toolchain does not warn");
+        True(ToolchainProvenance.DescribeMismatch(NemerleProvenance.Unknown, older) is null, "unknown server does not warn");
+        True(ToolchainProvenance.DescribeMismatch(
+                server with { AssemblyVersion = "" },
+                older with { AssemblyVersion = "" }) is null,
+            "two unreadable versions do not warn even when commits differ");
+
+        // Differing commits at the same assembly version are NOT a load hazard (the version is
+        // what binding uses), so they must not warn either.
+        True(ToolchainProvenance.DescribeMismatch(server, same with { Commit = "0123456789abcdef" }) is null,
+            "same version with a different commit does not warn");
+
+        Equal("1.2.0.601 (5b5e0e4f6, language server)", server.Describe_Short(), "short provenance rendering");
+        True(!NemerleProvenance.Unknown.IsKnown, "empty provenance is not known");
+
+        // Reading a directory that has neither a json nor a Nemerle.dll yields Unknown rather
+        // than throwing: a missing diagnostic aid must never break a session.
+        var empty = ToolchainProvenance.Read(Path.GetTempPath(), "definitely-not-there.json", "test");
+        True(!empty.IsKnown, "absent provenance reads as unknown");
+        True(!ToolchainProvenance.Read(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()), "ncc-info.json", "test").IsKnown,
+            "nonexistent directory reads as unknown");
+    }
+
+    /// <summary>
+    /// WP-M6: the Nemerle.Sdk.Unofficial package as an artifact. Asserts the two things that
+    /// silently produce a broken package rather than a failed pack - the nupkg entry layout
+    /// (Sdk/, targets/, tasks/, tools/ncc/ at the exact paths Sdk.props/Sdk.targets reference)
+    /// and the import structure of an SDK-based project (§8: Microsoft.NET.Sdk-derived and
+    /// Nemerle-derived properties coexisting, with the Nemerle CoreCompile winning).
+    /// Requires `pwsh dotnet-port\pack-tool.ps1 -Pack` to have run.
+    /// </summary>
+    private static async Task SdkPackageTests()
+    {
+        var root = FindRepositoryRoot();
+        var feed = Path.Combine(root, "dotnet-port", "dist", "nupkg");
+        var packages = Directory.Exists(feed)
+            ? Directory.GetFiles(feed, "Nemerle.Sdk.Unofficial.*.nupkg")
+            : [];
+        if (packages.Length == 0)
+        {
+            Console.WriteLine("SKIP Sdk package tests (no Nemerle.Sdk.Unofficial nupkg; run pack-tool.ps1 -Pack)");
+            return;
+        }
+
+        var nupkg = packages.OrderBy(static path => path, StringComparer.Ordinal).Last();
+        using (var archive = System.IO.Compression.ZipFile.OpenRead(nupkg))
+        {
+            var entries = archive.Entries.Select(static e => e.FullName).ToArray();
+            foreach (var required in new[]
+                     {
+                         "Sdk/Sdk.props",
+                         "Sdk/Sdk.targets",
+                         "targets/Nemerle.Core.targets",
+                         "tasks/Nemerle.MSBuild.Tasks.dll",
+                         "tools/ncc/ncc.dll",
+                         "tools/ncc/Nemerle.dll",
+                         "tools/ncc/Nemerle.Compiler.dll",
+                         "tools/ncc/Nemerle.Macros.dll",
+                         "tools/ncc/Nemerle.CoreEmit.dll",
+                         "tools/ncc/Nemerle.Compiler.Hosting.dll",
+                         "tools/ncc/ncc-info.json",
+                     })
+                True(entries.Contains(required, StringComparer.Ordinal), $"package contains {required}");
+
+            // The CLI wrappers bake machine-specific absolute paths into ncc.default.rsp, which
+            // would make the package non-relocatable; nunit is a stray of pack-tool.ps1's
+            // blanket *.dll copy of the Stage2 output. Neither belongs in a nupkg.
+            foreach (var unwanted in new[] { "tools/ncc/ncc.default.rsp", "tools/ncc/ncc.cmd", "tools/ncc/gen-default-rsp.ps1", "tools/ncc/nunit.framework.dll", "tools/ncc/ncc.exe" })
+                True(!entries.Contains(unwanted, StringComparer.Ordinal), $"package excludes {unwanted}");
+
+            // The shipped build logic must be the same file the repo checkout imports: the whole
+            // point of the WP-M6 consolidation is that there is nothing to drift.
+            var shipped = archive.GetEntry("targets/Nemerle.Core.targets")!;
+            using var reader = new StreamReader(shipped.Open());
+            var shippedText = await reader.ReadToEndAsync();
+            var repoText = await File.ReadAllTextAsync(Path.Combine(root, "dotnet-port", "msbuild", "Nemerle.Core.targets"));
+            Equal(repoText.Replace("\r\n", "\n"), shippedText.Replace("\r\n", "\n"), "packaged targets are byte-identical to the repo's");
+        }
+
+        // Evaluation test (§8): the import structure of a real Sdk-based project. Uses the
+        // template's own shape via the staged copy, resolved from the local feed.
+        var probe = Path.Combine(Path.GetTempPath(), "nemerle-sdk-probe-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(probe);
+        try
+        {
+            var version = Path.GetFileNameWithoutExtension(nupkg)["Nemerle.Sdk.Unofficial.".Length..];
+            await File.WriteAllTextAsync(Path.Combine(probe, "NuGet.config"),
+                $"""
+                 <?xml version="1.0" encoding="utf-8"?>
+                 <configuration>
+                   <packageSources>
+                     <clear />
+                     <add key="nemerle-local" value="{feed}" />
+                   </packageSources>
+                 </configuration>
+                 """);
+            await File.WriteAllTextAsync(Path.Combine(probe, "Probe.nproj"),
+                $"""
+                 <Project Sdk="Nemerle.Sdk.Unofficial/{version}">
+                   <PropertyGroup>
+                     <OutputType>Exe</OutputType>
+                     <TargetFramework>net10.0</TargetFramework>
+                   </PropertyGroup>
+                 </Project>
+                 """);
+            await File.WriteAllTextAsync(Path.Combine(probe, "Program.n"),
+                "module Program\n{\n  Main() : void { System.Console.WriteLine(\"probe\"); }\n}\n");
+
+            var executor = new SystemProcessExecutor();
+            var query = await executor.RunAsync(
+                new ProcessSpec(
+                    "dotnet",
+                    [
+                        "msbuild", Path.Combine(probe, "Probe.nproj"), "-nologo",
+                        // TargetFramework: only Microsoft.NET.Sdk can produce it, proving the
+                        // explicit import inside Sdk.props/Sdk.targets took effect.
+                        // NccLayoutDir: only Nemerle's Sdk.props sets it.
+                        // NemerleCompile: proves the default **/*.n glob ran.
+                        "-getProperty:TargetFramework,NccLayoutDir,ProduceReferenceAssembly,UseAppHost,GenerateDependencyFile",
+                        "-getItem:NemerleCompile",
+                    ],
+                    probe,
+                    TimeSpan.FromMinutes(2)),
+                CancellationToken.None);
+            Equal(0, query.ExitCode, "SDK-based project evaluates (stderr: " + query.StandardError + ")");
+
+            using var document = System.Text.Json.JsonDocument.Parse(query.StandardOutput);
+            var properties = document.RootElement.GetProperty("Properties");
+            Equal("net10.0", properties.GetProperty("TargetFramework").GetString(), "Microsoft.NET.Sdk property present (explicit import worked)");
+            True((properties.GetProperty("NccLayoutDir").GetString() ?? "").Replace('\\', '/').Contains("nemerle.sdk.unofficial/" + version + "/", StringComparison.OrdinalIgnoreCase),
+                "NccLayoutDir points into the resolved package, not the repo");
+            // Nemerle's defaults must survive the Microsoft.NET.Sdk import that follows them.
+            Equal("false", properties.GetProperty("ProduceReferenceAssembly").GetString(), "ncc has no /refout: equivalent, so the SDK's ref-assembly optimization stays off");
+            Equal("false", properties.GetProperty("UseAppHost").GetString(), "no native apphost");
+            Equal("false", properties.GetProperty("GenerateDependencyFile").GetString(), "no deps.json, so the host probes the app dir for Nemerle.dll");
+            var globbed = document.RootElement.GetProperty("Items").GetProperty("NemerleCompile");
+            Equal(1, globbed.GetArrayLength(), "default **/*.n glob found the single source exactly once");
+        }
+        finally
+        {
+            try { Directory.Delete(probe, true); } catch (IOException) { /* best effort */ }
+        }
     }
 
     private static string FindRepositoryRoot()

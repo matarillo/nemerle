@@ -1,0 +1,19 @@
+<Project Sdk="Nemerle.Sdk.Unofficial/__NEMERLE_SDK_VERSION__">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <!--
+    The SDK globs **/*.n into @(NemerleCompile) for you, the way Microsoft.NET.Sdk globs
+    **/*.cs. To reference this library from another Nemerle project, add an ordinary
+    <ProjectReference Include="..\NemerleClassLib\NemerleClassLib.nproj" />. To make it a
+    macro library instead (compile-time only, passed to ncc as -macros:), the CONSUMER adds
+    OutputItemType="NemerleMacroReference" ReferenceOutputAssembly="false" to that reference.
+
+    The project file must keep a non-.csproj extension (.nproj): a .csproj would make the .NET
+    SDK import C#'s compiler targets, and csc would try to compile these Nemerle sources.
+  -->
+
+</Project>

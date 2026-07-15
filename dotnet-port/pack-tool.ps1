@@ -53,9 +53,22 @@
 #     alike, since PowerShell's parameter binder only kicks in for script/cmdlet targets,
 #     not external programs. See dotnet-port\DISTRIBUTION.md for the full writeup.)
 #
+#   - `ncc-info.json` (WP-M6): provenance for the packed compiler -- commit, `git describe`,
+#     configuration, the Nemerle assembly version consumers bind against, and the pack
+#     timestamp. Pairs with the language server's server\bundle-info.json so a mixed-generation
+#     install (which surfaces as FileLoadException, since Nemerle assembly versions track the
+#     source generation) can be diagnosed mechanically. Also shipped inside the
+#     Nemerle.Sdk.Unofficial package.
+#
 # Usage:
 #   pwsh dotnet-port\pack-tool.ps1                          # default Stage2 -> dotnet-port\dist\ncc
 #   pwsh dotnet-port\pack-tool.ps1 -CompilerDir bin\Release\core\Stage3 -OutDir dotnet-port\dist\ncc-stage3
+#   pwsh dotnet-port\pack-tool.ps1 -Pack                    # ...and the NuGet packages -> dotnet-port\dist\nupkg
+#
+# This is the single entry point for producing distributable Nemerle toolchain artifacts
+# (29-devenv2-plan.md section 10: "keep pack-tool.ps1 as the one entry point"). -Pack adds the
+# MSBuild project SDK package (Nemerle.Sdk.Unofficial) and the `dotnet new` templates
+# (Nemerle.Templates.Unofficial), versioned from the compiler this script just packed.
 #
 # Smoke test (from ANY directory):
 #   dotnet <OutDir>\ncc.dll -from-file:<OutDir>\ncc.default.rsp -out:hello.exe hello.n
@@ -68,7 +81,18 @@
 param(
     [string]$Configuration = "Release",
     [string]$CompilerDir = "",   # source compiler directory (default: bin\<Cfg>\core\Stage2)
-    [string]$OutDir = ""         # destination layout directory (default: dotnet-port\dist\ncc)
+    [string]$OutDir = "",        # destination layout directory (default: dotnet-port\dist\ncc)
+
+    # WP-M6. -Pack additionally produces the NuGet packages (Nemerle.Sdk.Unofficial +
+    # Nemerle.Templates.Unofficial) from the layout this script just built. Kept behind a switch
+    # so the default invocation stays the fast "build me a runnable ncc" loop everything else
+    # (pack-server.ps1, the samples, the test fixtures) depends on.
+    [switch]$Pack,
+    [string]$PackageOutDir = "",        # default: dotnet-port\dist\nupkg
+    # Prerelease label appended to the version derived from the compiler itself (see section 6).
+    # Bump it when re-packing the same compiler with changed packaging/targets: NuGet caches an
+    # (id, version) by content, so reusing a version silently serves stale bits.
+    [string]$PackageVersionSuffix = "preview.1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -228,6 +252,42 @@ $TasksPdb = Join-Path $TasksOutDir "Nemerle.MSBuild.Tasks.pdb"
 if (Test-Path $TasksPdb) { Copy-Item -Path $TasksPdb -Destination $TaskDestDir -Force }
 Write-Host "Wrote $(Join-Path $TaskDestDir 'Nemerle.MSBuild.Tasks.dll')"
 
+# ---------------------------------------------------------------------------
+# 5. WP-M6 (29-devenv2-plan.md section 6.8): provenance.
+#    Nemerle assembly versions derive from the source generation, so mixing a language server,
+#    a dist layout and a Nemerle.Sdk package built from different commits produces
+#    FileLoadException at run time (28-vscode-packaging-log.md). The server has recorded its own
+#    server\bundle-info.json since WP-L4; this is the other half, so the two can be compared
+#    mechanically instead of by memory. It is written INTO the layout, which means the
+#    Nemerle.Sdk.Unofficial package carries it too (that package's csproj requires it).
+# ---------------------------------------------------------------------------
+Push-Location $RepoRoot
+try {
+    $commit   = (& git rev-parse HEAD).Trim()
+    $describe = (& git describe --long --always --dirty).Trim()
+}
+finally {
+    Pop-Location
+}
+if ($describe -match '-dirty$') {
+    Write-Warning "Working tree is dirty; ncc-info.json records '$describe'."
+}
+
+# The identity that actually matters for load compatibility: what a consumer will bind against.
+$NemerleAssemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName((Join-Path $OutDirFull "Nemerle.dll")).Version.ToString()
+
+$nccInfo = [ordered]@{
+    commit                 = $commit
+    describe               = $describe
+    configuration          = $Configuration
+    nemerleAssemblyVersion = $NemerleAssemblyVersion
+    sourceDir              = (Resolve-Path $CompilerDir).Path.Substring($RepoRoot.Length).TrimStart('\').Replace('\', '/')
+    packedAtUtc            = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+}
+$NccInfoPath = Join-Path $OutDir "ncc-info.json"
+$nccInfo | ConvertTo-Json | Set-Content -Path $NccInfoPath -Encoding utf8
+Write-Host "Wrote $NccInfoPath (commit $($commit.Substring(0,9)), Nemerle $NemerleAssemblyVersion)"
+
 Write-Host ""
 Write-Host "Layout complete -> $OutDir"
 Get-ChildItem $OutDir | Format-Table Name, Length
@@ -235,3 +295,92 @@ Write-Host ""
 Write-Host "Smoke test:"
 Write-Host "  dotnet `"$OutDir\ncc.dll`" -from-file:`"$RspPath`" -out:hello.exe hello.n && dotnet exec hello.exe"
 Write-Host "  (or)  `"$WrapperPath`" -out:hello.exe hello.n && dotnet exec hello.exe"
+
+# ---------------------------------------------------------------------------
+# 6. WP-M6: the NuGet packages (only with -Pack).
+#
+#    Version scheme: 1.2.<revision> of the layout's OWN Nemerle.dll (1.2.0.601 -> 1.2.601),
+#    plus the prerelease label from -PackageVersionSuffix. This continues the numbering of the
+#    author's existing nuget.org packages (Nemerle.Unofficial, Nemerle.Compiler.Unofficial,
+#    Nemerle.Macros.Unofficial, Nemerle.Compiler.Utils.Unofficial, all 1.2.547 = the official
+#    Nemerle 1.2.547 they were unofficial builds of). The version therefore states which
+#    compiler is inside, which is exactly what a toolchain-vs-server mismatch turns on; the
+#    prerelease label carries maturity, which the package ID deliberately does not (an ID says
+#    who built it -- permanently true -- while "preview" stops being true, and renaming a
+#    project SDK ID is a breaking change for every consuming .nproj and global.json).
+#
+#    Read off the assembly rather than `git describe` because they can legitimately disagree:
+#    the compiler is only rebuilt when ncc\*.n changes, so HEAD moves on while dist\ncc keeps
+#    the generation it was built from -- and it is the packaged bits, not the checkout, that the
+#    version must describe.
+# ---------------------------------------------------------------------------
+if ($Pack) {
+    if ($PackageOutDir -eq "") { $PackageOutDir = Join-Path $PSScriptRoot "dist\nupkg" }
+    New-Item -ItemType Directory -Force -Path $PackageOutDir | Out-Null
+
+    $v = [System.Reflection.AssemblyName]::GetAssemblyName((Join-Path $OutDirFull "Nemerle.dll")).Version
+    $PackageVersion = "{0}.{1}.{2}" -f $v.Major, $v.Minor, $v.Revision
+    if ($PackageVersionSuffix -ne "") { $PackageVersion = "$PackageVersion-$PackageVersionSuffix" }
+
+    Write-Host ""
+    Write-Host "Packing Nemerle.Sdk.Unofficial / Nemerle.Templates.Unofficial $PackageVersion ..."
+
+    # The templates generate projects that pin the SDK version they were packed alongside
+    # (<Project Sdk="Nemerle.Sdk.Unofficial/x.y.z">), so the version has to be injected here
+    # rather than committed: a hard-coded version in the template sources would silently rot
+    # into "generates projects referencing a package that no longer exists" the first time the
+    # compiler generation moves. Stage a copy with __NEMERLE_SDK_VERSION__ substituted and pack
+    # THAT (Nemerle.Templates.Unofficial.csproj refuses to pack without it).
+    $TemplateSrcDir   = Join-Path $PSScriptRoot "packaging\Nemerle.Templates.Unofficial\content"
+    $TemplateStageDir = Join-Path $PSScriptRoot "dist\templates"
+    if (Test-Path $TemplateStageDir) { Remove-Item -Recurse -Force $TemplateStageDir }
+    New-Item -ItemType Directory -Force -Path $TemplateStageDir | Out-Null
+    Copy-Item -Path (Join-Path $TemplateSrcDir "*") -Destination $TemplateStageDir -Recurse -Force
+    $substituted = 0
+    foreach ($file in (Get-ChildItem $TemplateStageDir -Recurse -File)) {
+        $text = Get-Content -Raw -Path $file.FullName
+        if ($text -match '__NEMERLE_SDK_VERSION__') {
+            Set-Content -Path $file.FullName -Value $text.Replace('__NEMERLE_SDK_VERSION__', $PackageVersion) -NoNewline -Encoding utf8
+            $substituted++
+        }
+    }
+    if ($substituted -eq 0) { throw "No __NEMERLE_SDK_VERSION__ placeholder found under $TemplateSrcDir -- the template sources and this script have drifted apart." }
+    Write-Host "Staged templates -> $TemplateStageDir ($substituted files pinned to $PackageVersion)"
+
+    $TemplateStageWithSlash = (Resolve-Path $TemplateStageDir).Path.TrimEnd('\') + '\'
+
+    $PackageProjects = @(
+        (Join-Path $PSScriptRoot "packaging\Nemerle.Sdk.Unofficial\Nemerle.Sdk.Unofficial.csproj"),
+        (Join-Path $PSScriptRoot "packaging\Nemerle.Templates.Unofficial\Nemerle.Templates.Unofficial.csproj")
+    )
+
+    # NuGet caches an (id, version) in the global packages folder by identity, NOT by content:
+    # once 1.2.601-preview.1 has been restored anywhere on this machine, a re-packed
+    # 1.2.601-preview.1 is ignored in favour of the extracted copy, and the next build silently
+    # tests stale bits. That trap is documented for Nemerle.Ncc.DevTool in DISTRIBUTION.md
+    # section 2 with "bump the version on every re-pack" as the workaround, which is untenable
+    # for an SDK whose version is meaningful. Evict the exact (id, version) instead, so
+    # re-packing the same version during development is honest.
+    $GlobalPackages = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $HOME ".nuget\packages" }
+    foreach ($id in @("nemerle.sdk.unofficial", "nemerle.templates.unofficial")) {
+        $cached = Join-Path $GlobalPackages "$id\$PackageVersion"
+        if (Test-Path $cached) {
+            Remove-Item -Recurse -Force $cached
+            Write-Host "Evicted stale $id/$PackageVersion from the global packages folder"
+        }
+    }
+
+    foreach ($proj in $PackageProjects) {
+        & dotnet pack -c $Configuration $proj -o $PackageOutDir "-p:Version=$PackageVersion" `
+            "-p:NccLayoutDir=$OutDirWithSlash" "-p:NemerleTemplateStagingDir=$TemplateStageWithSlash" -v:minimal
+        if ($LASTEXITCODE -ne 0) { throw "dotnet pack failed for $proj (exit $LASTEXITCODE)" }
+    }
+
+    Write-Host ""
+    Write-Host "Packages -> $PackageOutDir"
+    Get-ChildItem $PackageOutDir -Filter "*$PackageVersion.nupkg" | Format-Table Name, Length
+    Write-Host "Try them from an empty directory outside the repository:"
+    Write-Host "  dotnet new install Nemerle.Templates.Unofficial::$PackageVersion --add-source `"$PackageOutDir`""
+    Write-Host "  dotnet new nemerle-console"
+    Write-Host "  dotnet build   # resolves Nemerle.Sdk.Unofficial from the same feed via NuGet.config"
+}

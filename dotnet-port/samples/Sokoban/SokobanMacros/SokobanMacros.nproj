@@ -6,8 +6,12 @@
     `macro UseTunnelMacro(...)` using quasi-quotation (<[ ... ]>), which needs the compiler's
     own API (Nemerle.Compiler.dll) at compile time. That dll is not part of ncc's
     auto-resolved shared-framework reference set (dotnet-port\build-stage2-core.ps1's
-    $CoreRefs / ncc\passes.n's LoadCoreStdlibReferences all-BCL-only design), so it is
-    referenced explicitly here via HintPath into the dist\ncc layout.
+    $CoreRefs / ncc\passes.n's LoadCoreStdlibReferences all-BCL-only design), so it has to be
+    referenced explicitly: that is what NemerleMacroLibrary asks the targets to do (WP-M6).
+    It used to be a hand-written Reference with a HintPath into ..\..\..\dist\ncc; only the
+    targets can know where the compiler is, and for a project consuming the Nemerle.Sdk NuGet
+    package it sits in a versioned directory inside the machine's global packages folder that
+    no project file could portably spell out.
 
     Consumers of this project (..\Sokoban\Sokoban.nproj) reference it as a macro-only
     ProjectReference (OutputItemType="NemerleMacroReference" ReferenceOutputAssembly="false"):
@@ -23,17 +27,11 @@
     <UseAppHost>false</UseAppHost>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <NemerleMacroLibrary>true</NemerleMacroLibrary>
   </PropertyGroup>
 
   <ItemGroup>
     <NemerleCompile Include="macros.n" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Reference Include="Nemerle.Compiler">
-      <HintPath>$(MSBuildThisFileDirectory)..\..\..\dist\ncc\Nemerle.Compiler.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
   </ItemGroup>
 
   <Import Project="$(MSBuildThisFileDirectory)..\..\..\msbuild\Nemerle.Core.targets" />

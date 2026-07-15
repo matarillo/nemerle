@@ -237,20 +237,33 @@ internal sealed class LspTestClient : IAsyncDisposable
     /// <paramref name="fromMark"/>), as (type, message).  LSP MessageType:
     /// 1=Error, 2=Warning, 3=Info, 4=Log.
     /// </summary>
-    public IReadOnlyList<(int Type, string Message)> LogMessages(int fromMark = 0)
+    public IReadOnlyList<(int Type, string Message)> LogMessages(int fromMark = 0) =>
+        WindowMessages("window/logMessage", fromMark);
+
+    /// <summary>
+    /// Every <c>window/showMessage</c> notification received so far (from
+    /// <paramref name="fromMark"/>), as (type, message).  Same MessageType numbering as
+    /// <see cref="LogMessages"/>.  Distinct from logMessage in that a client renders these as
+    /// user-facing notifications; the toolchain/server version mismatch (WP-M6) is the only
+    /// thing the server sends here.
+    /// </summary>
+    public IReadOnlyList<(int Type, string Message)> ShowMessages(int fromMark = 0) =>
+        WindowMessages("window/showMessage", fromMark);
+
+    private IReadOnlyList<(int Type, string Message)> WindowMessages(string method, int fromMark)
     {
         var result = new List<(int, string)>();
         for (var index = fromMark; index < _history.Count; index++)
         {
             var message = _history[index];
-            if (message.TryGetProperty("method", out var method) &&
-                method.GetString() == "window/logMessage" &&
+            if (message.TryGetProperty("method", out var m) &&
+                m.GetString() == method &&
                 message.TryGetProperty("params", out var p))
             {
                 var type = p.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.Number
                     ? t.GetInt32()
                     : 0;
-                var text = p.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
+                var text = p.TryGetProperty("message", out var text_) ? text_.GetString() ?? "" : "";
                 result.Add((type, text));
             }
         }

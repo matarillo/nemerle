@@ -5,6 +5,7 @@ dist-test/**
 src/**
 test/**
 test-workspace/**
+test-workspace-sdk/**
 eslint.config.mjs
 tsconfig.json
 tsconfig.test.json

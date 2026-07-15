@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-M6: `dotnet new` templates for Nemerle projects (29-devenv2-plan.md §6.7).
+
+      dotnet new install Nemerle.Templates.Unofficial::1.2.601-preview.1
+      dotnet new nemerle-console
+
+    A SEPARATE package from Nemerle.Sdk.Unofficial, per the official guidance: a template
+    package is PackageType=Template with everything under content/ and no build output, which
+    is structurally incompatible with the SDK package's Sdk//tools//tasks/ layout. It also
+    keeps the (large) compiler out of the thing you install once into your dotnet CLI.
+
+    The templates are packed from a STAGING copy that dotnet-port\pack-tool.ps1 -Pack produces,
+    not from content/ directly, because the generated project has to pin the SDK version
+    (<Project Sdk="Nemerle.Sdk.Unofficial/x.y.z">) and that version is only known at pack time.
+    pack-tool.ps1 substitutes __NEMERLE_SDK_VERSION__ throughout, which is why this project
+    refuses to pack without $(NemerleTemplateStagingDir): packing content/ verbatim would ship
+    templates that generate projects referencing a literal "__NEMERLE_SDK_VERSION__".
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Nemerle.Templates.Unofficial</PackageId>
+    <PackageType>Template</PackageType>
+
+    <!-- Template packages carry content only. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <ContentTargetFolders>content</ContentTargetFolders>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <Authors>matarillo</Authors>
+    <Copyright>Copyright (c) 2003-2008 The University of Wroclaw. Copyright (c) 2008-2014 Nemerle Project Team.</Copyright>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/matarillo/nemerle</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/matarillo/nemerle</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>Nemerle;dotnet-new;templates;unofficial</PackageTags>
+    <Description>UNOFFICIAL `dotnet new` templates for Nemerle projects (nemerle-console, nemerle-classlib) targeting .NET 10. Not a release of the Nemerle project. The generated projects build with the Nemerle.Sdk.Unofficial MSBuild project SDK.</Description>
+
+    <!-- NU5128 = no lib/ref folder for the declared TFM: correct for a template package. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- An explicit PackagePath is required, and it must NOT repeat %(RecursiveDir): for a
+         wildcard Include, pack appends each file's path relative to the wildcard root to
+         PackagePath by itself. Getting this wrong is quiet in different ways - with no
+         PackagePath at all, $(ContentTargetFolders) flattens everything to content\<name> and
+         the two templates' .template.config\template.json collide (NU5118); with
+         "content\%(RecursiveDir)" the directory appears twice
+         (content\nemerle-console\.template.config\nemerle-console\...). Both produce a package
+         that installs broken templates rather than failing the pack. The nupkg's entry list is
+         asserted in the ProjectInfo.Test SDK-packaging tests for exactly this reason. -->
+    <Content Include="$(NemerleTemplateStagingDir)**\*"
+             Exclude="$(NemerleTemplateStagingDir)**\bin\**;$(NemerleTemplateStagingDir)**\obj\**"
+             Pack="true" PackagePath="content\" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <Target Name="ValidateTemplateStaging" BeforeTargets="Build;Pack">
+    <Error Condition="'$(NemerleTemplateStagingDir)' == '' OR !Exists('$(NemerleTemplateStagingDir)')"
+           Text="NemerleTemplateStagingDir ($(NemerleTemplateStagingDir)) does not exist. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which stages the templates with the SDK version substituted in; packing this project directly would ship a literal __NEMERLE_SDK_VERSION__ placeholder." />
+  </Target>
+
+  <Target Name="ValidateExplicitVersion" BeforeTargets="Pack">
+    <Error Condition="'$(Version)' == '1.0.0'"
+           Text="No -p:Version was supplied, so the SDK's 1.0.0 default is in effect. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`." />
+  </Target>
+
+</Project>

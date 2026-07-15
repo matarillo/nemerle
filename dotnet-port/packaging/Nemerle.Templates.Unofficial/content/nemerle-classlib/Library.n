@@ -1,0 +1,12 @@
+using System;
+
+namespace NemerleClassLib
+{
+  public module Greeter
+  {
+    public Greet(name : string) : string
+    {
+      $"Hello, $name!"
+    }
+  }
+}
