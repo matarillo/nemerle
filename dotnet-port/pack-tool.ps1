@@ -376,6 +376,12 @@ if ($Pack) {
         if ($LASTEXITCODE -ne 0) { throw "dotnet pack failed for $proj (exit $LASTEXITCODE)" }
     }
 
+    # Ship the install guide alongside the packages. Whoever downloads a GitHub release asset has
+    # the .nupkg files and no checkout, so a guide that only exists in the repository is a guide
+    # they cannot read; $PackageOutDir is what gets archived, so it has to explain itself.
+    Copy-Item -Path (Join-Path $PSScriptRoot "packaging\README.md") -Destination $PackageOutDir -Force
+    Write-Host "Wrote $(Join-Path $PackageOutDir 'README.md') (install guide)"
+
     Write-Host ""
     Write-Host "Packages -> $PackageOutDir"
     Get-ChildItem $PackageOutDir -Filter "*$PackageVersion.nupkg" | Format-Table Name, Length

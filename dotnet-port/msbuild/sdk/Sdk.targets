@@ -36,8 +36,11 @@
     erroring (NETSDK1022: remove the items, or set EnableDefaultCompileItems=false). Importing
     after the body lets us do better than an error: the Exclude sees the explicit items and
     simply yields to them, so hand-listed sources keep working and the glob quietly fills in
-    the rest. NemerleCheckForDuplicateCompileItems in Nemerle.Core.targets still catches what
-    Exclude cannot match by string (e.g. an item written as an absolute path).
+    the rest. Exclude compares normalized paths rather than raw strings, so it folds an
+    explicitly-listed source even when the project spells it differently from the glob's result
+    (an absolute path, say) - verified, not assumed. A duplicate the project creates on its own
+    (one file matched by two of its own ItemGroups) is caught by
+    NemerleCheckForDuplicateCompileItems in Nemerle.Core.targets.
   -->
   <ItemGroup Condition="'$(EnableDefaultNemerleCompileItems)' == 'true'">
     <NemerleCompile Include="**/*.n"

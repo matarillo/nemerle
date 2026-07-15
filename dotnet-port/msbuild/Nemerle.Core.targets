@@ -141,18 +141,21 @@
   </Target>
 
   <!-- ncc rejects a duplicated source with "file 'X.n' occured twice on the list to compile",
-       which names the compiler and not the mistake. Duplicates are easy to produce: listing a
-       source by hand that the Sdk package's **/*.n glob also finds (its Exclude yields to
-       explicit items, but only when the two spell the path the same way), or two ItemGroups
-       covering the same file. Compare resolved full paths so differently-spelled references to
-       one file are caught, and say what to do about it. -->
+       which names the compiler rather than the mistake. Typically this is one file listed twice
+       by overlapping ItemGroups (e.g. an explicit "*.n" alongside a named source). Compare
+       resolved full paths, so two different spellings of one file are caught, and name the
+       offenders.
+
+       Note %40 (an escaped '@'): an unescaped @(NemerleCompile) in Text is expanded by MSBuild,
+       and the message rendered as "Duplicate Program.n;Program.n items:" instead of naming the
+       item type. -->
   <Target Name="NemerleCheckForDuplicateCompileItems" BeforeTargets="CoreCompile">
     <ItemGroup>
       <_NemerleCompileFullPath Include="@(NemerleCompile->'%(FullPath)')" />
       <_NemerleCompileDistinct Include="@(_NemerleCompileFullPath->Distinct())" />
     </ItemGroup>
     <Error Condition="@(_NemerleCompileFullPath->Count()) != @(_NemerleCompileDistinct->Count())"
-           Text="Duplicate @(NemerleCompile) items: the same source is passed to ncc more than once. If this project lists sources by hand while also using the Nemerle Sdk package's default &quot;**/*.n&quot; glob, either drop the hand-written items or set &lt;EnableDefaultNemerleCompileItems&gt;false&lt;/EnableDefaultNemerleCompileItems&gt;. Items: @(_NemerleCompileFullPath, ' ')" />
+           Text="Duplicate %40(NemerleCompile) items: the same source would be passed to ncc more than once. Remove the overlapping entry; if this project lists sources by hand and the Nemerle Sdk package's default &quot;**/*.n&quot; glob is also in effect, set &lt;EnableDefaultNemerleCompileItems&gt;false&lt;/EnableDefaultNemerleCompileItems&gt;. Items: @(_NemerleCompileFullPath, ' ')" />
   </Target>
 
   <!-- Using a non-".csproj" project extension (".nproj") deliberately: the .NET SDK selects its

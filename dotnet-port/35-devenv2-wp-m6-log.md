@@ -159,8 +159,17 @@ package 公開(= WP-N)が要る。
 付けることで、**error より良い**答えにした: 明示 item が見えるので glob がそれに譲り、
 手書きの source はそのまま動き、glob が残りを埋める。
 
-string 一致では拾えない重複(絶対パス表記など)に備え、`Nemerle.Core.targets` に
-`NemerleCheckForDuplicateCompileItems` を追加した(full path で比較し、対処法を含む error)。
+残る重複に備え、`Nemerle.Core.targets` に `NemerleCheckForDuplicateCompileItems` を追加した
+(full path で比較し、対処法を含む error)。
+
+> **追記(README 執筆時の実測で判明、2026-07-15)**: 当初この項に「`Exclude` は文字列一致なので
+> 絶対パス表記の item は拾えない。その保険が重複検出である」と書いたが、**誤りだった**。
+> MSBuild の `Exclude` は**正規化したパスで照合する**ため、glob の相対パス結果と本文の
+> 絶対パス item も畳み込まれる(実測: 項目数 1)。したがって重複検出が実際に発火するのは
+> 「project 自身が重なった ItemGroup で同一ファイルを 2 回挙げた」場合であり、
+> こちらは実測で発火とメッセージを確認した。併せて Error の `Text` に書いた
+> `@(NemerleCompile)` が **MSBuild に展開されてしまい**、
+> `Duplicate Program.n;Program.n items:` と表示される bug も実測で見つけ、`%40` に修正した。
 
 ### 4. macro library の compiler 参照(`NemerleMacroLibrary`、新規)
 
