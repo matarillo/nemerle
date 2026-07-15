@@ -474,3 +474,55 @@ assembly version が据え置かれる(601 が M2〜M6 を通じて不変)ため
 `32-devenv2-wp-m3-log.md`(WP-M3)/ `33-devenv2-wp-m4-log.md`(WP-M4)/
 `34-devenv2-wp-m5-log.md`(WP-M5)。計画: `29-devenv2-plan.md`。配布の現状: `DISTRIBUTION.md`。
 利用者向け導入手順: `packaging/README.md`。
+
+## リリース後修正 1: Linux で hover が engine rebuild 無限ループ(preview.2 / extension 0.8.1)
+
+WSL 実地検証(2026-07-15)で、**macro library(`NemerleMacroLibrary=true`)または
+macro を参照する project** を開いて hover すると `nemerle engine rebuild finished` が
+~20ms 周期で無限に出続ける問題が見つかった。plain project は無症状。
+
+原因は 3 段の合わせ技:
+
+1. `IntelliSenseModeLibraryReferenceManager.UpdateAssemblies` が `File.Exists` を元 path で
+   通した後、**`ToLowerInvariant()` した path** で load していた(VS 時代の Windows 前提)。
+   Linux の case-sensitive FS では小文字化 path が存在せず `FileNotFoundException`。
+   plain project が無症状なのは engine に渡る参照が空だから(BCL は
+   `FrameworkReferenceName` でフィルタ、`Nemerle.dll` はコピーのみで `ReferencePath` に
+   入らない)。macro 系だけが `Nemerle.Compiler.dll` / macro dll の実 path を参照に持つ。
+2. この呼び出しは `Engine-BuildTypeTree` の init() で **報告用 try の外**にあり、例外が
+   `BuildTypesTree` ごと落として `_project` が null のまま残る(例外自体は AsyncWorker が
+   `Debug.WriteLine` に捨てるので log に出ない)。`PersistentLibraries` も false のままなので
+   次回 build も同じ場所で死ぬ。
+3. `GetQuickTipInfo` は `Project == null` だと `BeginBuildTypesTree()` + **自己再キュー**する
+   設計なので、(2) と組み合わさると hover 1 回で永久ループになる(hover を止めても
+   キュー内の request が回し続ける)。
+
+修正(engine 共有ソース 2 ファイル、**compiler 無改造 = Stage リビルド不要**):
+
+- `UpdateAssemblies` の小文字化を除去(file I/O とキャッシュ登録を元 path で行う。
+  `assByString` は元々 ignore-case comparer なので Windows のキャッシュ挙動不変。
+  `AssemblyLoadFromImpl` 内の小文字化は比較専用ローカルで元から無害)。
+- `LibRefManager.UpdateAssemblies(asmRefs)` を init() の `InitCompiler()` の**後・try 内**へ
+  移動。参照 load 失敗は既存 catch(`UnresolvedAssms` 込み `ShowMessage`)へ流れ、
+  types tree は作られるので無限ループは構造的に再発しない。
+
+互換性: 公開シグネチャ不変・新 API 不使用(.NET 4.0 で compile 可)・Mono/Linux でも
+「小文字 path で動いていたケース(全小文字 / case-insensitive FS / MONO_IOMAP)」は
+すべて元 path でも動くため退行なし。`snippets/VS2010` 配下は別コピーで対象外。
+
+検証: raw LSP integration 全シナリオ PASS(Sokoban macro 参照含む)、ConsoleTest 52/58
+(= WP-K baseline、残 6 は既知の BCL 環境差)、`ProjectInfo.Test -- --integration` PASS。
+WSL 実機で無限ループ解消を確認(ユーザー検証)。
+
+なお WSL 検証で「**macro 定義本体内の hover が効かない**」ことも確認したが、これは
+上流からの既知の制限(`TopDeclaration.Macro` は `MacroClassGen.GenerateMacroClass` が
+合成する `<Name>Macro` class に compile され、元 AST に TypeBuilder が紐付かないため
+`Project.FindObject` が入口で typed 情報なしに return する)。Windows の旧 VS 統合でも
+同挙動であり、今回は対応しない(対応するなら ncc 側変更 = Stage リビルド込みの別 WP)。
+
+再パッケージ: Nemerle.dll は Stage 未リビルドなので **assembly version 1.2.0.601 のまま**
+(pack-tool は Stage2 出力をコピーするだけ。ここで Stage を再ビルドすると commit 数で
+602+ に進み全量リビルドが必要になるので触らない)。package は内容が変わる
+(engine dll、ncc-info.json の commit)ため **1.2.601-preview.2** に、extension/ServerInfo は
+**0.8.1** に bump(NuGet は (id,version) を内容でなく識別子でキャッシュするため、配布済み
+preview.1 の中身差し替えは不可)。埋め込み README / install guide / template pin の版表記も更新。

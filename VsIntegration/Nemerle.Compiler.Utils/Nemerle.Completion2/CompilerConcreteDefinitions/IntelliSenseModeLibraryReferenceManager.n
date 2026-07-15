@@ -114,7 +114,9 @@ namespace Nemerle.Completion2.Factories
       {
         when (System.IO.File.Exists(path))
         {
-          def path = path.ToLowerInvariant();
+          // Keep the caller's casing: the path is used for file IO below, and on a
+          // case-sensitive file system (Linux) a case-folded copy does not exist.
+          // The cache lookup is already case-insensitive via the Hashtable's comparer.
           def fileTime = GetLastWriteTimeUtc(path);
           def ((_, time), ok) = assByString.TryGetValue(path);
           when (!ok || time != fileTime)

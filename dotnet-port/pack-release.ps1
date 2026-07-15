@@ -18,7 +18,7 @@
 # together until now. Reading them from INSIDE the artifacts (rather than from the working tree
 # they were supposedly built from) is the point: it is the shipped bits that have to agree.
 #
-# Version note: the VSIX version (extension feature generation, 0.8.0) and the package version
+# Version note: the VSIX version (extension feature generation, 0.8.1) and the package version
 # (compiler generation, 1.2.601-preview.1) are deliberately NOT the same number -- they move at
 # different rates, and the VS Code Marketplace does not accept semver prerelease tags anyway
 # (35-devenv2-wp-m6-log.md). The release, not the artifact, is what has one version; that is what

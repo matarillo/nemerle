@@ -54,7 +54,7 @@ pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # builds LspServer, stages se
 cd dotnet-port\vscode-nemerle
 npm ci
 npm run package                                    # lint + tests + verify-server + vsce package
-code --install-extension vscode-nemerle-0.8.0.vsix
+code --install-extension vscode-nemerle-0.8.1.vsix
 ```
 
 Then open a trusted folder containing a `.nproj` project. The server starts

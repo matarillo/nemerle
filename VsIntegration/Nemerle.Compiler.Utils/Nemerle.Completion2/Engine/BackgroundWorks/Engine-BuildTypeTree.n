@@ -148,13 +148,17 @@ namespace Nemerle.Completion2
 
             // Get assembly references from IDE.
             def asmRefs = _assemblyReferences.Append(_macroAssemblyReferences);
-            
-            // Update library list.
-            LibRefManager.UpdateAssemblies(asmRefs);
 
             try
             {
               InitCompiler();
+
+              // Update library list. Inside the try (after InitCompiler, so the
+              // manager state matches the other failure paths): a load failure here
+              // must be reported like any other reference problem, not escape
+              // BuildTypesTree (which would leave _project null forever and make
+              // every deferred request re-trigger a build that fails the same way).
+              LibRefManager.UpdateAssemblies(asmRefs);
 
               mutable ex;
 

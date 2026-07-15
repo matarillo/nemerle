@@ -3,7 +3,7 @@
   <!--
     WP-M6: `dotnet new` templates for Nemerle projects (29-devenv2-plan.md §6.7).
 
-      dotnet new install Nemerle.Templates.Unofficial::1.2.601-preview.1
+      dotnet new install Nemerle.Templates.Unofficial::1.2.601-preview.2
       dotnet new nemerle-console
 
     A SEPARATE package from Nemerle.Sdk.Unofficial, per the official guidance: a template

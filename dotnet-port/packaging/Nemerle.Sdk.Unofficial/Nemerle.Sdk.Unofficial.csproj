@@ -5,7 +5,7 @@
     dotnet-port\pack-tool.ps1) plus the shared MSBuild logic into an MSBuild project SDK
     package, so a Nemerle project can be built with no repository checkout at all:
 
-      <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">
+      <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
 
     Nothing is compiled here; like dotnet-port\Nemerle.Tool this project is pure repackaging of
     pre-built bits (ncc\*.n is never touched by any C# build). Drive it through
