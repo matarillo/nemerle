@@ -31,10 +31,11 @@ overriding disk content.
     ```
 
     It is currently published to a local feed only, produced by
-    `pwsh dotnet-port\pack-tool.ps1 -Pack` into `dotnet-port\dist\nupkg`;
+    `pwsh dotnet-port\pack-tool.ps1 -Pack` into `dotnet-port\dist\release`;
     point a `NuGet.config` at that directory. `dotnet new install
     Nemerle.Templates.Unofficial::<version>` adds `nemerle-console` /
-    `nemerle-classlib` templates. See `dotnet-port\DISTRIBUTION.md`.
+    `nemerle-classlib` templates. `dotnet-port\packaging\README.md` is the
+    install guide (it ships in the release folder too).
   - or a repository checkout: `dotnet-port\dist\ncc` (`pack-tool.ps1`) plus
     `<Import Project="...\dotnet-port\msbuild\Nemerle.Core.targets" />` in your
     `.nproj`. This is the same build logic; the package just ships it.

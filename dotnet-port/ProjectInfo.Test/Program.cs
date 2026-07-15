@@ -467,7 +467,7 @@ internal static class Program
     private static async Task SdkPackageTests()
     {
         var root = FindRepositoryRoot();
-        var feed = Path.Combine(root, "dotnet-port", "dist", "nupkg");
+        var feed = Path.Combine(root, "dotnet-port", "dist", "release");
         var packages = Directory.Exists(feed)
             ? Directory.GetFiles(feed, "Nemerle.Sdk.Unofficial.*.nupkg")
             : [];

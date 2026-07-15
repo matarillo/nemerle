@@ -23,7 +23,11 @@ async function main(): Promise<void> {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(extensionDevelopmentPath, 'package.json'), 'utf8'),
   ) as { version: string };
-  const vsixPath = path.join(extensionDevelopmentPath, `vscode-nemerle-${manifest.version}.vsix`);
+  // package:vsix writes into dotnet-port/dist/release, the folder that becomes the release
+  // archive (packages + VSIX + guide + release-info.json), rather than leaving the VSIX beside
+  // the sources.
+  const vsixPath = path.join(
+    extensionDevelopmentPath, '..', 'dist', 'release', `vscode-nemerle-${manifest.version}.vsix`);
   if (!fs.existsSync(vsixPath)) {
     throw new Error(`VSIX not found: ${vsixPath}. Run "npm run package" first.`);
   }

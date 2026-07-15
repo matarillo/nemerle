@@ -9,7 +9,7 @@ import { downloadAndUnzipVSCode } from '@vscode/test-electron';
  *
  * The workspace is generated here instead of being committed, for two reasons: the project
  * must pin an SDK version, which tracks the compiler generation and would rot in the tree; and
- * its NuGet.config must point at dotnet-port/dist/nupkg, which is a generated directory. Both
+ * its NuGet.config must point at dotnet-port/dist/release, which is a generated directory. Both
  * are derived from whichever package pack-tool.ps1 -Pack actually produced, so this test can
  * never drift from the artifact it is meant to test.
  *
@@ -18,7 +18,7 @@ import { downloadAndUnzipVSCode } from '@vscode/test-electron';
 async function main(): Promise<void> {
   const extensionDevelopmentPath = path.resolve(__dirname, '..', '..');
   const extensionTestsPath = path.resolve(__dirname, 'suite', 'index');
-  const feed = path.resolve(extensionDevelopmentPath, '..', 'dist', 'nupkg');
+  const feed = path.resolve(extensionDevelopmentPath, '..', 'dist', 'release');
 
   const packageVersion = findSdkPackageVersion(feed);
   if (packageVersion === undefined) {

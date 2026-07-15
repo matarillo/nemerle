@@ -402,7 +402,11 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
   生成物を誤って追跡しないため)、`dotnet-port\00-PLAN.md`(作業ログ追記)
 - 生成物(既定では git 追跡対象外): `dotnet-port\dist\ncc\`(pack-tool.ps1 の
   出力、`Nemerle.Compiler.Hosting.dll`/`msbuild-task\Nemerle.MSBuild.Tasks.dll` を含む)、
-  `dotnet-port\dist\nupkg\`(`dotnet pack` の出力)
+  `dotnet-port\dist\nupkg\`(この節の `Nemerle.Tool` PoC の `dotnet pack -o` 出力)。
+  **WP-M6 以降のリリース成果物は `dotnet-port\dist\release\`**(`pack-tool.ps1 -Pack` の
+  nupkg + `packaging\README.md` の写し、`npm run package` の VSIX、`pack-release.ps1` の
+  `release-info.json`)。このフォルダーがそのままリリースの実体で、NuGet の local feed としても
+  機能する
 
 ## 推奨される次ステップ
 

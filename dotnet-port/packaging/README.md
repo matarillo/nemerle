@@ -12,12 +12,21 @@ use them.
 > It is also a **preview**: verified against the port's own samples and a local feed, not broadly
 > in the wild.
 
-| Package | What it is |
+| Artifact | What it is |
 |---|---|
-| `Nemerle.Sdk.Unofficial` | An MSBuild project SDK. Carries the `ncc` compiler and the MSBuild task that runs it, so `dotnet build` compiles `.n` sources. This is the only package a project needs. |
-| `Nemerle.Templates.Unofficial` | `dotnet new` templates (`nemerle-console`, `nemerle-classlib`). Convenience only — you can write the project file by hand instead. |
+| `Nemerle.Sdk.Unofficial.<version>.nupkg` | An MSBuild project SDK. Carries the `ncc` compiler and the MSBuild task that runs it, so `dotnet build` compiles `.n` sources. This is the only package a project needs. |
+| `Nemerle.Templates.Unofficial.<version>.nupkg` | `dotnet new` templates (`nemerle-console`, `nemerle-classlib`). Convenience only — you can write the project file by hand instead. |
+| `vscode-nemerle-<version>.vsix` | VS Code support (optional): highlighting plus project-aware diagnostics, hover, completion, go-to-definition. |
+| `release-info.json` | Records the commit every artifact here was built from, and their versions. |
 
-There is no need to clone this repository to use either.
+There is no need to clone this repository to use any of them.
+
+> **Why the version numbers differ.** The `.vsix` and the `.nupkg` carry different version
+> numbers on purpose: the extension's tracks its editor features, the packages' tracks the
+> Nemerle compiler generation inside them, and the two move at different rates (four extension
+> releases shipped on one compiler generation). What ties them together is the release they came
+> from — see `release-info.json`, and the version check described under *Editor support*. Take
+> the whole set from one release rather than mixing.
 
 ## Requirements
 
@@ -33,17 +42,20 @@ ordinary directory containing `.nupkg` files — nothing needs to be extracted o
 
 ### 1.1 Put the packages somewhere
 
-Download the `.nupkg` assets from the [release page](https://github.com/matarillo/nemerle/releases)
-and drop them in a directory you intend to keep. Any path works; these are just examples:
+Download the release from the [release page](https://github.com/matarillo/nemerle/releases) and
+keep the folder somewhere permanent. Any path works; these are just examples:
 
 ```text
 C:\nemerle-packages\                     ~/nemerle-packages/
   Nemerle.Sdk.Unofficial.1.2.601-preview.1.nupkg
   Nemerle.Templates.Unofficial.1.2.601-preview.1.nupkg
+  vscode-nemerle-0.8.0.vsix
+  README.md
+  release-info.json
 ```
 
-If the release ships a single archive, extract it and use the folder that ends up holding the
-`.nupkg` files.
+The extra files are harmless: a folder feed is just a directory NuGet scans for `*.nupkg`, and it
+ignores everything else. So the folder you extract *is* the feed — no separate step.
 
 ### 1.2 Make the feed visible to NuGet
 
@@ -211,21 +223,29 @@ so an existing project that lists its sources keeps working as-is when converted
 
 ## 4. Editor support (optional)
 
-If the release also ships `vscode-nemerle-<version>.vsix`, it adds `.n` syntax highlighting plus
-project-aware diagnostics, hover, completion, and go-to-definition in VS Code:
+`vscode-nemerle-<version>.vsix` adds `.n` syntax highlighting plus project-aware diagnostics,
+hover, completion, and go-to-definition in VS Code:
 
 ```console
 code --install-extension vscode-nemerle-0.8.0.vsix
 ```
 
-Then open a **trusted** folder containing your `.nproj`. See the extension's own README for
-details.
+(Or in VS Code: **Extensions** → `...` → *Install from VSIX…*, which needs no `code` on your
+PATH.) Then open a **trusted** folder containing your `.nproj`. See the extension's own README
+for details.
 
-**Use the VSIX and the SDK package from the same release.** Nemerle assembly versions track the
-compiler generation, so mixing generations can fail at load time. The extension's language server
-checks this for you and shows a notification naming both versions if they disagree; each half
-records its provenance (`server/bundle-info.json` in the VSIX, `tools/ncc/ncc-info.json` in the
-SDK package).
+**Use the VSIX and the packages from the same release.** Nemerle assembly versions track the
+compiler generation, so mixing generations can fail at load time. Three things guard this, and
+you do not have to do any of them by hand:
+
+- `release-info.json` records the single commit every artifact in this folder was built from
+  (the release is refused if they disagree).
+- The extension's language server compares its own Nemerle assemblies against the toolchain your
+  project builds with, and shows a notification naming both versions if they differ.
+- Each half carries its own provenance for inspection: `server/bundle-info.json` inside the
+  VSIX, `tools/ncc/ncc-info.json` inside the SDK package.
+
+The extension is not auto-updated from here; installing a newer VSIX replaces it.
 
 ## 5. Updating and removing
 
@@ -278,14 +298,23 @@ are redistributed in them.
 
 ### For maintainers
 
-These packages are produced from a checkout by:
+A release set is produced from a clean checkout by, in order:
 
 ```powershell
-pwsh dotnet-port\pack-tool.ps1 -Pack     # -> dotnet-port\dist\nupkg (packages + a copy of this page)
+pwsh dotnet-port\pack-tool.ps1 -Pack               # toolchain + packages + this page -> dist\release
+pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # stages the server from that same toolchain
+cd dotnet-port\vscode-nemerle; npm run package     # VSIX -> dist\release
+pwsh dotnet-port\pack-release.ps1                  # verifies the set, writes release-info.json
 ```
 
-The version is derived from the packaged compiler's own assembly version, so it states which
-compiler is inside. `dotnet-port\packaging\<id>\README.md` is the README embedded in each package
-(what nuget.org would render); this page is the install guide, and `pack-tool.ps1 -Pack` copies it
-next to the packages so a release archive explains itself. Design and verification:
+`dist\release` is then the release: hand it over or zip it as-is. `pack-release.ps1` refuses to
+seal a set whose halves were built from different commits, or from a dirty tree — the VSIX and
+the packages are built by different tools, so a stale VSIX beside fresh packages is an easy and
+otherwise invisible mistake.
+
+The package version is derived from the packaged compiler's own assembly version, so it states
+which compiler is inside; the extension keeps its own version (see the note at the top of this
+page). `dotnet-port\packaging\<id>\README.md` is the README embedded in each package (what
+nuget.org would render); this page is the install guide, and `pack-tool.ps1 -Pack` copies it into
+`dist\release` so the archive explains itself. Design and verification:
 `dotnet-port\35-devenv2-wp-m6-log.md`; distribution status overall: `dotnet-port\DISTRIBUTION.md`.

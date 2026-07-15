@@ -363,7 +363,7 @@ assert を追加した。
 
 ```powershell
 # 1. toolchain layout + provenance + 2 つの nupkg
-pwsh dotnet-port\pack-tool.ps1 -Pack          # -> dotnet-port\dist\ncc, dotnet-port\dist\nupkg
+pwsh dotnet-port\pack-tool.ps1 -Pack          # -> dotnet-port\dist\ncc, dotnet-port\dist\release
 #    版を変えずに再 pack する場合も同じでよい(script が global packages の該当 (id,version) を退避する)
 
 # 2. server / handler
@@ -375,7 +375,7 @@ dotnet run -c Release --project dotnet-port\ProjectInfo.Test\Nemerle.ProjectInfo
 dotnet exec dotnet-port\LspServer.IntegrationTest\bin\Release\net10.0\Nemerle.LanguageServer.IntegrationTest.dll
 
 # 4. repo 外の空 dir で developer preview を試す(基準 1)
-#    <feed> = <repo>\dotnet-port\dist\nupkg
+#    <feed> = <repo>\dotnet-port\dist\release
 dotnet new install Nemerle.Templates.Unofficial::1.2.601-preview.1 --add-source <feed>
 #    空 dir に <clear/> + <feed> だけの NuGet.config を置いてから:
 dotnet new nemerle-console -n HelloSdk; cd HelloSdk; dotnet build; dotnet run
@@ -395,13 +395,13 @@ Pop-Location
 WSL(基準 2):
 
 ```bash
-FEED=/mnt/f/.../dotnet-port/dist/nupkg
+FEED=/mnt/f/.../dotnet-port/dist/release
 dotnet new install "Nemerle.Templates.Unofficial::1.2.601-preview.1" --add-source $FEED
 # 空 dir に <clear/> + $FEED の NuGet.config を置いてから:
 dotnet new nemerle-console -n HelloWsl && cd HelloWsl && dotnet build && dotnet run
 ```
 
-前提: `dotnet-port\dist\ncc` と `dotnet-port\dist\nupkg`(いずれも `pack-tool.ps1 -Pack`)。
+前提: `dotnet-port\dist\ncc` と `dotnet-port\dist\release`(いずれも `pack-tool.ps1 -Pack`)。
 `test:sdk` は nupkg が無いと明示メッセージで失敗する。生成物(`dist/`、`server/`、`.vsix`、
 `*.nupkg`、`test-workspace-sdk/`)は gitignore 済みで commit しない。
 
@@ -431,6 +431,46 @@ dotnet new nemerle-console -n HelloWsl && cd HelloWsl && dotnet build && dotnet 
 8. `.csproj` は使えない(SDK が error にする)。`.nproj` 制約自体は WP-I2 からの既知事項で、
    本 WP はエラーメッセージを改善しただけ。
 
+## 後作業(WP-M 完了後、同セッション)
+
+WP-M6 本体の後に、WP-N(release 工程)の土台として最小限だけ実施した。**バージョンの統一は
+行っていない**(下記)。
+
+1. **配布物を1フォルダーに集約**: `dist\nupkg` → **`dist\release`** に改名し、VSIX の出力先も
+   `npm run package`(`package:vsix` の `--out`)でそこへ変更した。このフォルダーがそのまま
+   リリースの実体になる(nupkg 2本 + VSIX + `README.md` + `release-info.json`)。NuGet の
+   folder source は `*.nupkg` しか見ないので、**受け取った人はこのフォルダーをそのまま feed に
+   指定できる**(README がそう案内している)。
+2. **`pack-release.ps1`(新規)**: ビルドはせず、`dist\release` を**検証して封をする**。
+   VSIX 内 `extension/server/bundle-info.json` と SDK package 内 `tools/ncc/ncc-info.json` を
+   **成果物の中から**読み、**commit が一致しなければ release を拒否**する。
+   dirty tree からの封印も拒否する(受け取った人が再現できない provenance を配らないため)。
+   通れば `release-info.json`(commit / describe / nemerleAssemblyVersion / 各成果物の版)を書く。
+3. **`packaging/README.md`** に「なぜ版番号が違うのか」「リリース手順(4 ステップ)」を追記。
+
+**version 融合を採らなかった理由**(実測と一次資料):
+
+- VS Code Marketplace は **semver prerelease タグを受け付けない**
+  (公式ドキュメント明記: "We only support `major.minor.patch` for extension versions, `semver`
+  pre-release tags are not supported"、`vsce publish --pre-release` がプレビューの正規手段)。
+  したがって VSIX を `1.2.601-preview.1` にすると WP-N の Marketplace 公開と両立しない。
+- prerelease を外した `1.2.601` は形式上は valid だが、**2つの番号は動く頻度が違う**。
+  `1.2.601` は `Nemerle.dll` の revision 由来で **compiler を再ビルドしない限り動かない**一方、
+  extension は `0.1.0` → `0.8.0` と 8 回リリースしている。WP-M2〜M6 の 4 リリース
+  (hover / 補完 / 定義参照 / incremental)は compiler 無改造だったので、融合していれば
+  **全て `1.2.601` になり VS Code が新旧を区別できず更新もできなかった**。
+- 「対応関係を知りたい」という目的自体は provenance が既に**実行時に強制する形で**満たしている。
+  版文字列を揃えるのは誰も強制しない命名規約という弱い二重化にすぎない。
+
+→ **バージョンを持つのは「リリース」であって成果物ではない**。GitHub Release のタグがその役割を
+担い、`release-info.json` がその機械可読な形になる。なお `pack-release.ps1` が **commit** で
+照合するのは意図的で、server 実行時の照合(assembly version)とは目的が違う: assembly version は
+「読み込めるか」を、commit は「同じソースから作られたか」を答える。compiler 無改造の期間は
+assembly version が据え置かれる(601 が M2〜M6 を通じて不変)ため、**assembly version では
+古い VSIX を検出できない**。実際 WP-M6 の作業中に「2 commit 前の VSIX が最新 package の隣に
+ある」状態が発生しており、この script はまさにそれを止める。
+
 前身の実装ログ: `30-devenv2-wp-m1-log.md`(WP-M1)/ `31-devenv2-wp-m2-log.md`(WP-M2)/
 `32-devenv2-wp-m3-log.md`(WP-M3)/ `33-devenv2-wp-m4-log.md`(WP-M4)/
 `34-devenv2-wp-m5-log.md`(WP-M5)。計画: `29-devenv2-plan.md`。配布の現状: `DISTRIBUTION.md`。
+利用者向け導入手順: `packaging/README.md`。

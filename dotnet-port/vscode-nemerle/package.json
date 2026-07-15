@@ -171,7 +171,7 @@
     "verify-server": "tsc -p tsconfig.test.json && node dist-test/test/tools/verifyBundledServer.js",
     "vscode:prepublish": "npm run build",
     "package": "npm run lint && npm test && npm run verify-server && npm run package:vsix",
-    "package:vsix": "vsce package --out vscode-nemerle-0.8.0.vsix"
+    "package:vsix": "vsce package --out ../dist/release/vscode-nemerle-0.8.0.vsix"
   },
   "dependencies": {
     "vscode-languageclient": "10.1.0"

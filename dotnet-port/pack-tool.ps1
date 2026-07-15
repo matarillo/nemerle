@@ -63,7 +63,7 @@
 # Usage:
 #   pwsh dotnet-port\pack-tool.ps1                          # default Stage2 -> dotnet-port\dist\ncc
 #   pwsh dotnet-port\pack-tool.ps1 -CompilerDir bin\Release\core\Stage3 -OutDir dotnet-port\dist\ncc-stage3
-#   pwsh dotnet-port\pack-tool.ps1 -Pack                    # ...and the NuGet packages -> dotnet-port\dist\nupkg
+#   pwsh dotnet-port\pack-tool.ps1 -Pack                    # ...and the NuGet packages -> dotnet-port\dist\release
 #
 # This is the single entry point for producing distributable Nemerle toolchain artifacts
 # (29-devenv2-plan.md section 10: "keep pack-tool.ps1 as the one entry point"). -Pack adds the
@@ -88,7 +88,7 @@ param(
     # so the default invocation stays the fast "build me a runnable ncc" loop everything else
     # (pack-server.ps1, the samples, the test fixtures) depends on.
     [switch]$Pack,
-    [string]$PackageOutDir = "",        # default: dotnet-port\dist\nupkg
+    [string]$PackageOutDir = "",        # default: dotnet-port\dist\release
     # Prerelease label appended to the version derived from the compiler itself (see section 6).
     # Bump it when re-packing the same compiler with changed packaging/targets: NuGet caches an
     # (id, version) by content, so reusing a version silently serves stale bits.
@@ -315,7 +315,13 @@ Write-Host "  (or)  `"$WrapperPath`" -out:hello.exe hello.n && dotnet exec hello
 #    version must describe.
 # ---------------------------------------------------------------------------
 if ($Pack) {
-    if ($PackageOutDir -eq "") { $PackageOutDir = Join-Path $PSScriptRoot "dist\nupkg" }
+    # dist\release is the release SET, not just a package output directory: the VSIX
+    # (dotnet-port\vscode-nemerle's `npm run package`) lands here too, and pack-release.ps1
+    # seals the folder with release-info.json. It doubles as a NuGet local feed because NuGet
+    # only looks for *.nupkg in a folder source and ignores everything else, so a user can point
+    # a NuGet.config straight at the extracted release archive - which is exactly what
+    # packaging\README.md tells them to do.
+    if ($PackageOutDir -eq "") { $PackageOutDir = Join-Path $PSScriptRoot "dist\release" }
     New-Item -ItemType Directory -Force -Path $PackageOutDir | Out-Null
 
     $v = [System.Reflection.AssemblyName]::GetAssemblyName((Join-Path $OutDirFull "Nemerle.dll")).Version
