@@ -18,8 +18,8 @@
 # together until now. Reading them from INSIDE the artifacts (rather than from the working tree
 # they were supposedly built from) is the point: it is the shipped bits that have to agree.
 #
-# Version note: the VSIX version (extension feature generation, 0.8.1) and the package version
-# (compiler generation, 1.2.601-preview.1) are deliberately NOT the same number -- they move at
+# Version note: the VSIX version (extension feature generation, 0.8.2) and the package version
+# (compiler generation, 1.2.601-preview.2) are deliberately NOT the same number -- they move at
 # different rates, and the VS Code Marketplace does not accept semver prerelease tags anyway
 # (35-devenv2-wp-m6-log.md). The release, not the artifact, is what has one version; that is what
 # the GitHub release tag is for, and release-info.json is the machine-readable form of it.
@@ -75,7 +75,7 @@ if ($packageFiles.Count -eq 0) { throw "No .nupkg in $ReleaseDir -- run `pwsh do
 $packages = @()
 $toolchainInfo = $null
 foreach ($file in $packageFiles) {
-    # "Nemerle.Sdk.Unofficial.1.2.601-preview.1.nupkg" -> id + version. The version starts at the
+    # "Nemerle.Sdk.Unofficial.1.2.601-preview.2.nupkg" -> id + version. The version starts at the
     # first dot-separated part that begins with a digit.
     $stem = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
     if ($stem -notmatch '^(?<id>.+?)\.(?<version>\d+\..*)$') { throw "Cannot parse an id/version out of '$($file.Name)'." }

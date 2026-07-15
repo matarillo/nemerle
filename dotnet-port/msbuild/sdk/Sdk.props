@@ -4,9 +4,9 @@
     WP-M6, dotnet-port\29-devenv2-plan.md §6.7.
 
     Consumed as:
-      <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">
+      <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
     or with the version pinned in global.json:
-      { "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "1.2.601-preview.1" } }
+      { "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "1.2.601-preview.2" } }
       <Project Sdk="Nemerle.Sdk.Unofficial">
 
     Why a project SDK (Sdk/Sdk.props + Sdk/Sdk.targets) and NOT the build/<id>.targets NuGet

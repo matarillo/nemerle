@@ -526,3 +526,11 @@ WSL 実機で無限ループ解消を確認(ユーザー検証)。
 (engine dll、ncc-info.json の commit)ため **1.2.601-preview.2** に、extension/ServerInfo は
 **0.8.1** に bump(NuGet は (id,version) を内容でなく識別子でキャッシュするため、配布済み
 preview.1 の中身差し替えは不可)。埋め込み README / install guide / template pin の版表記も更新。
+
+追補: 封印後の grep 監査で `preview.1` 表記の残存が見つかった(番号付きログ以外)。
+実害があるのは `pack-tool.ps1` の既定 `-PackageVersionSuffix`(素の `-Pack` が旧版番号で
+作る)と、**出荷物に入る 2 ファイル** = `vscode-nemerle/README.md`(VSIX 同梱)/
+`msbuild/sdk/Sdk.props` のコメント例(SDK nupkg 同梱)。全て preview.2 に統一し、
+出荷物の中身が変わるため VSIX/ServerInfo を **0.8.2** に bump。preview.2 は**未配布**
+だったので nupkg は同版のまま新 commit で再パック・再封印した(pack-release.ps1 は
+VSIX/nupkg の commit 一致を要求するため、部分的な作り直しはできない)。

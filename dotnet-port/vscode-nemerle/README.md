@@ -22,7 +22,7 @@ overriding disk content.
   - the **`Nemerle.Sdk.Unofficial` NuGet package** (no repository checkout):
 
     ```xml
-    <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">
+    <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
       <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
@@ -54,7 +54,7 @@ pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # builds LspServer, stages se
 cd dotnet-port\vscode-nemerle
 npm ci
 npm run package                                    # lint + tests + verify-server + vsce package
-code --install-extension vscode-nemerle-0.8.1.vsix
+code --install-extension vscode-nemerle-0.8.2.vsix
 ```
 
 Then open a trusted folder containing a `.nproj` project. The server starts

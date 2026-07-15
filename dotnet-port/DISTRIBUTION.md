@@ -53,7 +53,7 @@
 > パッケージ `Nemerle.Sdk.Unofficial`** と **`dotnet new` テンプレート
 > `Nemerle.Templates.Unofficial`** を生成し、repo checkout 無しで
 > `dotnet new nemerle-console` → `dotnet build` → `dotnet run` が成立する
-> (Windows / WSL 実測)。project は `<Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.1">`
+> (Windows / WSL 実測)。project は `<Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">`
 > の1行だけで済み、`<Import>`・`@(NemerleCompile)`・定型 property は不要
 > (`**/*.n` は SDK が glob する)。また **Windows/Linux 2 本あった targets は 1 本に統合**され、
 > package はその同一ファイルを同梱する(下記「3. SDK スタイル MSBuild 統合」の

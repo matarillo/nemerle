@@ -2,7 +2,7 @@
   "name": "vscode-nemerle",
   "displayName": "Nemerle",
   "description": "Development VS Code language support for Nemerle on .NET 10.",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publisher": "nemerle-project",
   "license": "BSD-3-Clause",
   "repository": {
@@ -171,7 +171,7 @@
     "verify-server": "tsc -p tsconfig.test.json && node dist-test/test/tools/verifyBundledServer.js",
     "vscode:prepublish": "npm run build",
     "package": "npm run lint && npm test && npm run verify-server && npm run package:vsix",
-    "package:vsix": "vsce package --out ../dist/release/vscode-nemerle-0.8.1.vsix"
+    "package:vsix": "vsce package --out ../dist/release/vscode-nemerle-0.8.2.vsix"
   },
   "dependencies": {
     "vscode-languageclient": "10.1.0"

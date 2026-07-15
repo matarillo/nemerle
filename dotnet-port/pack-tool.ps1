@@ -92,7 +92,7 @@ param(
     # Prerelease label appended to the version derived from the compiler itself (see section 6).
     # Bump it when re-packing the same compiler with changed packaging/targets: NuGet caches an
     # (id, version) by content, so reusing a version silently serves stale bits.
-    [string]$PackageVersionSuffix = "preview.1"
+    [string]$PackageVersionSuffix = "preview.2"
 )
 
 $ErrorActionPreference = "Stop"
@@ -361,8 +361,8 @@ if ($Pack) {
     )
 
     # NuGet caches an (id, version) in the global packages folder by identity, NOT by content:
-    # once 1.2.601-preview.1 has been restored anywhere on this machine, a re-packed
-    # 1.2.601-preview.1 is ignored in favour of the extracted copy, and the next build silently
+    # once 1.2.601-preview.2 has been restored anywhere on this machine, a re-packed
+    # 1.2.601-preview.2 is ignored in favour of the extracted copy, and the next build silently
     # tests stale bits. That trap is documented for Nemerle.Ncc.DevTool in DISTRIBUTION.md
     # section 2 with "bump the version on every re-pack" as the workaround, which is untenable
     # for an SDK whose version is meaningful. Evict the exact (id, version) instead, so

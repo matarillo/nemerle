@@ -49,7 +49,7 @@ keep the folder somewhere permanent. Any path works; these are just examples:
 C:\nemerle-packages\                     ~/nemerle-packages/
   Nemerle.Sdk.Unofficial.1.2.601-preview.2.nupkg
   Nemerle.Templates.Unofficial.1.2.601-preview.2.nupkg
-  vscode-nemerle-0.8.1.vsix
+  vscode-nemerle-0.8.2.vsix
   README.md
   release-info.json
 ```
@@ -227,7 +227,7 @@ so an existing project that lists its sources keeps working as-is when converted
 hover, completion, and go-to-definition in VS Code:
 
 ```console
-code --install-extension vscode-nemerle-0.8.1.vsix
+code --install-extension vscode-nemerle-0.8.2.vsix
 ```
 
 (Or in VS Code: **Extensions** → `...` → *Install from VSIX…*, which needs no `code` on your

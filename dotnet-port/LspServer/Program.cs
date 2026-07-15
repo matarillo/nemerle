@@ -24,7 +24,7 @@ internal static class Program
             .WithServerInfo(new ServerInfo
             {
                 Name = "nemerle-language-server",
-                Version = "0.8.1",
+                Version = "0.8.2",
             })
             .WithServices(services =>
             {
