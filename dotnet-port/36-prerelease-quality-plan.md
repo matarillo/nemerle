@@ -162,6 +162,8 @@ WP-O(公開)に耐える品質へ到達する。具体的には:
   `Nemerle.dll` AssemblyVersion とソースツリーの `GeneratedAssemblyVersion`
   (`git describe` 由来)の一致を検査し、不一致時は復旧手順(Stage1 フルリビルド)を
   提示して停止する。`pack-tool.ps1` / `pack-release.ps1` にも同等の整合チェックを通す。
+  同じ検査を、WP-N6 でリポジトリにチェックインする stage1(または stage2)成果物が
+  現在のソースツリーに対して古くなっていないかの検出にも流用できる形にする。
 - **A1 決定的ビルド完成**: `Nemerle.CoreEmit.Emitter.Save` で `ManagedPEBuilder.Serialize`
   後に `BlobContentId.FromHash` を適用し、MVID / PE タイムスタンプをコンテンツハッシュ由来に
   する(PDB の PdbId も同様)。stage2/stage3 比較スクリプトのマスク処理を撤去し、
@@ -344,6 +346,12 @@ PO 方針(§5-3)により**評価ステップ先行の二段構え**:
 - `pack-tool.ps1` / `pack-release.ps1` の pwsh(Linux)動作確認または Linux 手順整備(F5)。
 - Linux での `DefineConstants` 配線確認(`samples/Defines`、G5)。
 - `packaging/README.md` / extension README の Linux 手順の実測ベース更新。
+- **stage1(net4 フレーバー、mscorlib 互換ファサード経由で CoreCLR 上に載る)が
+  Linux の .NET 10 ランタイム上で `dotnet exec` 実行できるかの検証**。既存の WSL 実証
+  (`build-stage2-core.ps1` の core フレーバー = stage2 の DLL 群を Linux へ持ち込んで
+  `dotnet exec`)とは別の確認対象で、これまで未検証。成立すれば stage1→stage2→stage3 の
+  ブートストラップ全体を Linux 上で `dotnet exec` のみで完結できることになり、
+  WP-N6 の CI アーキテクチャの前提になる。
 
 受け入れ基準:
 
@@ -353,29 +361,53 @@ PO 方針(§5-3)により**評価ステップ先行の二段構え**:
 3. 発見した Linux 固有問題は修正または既知制約として記録される(engine 改修に及ぶ場合は
    WP-N2 と同じ回帰ゲートを適用)。
 4. Windows 側の全テストに回帰なし。
+5. Linux 上で checked-in stage1(§6 WP-N6)を `dotnet exec` 実行し、そこから
+   `dotnet exec <ncc> /from-file:<rsp>` で stage2 相当を生成できるかを確認し、
+   結果(可否と、不可の場合の原因)を log に記録する。
 
 リスク: **中**。preview.2 で修正した hover リビルドループ(path 大小文字)のような
 Linux 固有問題が engine 側から再び出る可能性がある。それを公開前に洗い出すことが
-本 WP の目的そのものなので、「問題が見つかること」は失敗ではない。
+本 WP の目的そのものなので、「問題が見つかること」は失敗ではない。stage1 の
+Linux 実行が不成立だった場合、WP-N6 は「checked-in stage2(core フレーバー)から
+始める」構成に縮小する(stage1→stage2 の再現だけを諦め、CI は stage2 以降のみ担当)。
 macOS は今回も対象外(バックログ)。
 
-### WP-N6(任意・go/no-go 判断付き): 最小 CI(Linux ベース)
+### WP-N6(任意・go/no-go 判断付き): 最小 CI(Linux ベース、checked-in stage1 起点)
 
 位置づけ: バックログ寄りだが、最小限の Linux ベース CI に限って本フェーズに任意で置く。
 作業ボリュームの不確実性が懸念のため、**WP-N5 完了時点で go/no-go を PO と判断**する。
 
+**アーキテクチャ**: `boot-4.0\` と同じパターンで、**現時点の stage1 成果物
+(net4 フレーバー、`Nemerle.dll`/`Nemerle.Compiler.dll`/`Nemerle.Macros.dll`/`ncc.exe`)を
+リポジトリにチェックインする**。CI(Linux 含む)は boot-4.0 → stage1 の生成ステップ
+(csc・GAC 上の .NET Framework v4.0 参照アセンブリ等、Windows/CLR4 専用ツールが必要)を
+毎回実行せず、チェックイン済み stage1 から `dotnet exec` のみで stage2 → stage3・
+testsuite・LspServer/ProjectInfo テストまで到達する。boot-4.0 → stage1 の再生成は
+ncc/lib/macros ソースが変わった際に**手動または別スケジュールで Windows 上で行い**、
+更新した stage1 を再チェックインする(WP-N1 の A2 版一致チェックを、チェックイン済み
+stage1 がソースツリーに対して古すぎないかの検出にも流用する)。
+本アーキテクチャの前提(stage1 の Linux 上 `dotnet exec` 実行可否)は WP-N5 で検証する。
+
 スコープ(go の場合、最小に固定):
 
-- GitHub Actions の Linux runner で「リリース済み(または local feed の)Sdk package からの
-  fixture build + LspServer / ProjectInfo テスト一式」のみを実行する workflow。
-- stage フルビルドと CLR4 検証は**含めない**(boot-4.0 ブートストラップが Windows/CLR4
-  前提のため。これらは引き続き手動回帰ゲート)。
+- GitHub Actions の Linux runner で、チェックイン済み stage1 から
+  `dotnet exec <ncc> /from-file:<rsp>` を実行して stage2(+ 可能なら stage3)を生成し、
+  testsuite と LspServer / ProjectInfo テスト一式を実行する workflow。
+- boot-4.0 → stage1 の生成自体と CLR4 スモークは CI の対象に**含めない**
+  (Windows/CLR4 専用ツールが必要なため。stage1 更新時の手動実行として引き続き
+  回帰ゲートを維持する)。
+- WP-N5 で stage1 の Linux 実行が不成立と判明した場合は、起点を
+  checked-in stage2(core フレーバー)に繰り下げ、CI は stage2→stage3 とテストのみを
+  担当する(stage1→stage2 の再現は CI スコープ外のまま手動回帰ゲートに残す)。
 
 受け入れ基準(go の場合): push/PR で自動実行され green。実行時間の目安 15 分以内。
-no-go の場合: 判断理由を log に記録しバックログ(§10-1)へ。
+チェックイン済み stage1(または stage2)がソースツリーに対して古い場合、workflow が
+検出して警告する。no-go の場合: 判断理由を log に記録しバックログ(§10-1)へ。
 
 リスク: **中**。CI 環境での .NET 10 SDK / VS Code headless / テスト依存の整備量が
 読みにくい。go/no-go 判断点とスコープ固定で計画倒れ・肥大化を防ぐ。
+checked-in stage1(または stage2)の鮮度管理(WP-N2 等でソースを変更した後に更新を
+忘れる)が新たな運用負荷になるため、A2 の版一致チェックによる自動検出を必須とする。
 
 ## 7. テストマトリクス
 
