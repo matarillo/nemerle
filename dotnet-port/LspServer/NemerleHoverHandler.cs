@@ -51,9 +51,13 @@ internal sealed class NemerleHoverHandler : HoverHandlerBase
         _log.Log(
             $"nemerle hover computed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms at {uri} {position.Line}:{position.Character}");
 
+        // Declaration hovers carry a trailing "declared at file:line:col:..."
+        // paragraph meant for the Visual Studio tooltip; here the editor gets
+        // that from go-to-definition, so the raw path line is dropped.
+        var text = HoverMarkup.StripDeclarationLocationTail(hover.Text);
         var value = _preferMarkdown
-            ? HoverMarkup.ToMarkdown(hover.Text)
-            : HoverMarkup.ToPlainText(hover.Text);
+            ? HoverMarkup.ToMarkdown(text)
+            : HoverMarkup.ToPlainText(text);
         if (string.IsNullOrEmpty(value))
             return null;
 

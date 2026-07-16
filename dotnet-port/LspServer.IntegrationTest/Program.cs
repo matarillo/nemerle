@@ -187,6 +187,52 @@ internal static class Program
             throw new InvalidDataException(
                 $"R-H function parameter args: hover after project reload ('{reloadedHoverValue}') did not match the initial fixed hover ('{mainHoverValue}').");
 
+        // Declaration-position hovers (the member NAME, not a type position).
+        // Two historical warts are pinned fixed here: the engine used to append
+        // the member type a second time ("field: elem : SMap; : SMap" -- the
+        // type is already part of member.ToString()), and the hover ended with
+        // a raw "declared at" path paragraph ("...splayheap.n:7:32:7:43:")
+        // written for the VS tooltip; the LSP handler now strips that tail.
+        var declarationProbes = new[]
+        {
+            new
+            {
+                Needle = "elem", Occurrence = 1, Label = "field declaration elem",
+                ExpectedSubstrings = new[] { "field", "elem", "SMap" },
+                DuplicationSignature = "; : ",
+            },
+            new
+            {
+                Needle = "Min : option", Occurrence = 1, Label = "property declaration Min",
+                ExpectedSubstrings = new[] { "Min", "option" },
+                DuplicationSignature = "} : ",
+            },
+        };
+        var splayheap = opened["splayheap.n"];
+        foreach (var probe in declarationProbes)
+        {
+            var (line, character) = LocateUtf16(splayheap.Text, probe.Needle, probe.Occurrence);
+            var value = HoverValue(await HoverAsync(client, splayheap.Uri, line, character));
+            Console.WriteLine(
+                $"    HOVER splayheap.n:{line + 1}:{character + 1} ({probe.Label}): " +
+                JsonSerializer.Serialize(value));
+            if (value is null)
+                throw new InvalidDataException($"{probe.Label}: hover returned no content.");
+            AssertNoRawMarkup(value, probe.Label);
+            foreach (var expected in probe.ExpectedSubstrings)
+            {
+                if (!value.Contains(expected, StringComparison.Ordinal))
+                    throw new InvalidDataException(
+                        $"{probe.Label}: hover did not contain '{expected}': {value}");
+            }
+            if (value.Contains(probe.DuplicationSignature, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"{probe.Label}: hover still shows the member type twice ('{probe.DuplicationSignature}'): {value}");
+            if (value.Contains("splayheap.n:", StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"{probe.Label}: hover still ends with the raw declared-at path paragraph: {value}");
+        }
+
         // R-R/E8 (N2.4): SMap is used throughout the five-source Sokoban
         // project as a field/local/parameter/return-type annotation, a
         // generic type argument, a constructor call and a static-member-

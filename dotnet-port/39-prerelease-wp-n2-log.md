@@ -306,7 +306,68 @@ git 管理から外した**(`.gitignore` 追加 + `git rm --cached`。ファイ�
 これに伴い 37 §9-6 の運用(「rsp の機械的な揺れはコミットしない」)は不要になった。
 本ログ §6 の「rsp を HEAD 状態へ復元」も、以後は不要となる。
 
-## 11. バックログ起票メモ(38 §5.1 メモの持ち越し)
+## 11. 追記: 手動テスト(WSL、1.2.623-preview.1 セット)からのフォローアップ 2 件
+
+### 11.1 CoreEmit と常駐 MSBuild プロセスの衝突(記録のみ — バックログ候補)
+
+SDK package を 601-preview.2 → 623-preview.1 に切り替えた直後の最初の `dotnet build` が
+次で失敗した:
+
+```
+could not load the CoreCLR emission helper '...(623)...\Nemerle.CoreEmit.dll':
+Could not load file or assembly 'Nemerle.CoreEmit, Version=1.0.0.0, ...'.
+Assembly with same name is already loaded
+```
+
+原因は 2 つの設計判断の組み合わせ: (1) `Nemerle.CoreEmit.dll` の AssemblyVersion は
+**1.0.0.0 固定**(Nemerle.dll のような git describe 由来版がない)、(2) in-process
+`NccCompile` は参照 DLL を collectible ALC に隔離する一方、CoreEmit だけは意図的に
+default ALC へ `Assembly.LoadFrom` する(WP-A3)。.NET 10 の `dotnet build` は MSBuild
+プロセスを常駐させるため、旧 package でビルドした常駐プロセスの default ALC に旧 CoreEmit
+が残ったまま新 package のビルドが走ると「同名・同版・別内容」で LoadFrom が拒否する。
+
+回避: `dotnet build-server shutdown`(または `--disable-build-servers` /
+`-p:NemerleUseExec=true`)。恒久修正の候補(バックログ): CoreEmit への版スタンプ付与、
+CoreEmit の ALC 内ロード化、衝突検出時に shutdown を促す診断メッセージ。
+
+### 11.2 宣言位置 hover の型 2 回表示 + 生 location 行(修正済み)
+
+報告: `splayheap.n:7` の `elem`(**宣言名**の位置)への hover が
+`public field: elem : NSokoban.SMap; : NSokoban.SMap` + 空行 + `…splayheap.n:7:32:7:43:` を表示。
+
+調査結果: **WP-N2 の退行ではなく VS2010 由来の宣言 hover 組み立ての欠陥**。VS 側も
+`QuickTipInfo.Text` を WPF hint にそのまま流すため、VS2010 でも同一の重複+location 行が
+表示されていた(`NemerleSource.GetDataTipText` → `ShowHint` → `WpfHint.HintBuilder` を確認。
+なお同確認により、`<hint value=…/>` を VS は value のインライン表示+クリック展開で
+レンダリングしていたことも判明 — N2.1 の平文化は VS の表示との整合という裏付けを得た)。
+
+原因(いずれも `QuickTipInfo.SetMemberText`):
+
+1. `member.ToString()`(= `MemberBuilder.DescribeMember`)が field / property の型を
+   既に含む(`field: elem : NSokoban.SMap;`)のに、直後に `" : " + GetMemType()` を
+   **再度追記**していた → 重複。property 宣言(`{ get; }` の後に `: 型`)も同罪。
+2. 末尾に `GetLocationText`(`"\n\n" + Location.ToString()`)を追記 → 生パス行。
+
+修正(engine と LSP で分担):
+
+- **engine**: `SetMemberText` の IField / IProperty への型追記を削除。`DescribeMember` の
+  全実装(FieldBuilder / PropertyBuilder / External* — すべて `DescribeMember` に集約)が
+  型を含むことを確認済みで情報損失なし。`Text` を解析する消費者は皆無
+  (VS は表示のみ、`NeedDebugDataTip` は Location/TExpr 参照、sharpdevelop も表示のみ)。
+  VS2010 の表示もこの重複が消える方向にのみ変わる。
+- **LSP**(`HoverMarkup.StripDeclarationLocationTail` + hover handler): 末尾の
+  「`\n\n` + `file:line:col:endLine:endCol:`」段落のみを厳密に除去。**engine には残す** —
+  VS2010 / SharpDevelop のツールチップでは「定義位置の表示」という機能であり(peek の
+  ない時代の実用機能)、それを engine 側で削るのは共有消費者への機能後退になるため。
+  VS Code 側は definition / peek があるので hover 内の生パスは純粋にノイズ。
+
+検証: 宣言位置 hover(field / property)を probe に assertion 追加、
+`StripDeclarationLocationTail` の unit テスト 6 件追加、raw LSP 29 本 PASS、
+ProjectInfo unit PASS、WP-K ConsoleTest **52/58 = ベースライン同数**
+(FAIL 6 件は既知の K-C 集合と完全一致、回帰なし)。engine 変更は
+`QuickTipInfo.n`(engine 側)のみで Stage リビルド不要。
+
+## 12. バックログ起票メモ(38 §5.1 メモの持ち越し)
 
 WP-N 完了までに 36 §10 バックログ(E9)へ次の 2 点を明示項目として起票する(38 §5.1 の
 仮予定を維持。36 はドラフトのため本ログでは記録のみ):

@@ -22,6 +22,13 @@ public static partial class HoverMarkup
     [GeneratedRegex(@"<\s*lb\s*/?\s*>", RegexOptions.IgnoreCase)]
     private static partial Regex LineBreakTag();
 
+    // A declaration hover ends with the declaration's source location as a
+    // final blank-line-separated paragraph: "file:line:col:endLine:endCol:".
+    // Anchored to the end and to the whole paragraph so an identifier or doc
+    // sentence containing a lookalike substring is never touched.
+    [GeneratedRegex(@"\n\n[^\n]+:\d+:\d+:\d+:\d+:\s*$")]
+    private static partial Regex DeclarationLocationTail();
+
     // Any remaining pseudo-markup tag: <keyword>, </keyword>, <b>, <hint value='...'>,
     // <code>, <pre>, <params>, <pname>, <ptype>, ...  Source-derived '<'/'>' are
     // still HtmlMangling-escaped as &lt;/&gt; at this point, so this never eats a
@@ -86,6 +93,23 @@ public static partial class HoverMarkup
         if (!value.Success)
             return tag.Value;
         return value.Groups[1].Success ? value.Groups[1].Value : value.Groups[2].Value;
+    }
+
+    /// <summary>
+    /// Removes the trailing source-location paragraph
+    /// (<c>"...\n\nfile:line:col:endLine:endCol:"</c>) that the engine appends
+    /// to declaration hovers.  That paragraph is how the Visual Studio tooltip
+    /// showed "declared at"; an LSP client gets the same answer from
+    /// go-to-definition, so left in place it only makes every declaration
+    /// hover end with a raw absolute-path line.  Apply to the engine text
+    /// before <see cref="ToPlainText"/>/<see cref="ToMarkdown"/>.
+    /// </summary>
+    public static string StripDeclarationLocationTail(string? markup)
+    {
+        if (string.IsNullOrEmpty(markup))
+            return string.Empty;
+
+        return DeclarationLocationTail().Replace(markup, string.Empty);
     }
 
     /// <summary>

@@ -189,12 +189,10 @@ namespace Nemerle.Completion2
 
       Text = GetAttributeText(member.Attributes) + name;
 
-      match (member)
-      {
-      | _ is IProperty
-      | _ is IField    => Text += " : " + member.GetMemType().ToString();
-      | _ => ()
-      }
+      // Do not append member.GetMemType() for fields and properties here:
+      // member.ToString() (MemberBuilder.DescribeMember) already renders their
+      // type ("field: x : T;" / "property: N.P : T { get; }"), so appending it
+      // again made declaration hovers show the type twice ("field: x : T; : T").
 
       Text += GetDocText(member, member.Location);
 

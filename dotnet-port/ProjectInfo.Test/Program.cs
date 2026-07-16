@@ -201,6 +201,28 @@ internal static class Program
         var withTicks = HoverMarkup.ToMarkdown("a ``` b");
         True(withTicks.StartsWith("````nemerle\n", StringComparison.Ordinal) && withTicks.EndsWith("\n````", StringComparison.Ordinal),
             "fence grows past an embedded backtick run");
+
+        // Declaration hovers end with a "declared at" paragraph
+        // ("\n\nfile:line:col:endLine:endCol:") written for the VS tooltip; the
+        // LSP handler strips it (the editor answers "where" via go-to-definition).
+        Equal("public field: elem : NSokoban.SMap;",
+            HoverMarkup.StripDeclarationLocationTail(
+                "public field: elem : NSokoban.SMap;\n\n/home/user/src/splayheap.n:7:32:7:43:"),
+            "a trailing unix-path location paragraph is stripped");
+        Equal("field: x : int;",
+            HoverMarkup.StripDeclarationLocationTail("field: x : int;\n\nC:\\src\\a b\\file.n:1:2:3:4:"),
+            "a trailing windows-path location paragraph (drive colon, spaces) is stripped");
+        Equal("no tail here",
+            HoverMarkup.StripDeclarationLocationTail("no tail here"),
+            "text without a location paragraph is unchanged");
+        Equal("see foo.n:1:2:3:4: for details",
+            HoverMarkup.StripDeclarationLocationTail("see foo.n:1:2:3:4: for details"),
+            "a lookalike substring that is not a whole trailing paragraph is kept");
+        Equal("only doc text\n\nnot a location",
+            HoverMarkup.StripDeclarationLocationTail("only doc text\n\nnot a location"),
+            "a final paragraph that is not file:line:col:endLine:endCol: is kept");
+        Equal(string.Empty, HoverMarkup.StripDeclarationLocationTail(null),
+            "null markup yields empty text when stripping the location tail");
     }
 
     private static void CompletionMappingTests()
