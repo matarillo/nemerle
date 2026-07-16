@@ -1,0 +1,89 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-N3: packages the core-built Nemerle.Linq.dll (bin\Release\core\Libs, produced by
+    dotnet-port\build-libs-core.ps1 from Linq\Macro\*.n) as an ordinary library NuGet
+    package, so an Sdk-based .nproj can opt into the `linq` query syntax and the
+    ToExpression macro with a plain PackageReference:
+
+      <PackageReference Include="Nemerle.Linq.Unofficial" Version="<version>" />
+
+    Like the Sdk/Templates packages this is pure repackaging of pre-built bits (no compile
+    here); drive it through dotnet-port\pack-tool.ps1 -Pack, which validates that the
+    packaged dll matches the compiler generation and passes -p:Version=.
+
+    Consumption path: the lib/net10.0 assembly flows through @(ReferencePath) into ncc's
+    -ref: (dotnet-port\msbuild\Nemerle.Core.targets), which both loads the macros it
+    contains (the compiler discovers macro assemblies among plain references) and links
+    the runtime helpers. The System.Linq.Expressions/System.Linq.Queryable BCL surface the
+    generated code needs is part of ncc's own CoreCLR default reference set
+    (LoadCoreStdlibReferences, ncc\passes.n) since the same WP-N3 change, so no extra
+    wiring is required here.
+
+    Deliberately NOT merged into Nemerle.Sdk.Unofficial or dist\ncc: the Sdk package is
+    the toolchain (every project needs it), Nemerle.Linq is a library (projects opt in),
+    and versioned NuGet dependency is exactly the mechanism for that. The ".Unofficial"
+    ID suffix follows the naming agreed for the Sdk package (see its csproj header).
+
+    No NuGet dependencies are declared: Nemerle.dll (which Nemerle.Linq binds against) is
+    supplied by the Nemerle.Sdk.Unofficial toolchain, not by the package graph. Use the
+    same release set for both packages - the assembly version tracks the source
+    generation, and a Nemerle.Linq built from a NEWER generation than the toolchain fails
+    to load (CoreCLR refuses a lower-versioned Nemerle.dll than referenced).
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Nemerle.Linq.Unofficial</PackageId>
+
+    <!-- Pure repackaging: no compile inputs, no build output of this project in the package. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <Authors>matarillo</Authors>
+    <Copyright>Copyright (c) 2003-2008 The University of Wroclaw. Copyright (c) 2008-2014 Nemerle Project Team.</Copyright>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/matarillo/nemerle</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/matarillo/nemerle</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>Nemerle;linq;expression-trees;macros;unofficial</PackageTags>
+    <Description>UNOFFICIAL .NET 10 build of Nemerle.Linq (the `linq` query-syntax macro, the ToExpression macro and lambda-to-expression-tree conversion). Not a release of the Nemerle project. For .nproj projects built with Nemerle.Sdk.Unofficial; add as a plain PackageReference.</Description>
+
+    <!-- NU5128: no dependency group for net10.0 - deliberate, see the header comment
+         (the Nemerle runtime comes from the Sdk toolchain, not the package graph). -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+
+    <!-- Where dotnet-port\build-libs-core.ps1 wrote the core-built libraries. Override with
+         -p:NemerleLibsDir=... if built elsewhere. -->
+    <NemerleLibsDir Condition="'$(NemerleLibsDir)' == ''">$(MSBuildThisFileDirectory)..\..\..\bin\Release\core\Libs\</NemerleLibsDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(NemerleLibsDir)Nemerle.Linq.dll" Pack="true" PackagePath="lib/net10.0/" Visible="false" />
+
+    <!-- Staged copy with __NEMERLE_SDK_VERSION__ substituted (pack-tool.ps1 passes
+         NemerleReadmeFile); packing packaging\...\README.md verbatim would ship the
+         literal placeholder. -->
+    <None Include="$(NemerleReadmeFile)" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <Target Name="ValidateLinqPayload" BeforeTargets="Build;Pack">
+    <Error Condition="'$(NemerleReadmeFile)' == '' OR !Exists('$(NemerleReadmeFile)')"
+           Text="NemerleReadmeFile ($(NemerleReadmeFile)) does not exist. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which stages README.md with the package version substituted in." />
+    <Error Condition="!Exists('$(NemerleLibsDir)Nemerle.Linq.dll')"
+           Text="NemerleLibsDir ($(NemerleLibsDir)) does not contain Nemerle.Linq.dll: run dotnet-port\build-libs-core.ps1 first (or pass -p:NemerleLibsDir=&lt;path&gt;)." />
+  </Target>
+
+  <!-- Same rationale as Nemerle.Sdk.Unofficial: the version must describe the packaged
+       bits; pack-tool.ps1 derives it from the compiler layout (and separately verifies the
+       Linq dll is of the same generation). -->
+  <Target Name="ValidateExplicitVersion" BeforeTargets="Pack">
+    <Error Condition="'$(Version)' == '1.0.0'"
+           Text="No -p:Version was supplied, so the SDK's 1.0.0 default is in effect. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`." />
+  </Target>
+
+</Project>

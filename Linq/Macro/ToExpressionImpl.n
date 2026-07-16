@@ -351,7 +351,7 @@ namespace Nemerle.Linq
           else
           {
             def args1       = ConvertParameters(lparms, parms);
-            def getCtorInfo = PExpr.Typed(TExpr.CtorOf(from, meth));
+            def getCtorInfo = MakeCtorInfo(from, meth); // not TExpr.CtorOf -- see MakeCtorInfo
             <[ Expression.New($getCtorInfo, array[..$args1]) ]>
           }
 
@@ -459,7 +459,7 @@ namespace Nemerle.Linq
           makeFieldInfoList(tupleType, i - 1, ty, PExpr.Typed(TExpr.FieldOf(ty, tupleType.GetField(i))) :: acc)
       }
       def tupleType   = _manager.InternalType.GetTupleType(args.Length);
-      def getCtorInfo = PExpr.Typed(TExpr.CtorOf(type, tupleType.Ctor));
+      def getCtorInfo = MakeCtorInfoFromParms(TupleType.Make(type), args.Map(_.Type)); // not TExpr.CtorOf -- see MakeCtorInfo
       def argsExprs   = args.Map(a => ToExpr(lparms, a));
       def fieldsInfos = makeFieldInfoList(tupleType, args.Length, TupleType.Make(type));
       def expr        = <[ Expression.New($getCtorInfo, array[..$argsExprs], array[..$fieldsInfos]) ]>;
@@ -487,6 +487,43 @@ namespace Nemerle.Linq
     {
       def metInfo = PExpr.Typed(TExpr.MethodOf(from, prop.GetGetter(), []));
       metInfo
+    }
+
+    // Resolves the constructor for Expression.New at RUN time via Type.GetConstructor
+    // instead of embedding a constructor-token literal (PExpr.Typed(TExpr.CtorOf(...)),
+    // which compiles to `ldtoken <ctor>`): the persisted Reflection.Emit implementation
+    // used when ncc itself runs on .NET 9+/CoreCLR rejects
+    // ILGenerator.Emit(OpCodes.Ldtoken, ConstructorInfo), so any expression tree
+    // containing Expression.New crashed the compiler there. Type.GetConstructor behaves
+    // identically on CLR4/CoreCLR; the cost is one reflection lookup when the tree is
+    // built at run time.
+    MakeCtorInfo(declaring : TypeVar, ctor : IMethod) : PExpr
+    {
+      def parmTypes =
+        match (declaring.Fix().TypeOfMember(ctor).Fix())
+        {
+          | FixedType.Fun(from, _) =>
+            match (from.Fix())
+            {
+              | FixedType.Void => []
+              | FixedType.Tuple(types) when ctor.Header.Parameters.Length > 1 => types
+              | t => [(t : TypeVar)]
+            }
+          | _ => ctor.Header.Parameters.Map(p => p.ty)
+        };
+      MakeCtorInfoFromParms(declaring, parmTypes)
+    }
+
+    // Tuple variant: TypeOfMember asserts on FixedType.Tuple receivers, so the caller
+    // passes the run-time tuple class (TupleType.Make) and the element types directly.
+    MakeCtorInfoFromParms(declaring : TypeVar, parmTypes : list[TypeVar]) : PExpr
+    {
+      def typeofs = parmTypes.Map(t => <[ typeof($(t : typed)) ]>);
+      <[ typeof($(declaring : typed)).GetConstructor(
+           System.Reflection.BindingFlags.Instance
+           %| System.Reflection.BindingFlags.Public
+           %| System.Reflection.BindingFlags.NonPublic,
+           null, array[..$typeofs], null) ]>
     }
   }
 

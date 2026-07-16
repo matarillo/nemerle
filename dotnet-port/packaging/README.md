@@ -16,6 +16,7 @@ use them.
 |---|---|
 | `Nemerle.Sdk.Unofficial.<version>.nupkg` | An MSBuild project SDK. Carries the `ncc` compiler and the MSBuild task that runs it, so `dotnet build` compiles `.n` sources. This is the only package a project needs. |
 | `Nemerle.Templates.Unofficial.<version>.nupkg` | `dotnet new` templates (`nemerle-console`, `nemerle-classlib`). Convenience only — you can write the project file by hand instead. |
+| `Nemerle.Linq.Unofficial.<version>.nupkg` | The Nemerle LINQ macro library (`linq <# … #>` query syntax, `ToExpression`, lambda-to-expression-tree conversion). Optional; add as an ordinary `PackageReference`. |
 | `vscode-nemerle-<version>.vsix` | VS Code support (optional): highlighting plus project-aware diagnostics, hover, completion, go-to-definition. |
 | `release-info.json` | Records the commit every artifact here was built from, and their versions. |
 
@@ -49,6 +50,7 @@ keep the folder somewhere permanent. Any path works; these are just examples:
 C:\nemerle-packages\                     ~/nemerle-packages/
   Nemerle.Sdk.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
   Nemerle.Templates.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
+  Nemerle.Linq.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
   vscode-nemerle-__NEMERLE_VSIX_VERSION__.vsix
   README.md
   release-info.json
@@ -176,6 +178,24 @@ To keep the version out of every project file, drop it from the `Sdk` attribute 
 </ItemGroup>
 ```
 
+### LINQ (optional package)
+
+`Nemerle.Linq.Unofficial` adds the `linq <# … #>` query syntax, the `ToExpression` macro and
+implicit lambda-to-expression-tree conversion. It is an ordinary package reference — use the
+same version as the SDK (both track the compiler generation):
+
+```xml
+<ItemGroup>
+  <PackageReference Include="Nemerle.Linq.Unofficial" Version="__NEMERLE_SDK_VERSION__" />
+</ItemGroup>
+```
+
+```n
+using Nemerle.Linq;
+
+def evens = linq <# from x in [3, 1, 4, 1, 5] where x % 2 == 0 select x #>;
+```
+
 ### Macro libraries
 
 A project that **defines** macros needs the compiler's own API at compile time. Ask for it with
@@ -301,6 +321,7 @@ are redistributed in them.
 A release set is produced from a clean checkout by, in order:
 
 ```powershell
+pwsh dotnet-port\build-libs-core.ps1               # auxiliary libs (Nemerle.Linq) -> bin\Release\core\Libs
 pwsh dotnet-port\pack-tool.ps1 -Pack               # toolchain + packages + this page -> dist\release
 pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # stages the server from that same toolchain
 cd dotnet-port\vscode-nemerle; npm run package     # VSIX -> dist\release

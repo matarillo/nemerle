@@ -77,7 +77,11 @@ module BasicValueTypesTest
     printf ("%lf\n", 123.345);
     printf ("%lf\n", .345);
     printf ("%lf\n", 1e20);
-    printf ("%lf", 12.34E-10 / 23.2 * 10242.3 + 5.4);
+    // Printed with an explicit "G15" (the effective .NET Framework default): .NET Core 3+
+    // changed double.ToString()'s default "G" to shortest-round-trippable, which renders
+    // this expression as 5.4000005447844055 instead of 5.40000054478441. (%lf expands to
+    // the default format -- macros\io.n -- so it cannot be used for this value.)
+    System.Console.Write ((12.34E-10 / 23.2 * 10242.3 + 5.4).ToString ("G15", System.Globalization.CultureInfo.InvariantCulture));
     if (-0.5 > -0.6)
       System.Console.WriteLine ("OK")
     else

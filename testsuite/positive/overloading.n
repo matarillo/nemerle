@@ -203,11 +203,15 @@ public module DelayedOverloadResolution
     
     WriteLine("DelayedOverloadResolution Begin");
 
+    // The two double results are printed with an explicit "G15" (the effective .NET
+    // Framework default format): .NET Core 3+ changed double.ToString()'s default "G" to
+    // shortest-round-trippable (61.199999999999996 vs 61.2). What is under test here is
+    // the overload resolution of f, which is unaffected.
     def f(d) { d.UnitPrice * (d.Quantity :> double) };
-    WriteLine(f(DelayedOverloadResolution.Detail));
+    WriteLine(f(DelayedOverloadResolution.Detail).ToString("G15", System.Globalization.CultureInfo.InvariantCulture));
 
     def f(d) { d.UnitPrice * d.Quantity }
-    WriteLine(f(DelayedOverloadResolution.Detail));
+    WriteLine(f(DelayedOverloadResolution.Detail).ToString("G15", System.Globalization.CultureInfo.InvariantCulture));
  
     def f(d) { (d.UnitPrice :> long) * d.Quantity }
     WriteLine(f(DelayedOverloadResolution.Detail));

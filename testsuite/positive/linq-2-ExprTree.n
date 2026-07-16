@@ -20,7 +20,16 @@ module Program
       .Select(fun((o, t)) { (o.OrderID, /* Total = */ t) })
     ; 
 
-    WriteLine($<#..$(result; ", "; _.ToString())#>);
+    // Totals are printed with an explicit "G15" (the effective .NET Framework default):
+    // .NET Core 3+ changed double.ToString()'s default "G" to shortest-round-trippable
+    // (10.799999999999999 vs 10.8). What is under test is the IQueryable/expression-tree
+    // pipeline, which is unaffected.
+    def fmt(p)
+    {
+      def (id, t) = p;
+      "(" + id.ToString() + ", " + t.ToString("G15", System.Globalization.CultureInfo.InvariantCulture) + ")"
+    }
+    WriteLine($<#..$(result; ", "; fmt)#>);
   }
 }
 

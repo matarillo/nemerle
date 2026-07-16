@@ -32,6 +32,13 @@
 param(
     [string]$Configuration = "Release",
     [string]$CompilerDir   = "",           # dir containing the core-flavor ncc.exe + Nemerle*.dll (default: bin\<Cfg>\core\Stage2)
+    [string]$LibsDir       = "",           # dir containing core-built auxiliary libs (Nemerle.Linq.dll, built by
+                                           # dotnet-port\build-libs-core.ps1; default: bin\<Cfg>\core\Libs). Staged next to the
+                                           # compiler so REFERENCE:-pragma bare-name resolution (CWD probing) and the compiled
+                                           # tests' run-time loads both find them -- mirrors NemerleAll.nproj's CompilerTests
+                                           # copying $(NBin)\Linq\Nemerle.Linq.dll into $(NBin)\Tests\positive. Skipped with a
+                                           # warning if the directory does not exist (the Linq-dependent tests then fail as
+                                           # they did before WP-N3).
     [string]$HarnessDir    = "",           # dir containing the prebuilt CLR4 Nemerle.Compiler.Test.exe (default: bin\<Cfg>\net-4.0\TestFramework)
     [string]$StagingDir    = "",           # scratch dir the compiler+harness get copied into (default: %TEMP%\nemerle-core-testsuite)
     [string]$TestSuiteDir  = "",           # default: <repo>\testsuite
@@ -45,6 +52,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 if ($CompilerDir -eq "") { $CompilerDir = Join-Path $RepoRoot "bin\$Configuration\core\Stage2" }
+if ($LibsDir     -eq "") { $LibsDir     = Join-Path $RepoRoot "bin\$Configuration\core\Libs" }
 if ($HarnessDir  -eq "") { $HarnessDir  = Join-Path $RepoRoot "bin\$Configuration\net-4.0\TestFramework" }
 if ($StagingDir  -eq "") { $StagingDir  = Join-Path ([IO.Path]::GetTempPath()) "nemerle-core-testsuite" }
 if ($TestSuiteDir -eq "") { $TestSuiteDir = Join-Path $RepoRoot "testsuite" }
@@ -64,6 +72,18 @@ if (-not $SkipCopy) {
     Write-Host "Staging harness: $HarnessDir -> $StagedHarness"
     New-Item -ItemType Directory -Force -Path $StagedHarness | Out-Null
     Copy-Item -Path (Join-Path $HarnessDir "*") -Destination $StagedHarness -Recurse -Force
+
+    # WP-N3: auxiliary core-built libraries (Nemerle.Linq.dll). Staged into the compiler
+    # directory so the existing per-suite "*.dll -> output dir" copy below places them in
+    # the harness working directory, where (a) `// REFERENCE: Nemerle.Linq` pragmas
+    # resolve by bare-name CWD probing at compile time and (b) the compiled tests find
+    # them at run time.
+    if (Test-Path $LibsDir) {
+        Write-Host "Staging auxiliary libs: $LibsDir -> $StagedCompiler"
+        Copy-Item -Path (Join-Path $LibsDir "*.dll") -Destination $StagedCompiler -Force
+    } else {
+        Write-Warning "LibsDir not found ($LibsDir) -- Nemerle.Linq-dependent tests will fail. Build it with dotnet-port\build-libs-core.ps1."
+    }
 }
 
 $NccExe = Join-Path $StagedCompiler "ncc.exe"
@@ -114,7 +134,9 @@ $CoreRefs = @(
     "System.Net.Primitives.dll",          # System.Net.IPAddress (testsuite\positive\bug-1216.n)
     "System.Net.NameResolution.dll",      # System.Net.IPHostEntry/Dns (testsuite\positive\properties.n)
     "System.Collections.NonGeneric.dll",  # System.Collections.SortedList/Hashtable (testsuite\positive\enumerator.n)
-    "System.ObjectModel.dll"              # System.Collections.ObjectModel.KeyedCollection (testsuite\positive\generics.n)
+    "System.ObjectModel.dll",             # System.Collections.ObjectModel.KeyedCollection (testsuite\positive\generics.n)
+    "System.Linq.Expressions.dll",        # WP-N3: expression trees (Nemerle.Linq consumers: Issue-git-0232/0239/0272-linq-ET, linq-2-ExprTree)
+    "System.Linq.Queryable.dll"           # WP-N3: AsQueryable/IQueryable operators (Issue-git-0590-2.n, linq-2-ExprTree.n)
 ) | ForEach-Object { FwRef $_ }
 
 $GlobalRefs = @("mscorlib", "System") + $CoreRefs + @((Join-Path $StagedCompiler "Nemerle.dll"))
@@ -126,11 +148,18 @@ $GlobalRefs = @("mscorlib", "System") + $CoreRefs + @((Join-Path $StagedCompiler
 # instead, since Main.n's `-p` parser just does value.Split(' ','\t','\n','\r')
 # with no quoting.
 # ---------------------------------------------------------------------------
+# WP-N3: -def:RUNTIME_CORE gives test sources an explicit "running the CoreCLR harness"
+# preprocessor symbol. The CLR4 harness (NemerleAll.nproj CompilerTests) defines
+# RUNTIME_MS;NET_4_0 and never defines RUNTIME_CORE, so `#if !NET_4_0 && !RUNTIME_CORE`
+# shims (external-extension-method-lib.n's pre-3.5 ExtensionAttribute shim) stay exactly
+# as before on CLR4 while correctly dropping out here -- CoreCLR's corelib already ships
+# the types those shims declared, so compiling them is a redefinition error. NET_4_0's
+# mere absence cannot express this (it also means ".NET 2.0/3.5", where the shim is needed).
 $CommonArgs = @(
     "-ncc", $NccExe,
     "-r", $DotnetExe,
     "-rp", "exec",
-    "-p", "-no-stdlib -use-loaded-corlib -greedy-references:- -nowarn:10003"
+    "-p", "-no-stdlib -use-loaded-corlib -greedy-references:- -nowarn:10003 -def:RUNTIME_CORE"
 )
 foreach ($r in $GlobalRefs) { $CommonArgs += @("-ref", $r) }
 

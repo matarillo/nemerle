@@ -6,3 +6,11 @@ ncc/testsuite/positive/lexer1.n eol=lf
 # terminator there so `git diff --check` flags real trailing whitespace only,
 # instead of every added line.
 VsIntegration/** whitespace=cr-at-eol
+
+# Same story for the other legacy trees touched by the port (WP-N3): compiler
+# sources, the Linq macro library and the testsuite are CRLF/LF mixed per file;
+# on the CRLF ones every added line would otherwise trip `git diff --check`.
+# The attribute only exempts the CR itself -- real trailing spaces still flag.
+ncc/** whitespace=cr-at-eol
+Linq/** whitespace=cr-at-eol
+testsuite/** whitespace=cr-at-eol

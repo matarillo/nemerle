@@ -584,15 +584,22 @@ namespace Nemerle.Compiler
       LibrariesManager.AddLibrary("System", true);
 
       // The real (non-facade) split assemblies covering the common BCL surface ordinary
-      // Nemerle programs touch -- kept in sync with dotnet-port\build-stage2-core.ps1's
-      // $CoreRefs and gen-default-rsp.ps1. Resolved from the running framework directory
-      // (System.Private.CoreLib's own location) so this follows a runtime upgrade.
+      // Nemerle programs touch -- dotnet-port\build-stage2-core.ps1's $CoreRefs (what the
+      // compiler's own sources need) plus the remaining old System.Core surface (WP-N3
+      // below). Resolved from the running framework directory (System.Private.CoreLib's
+      // own location) so this follows a runtime upgrade.
       def frameworkDir = IO.Path.GetDirectoryName(typeof(System.Object).Assembly.Location);
       def splitAssemblies =
         [ "System.Collections.dll", "System.Console.dll", "System.Collections.Specialized.dll",
           "System.Linq.dll", "System.Diagnostics.Process.dll", "System.Private.Uri.dll",
           "System.Diagnostics.TraceSource.dll", "System.Security.Cryptography.dll",
-          "System.Private.Xml.dll", "System.Private.Xml.Linq.dll", "System.Data.Common.dll" ];
+          "System.Private.Xml.dll", "System.Private.Xml.Linq.dll", "System.Data.Common.dll",
+          // WP-N3: the rest of the old System.Core surface (System.Linq.dll above already
+          // covers Enumerable). Expression trees are the public API of Nemerle.Linq
+          // (ToExpression / IQueryable operators), and on CLR4 they were reachable via a
+          // plain -ref:System.Core, which has no working CoreCLR equivalent (the facade
+          // resolves but contributes zero types) -- so the default set carries them.
+          "System.Linq.Expressions.dll", "System.Linq.Queryable.dll" ];
       foreach (name in splitAssemblies)
       {
         def path = IO.Path.Combine(frameworkDir, name);

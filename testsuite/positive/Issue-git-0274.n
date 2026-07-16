@@ -28,7 +28,10 @@ public module Program
   {
     Threading.Thread.CurrentThread.CurrentCulture = Globalization.CultureInfo.InvariantCulture;
     
-    DebugPrint(Cot(42));
+    // Manually expanded DebugPrint(Cot(42)): double.ToString()'s default "G" changed to
+    // shortest-round-trippable on .NET Core 3+, so format with "G15" (the effective
+    // .NET Framework default) explicitly to keep one expected value for both runtimes.
+    WriteLine("Cot(42) ==> " + Cot(42).Value.ToString("G15", Globalization.CultureInfo.InvariantCulture));
     DebugPrint(Cot(null));
     
     def x = DateTime(2012, 2, 1) : DateTime?;

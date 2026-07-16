@@ -79,6 +79,12 @@ public class TestSimpleObject  {
     }
 }
 
+// The serialization macro implements System.Runtime.Serialization.IObjectReference,
+// which modern .NET marks [Obsolete] (SYSLIB0050 era, surfaced by ncc as N618) -- a
+// BCL attribute change, not a compiler or test defect. Suppressed locally so the test
+// keeps verifying the macro on both runtimes; on .NET Framework (no such Obsolete)
+// the pragma is a no-op.
+#pragma warning disable 618
 [Serializable]
 public variant MyVariant {
   [Serializable]
@@ -86,6 +92,7 @@ public variant MyVariant {
   [Serializable]
   | B
 }
+#pragma warning restore 618
 
 [Nemerle.Xml.Serialization.XmlSerializable]
 public variant Form {

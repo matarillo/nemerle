@@ -29,7 +29,12 @@ module Program
           WriteLine($"  Parameter: $(p.Name) : $(p.Type)");
 
       | Lambda(_, body, parameters) =>
-        WriteLine($"Lambda(body='$body')");
+        // .NET Core 3+ renders conversion nodes as "Convert(x, TargetType)" where .NET
+        // Framework rendered "Convert(x)" -- same tree, different debug formatting.
+        // Normalize to the Framework spelling (no-op there) so one expected value serves
+        // both runtimes.
+        def bodyText = body.ToString().Replace(", Int64)", ")");
+        WriteLine($"Lambda(body='$bodyText')");
         foreach (p in parameters)
           WriteLine($"  Parameter: $(p.Name) : $(p.Type)");
     }

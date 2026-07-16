@@ -281,8 +281,25 @@ if ($Pack) {
     $PackageVersion = "{0}.{1}.{2}" -f $v.Major, $v.Minor, $v.Revision
     if ($PackageVersionSuffix -ne "") { $PackageVersion = "$PackageVersion-$PackageVersionSuffix" }
 
+    # WP-N3: Nemerle.Linq.Unofficial packages the core-built auxiliary library
+    # (bin\<Cfg>\core\Libs, produced by dotnet-port\build-libs-core.ps1). The library's
+    # GeneratedAssemblyVersion tracks the source generation exactly like the compiler's, so
+    # a Libs dll whose version differs from the packed layout's Nemerle.dll is a
+    # mixed-generation set (stale build) -- refuse it the same way the A2 freshness check
+    # refuses a stale compiler, instead of packing bits the version would lie about.
+    $LibsDir = Join-Path $RepoRoot "bin\$Configuration\core\Libs"
+    $LinqDllPath = Join-Path $LibsDir "Nemerle.Linq.dll"
+    if (-not (Test-Path $LinqDllPath)) {
+        throw "Nemerle.Linq.dll not found in $LibsDir -- build it first: pwsh dotnet-port\build-libs-core.ps1"
+    }
+    $LinqVersion = [System.Reflection.AssemblyName]::GetAssemblyName($LinqDllPath).Version
+    if ($LinqVersion -ne $v) {
+        throw "Nemerle.Linq.dll is $LinqVersion but the packed compiler layout is $v (mixed generations). Rebuild it: pwsh dotnet-port\build-libs-core.ps1"
+    }
+    $LibsDirWithSlash = (Resolve-Path $LibsDir).Path.TrimEnd('\') + '\'
+
     Write-Host ""
-    Write-Host "Packing Nemerle.Sdk.Unofficial / Nemerle.Templates.Unofficial $PackageVersion ..."
+    Write-Host "Packing Nemerle.Sdk.Unofficial / Nemerle.Templates.Unofficial / Nemerle.Linq.Unofficial $PackageVersion ..."
 
     # The templates generate projects that pin the SDK version they were packed alongside
     # (<Project Sdk="Nemerle.Sdk.Unofficial/x.y.z">), so the version has to be injected here
@@ -326,7 +343,7 @@ if ($Pack) {
     $ReadmeStageDir = Join-Path $PSScriptRoot "dist\readmes"
     if (Test-Path $ReadmeStageDir) { Remove-Item -Recurse -Force $ReadmeStageDir }
     $StagedReadmes = @{}
-    foreach ($pkgId in @("Nemerle.Sdk.Unofficial", "Nemerle.Templates.Unofficial")) {
+    foreach ($pkgId in @("Nemerle.Sdk.Unofficial", "Nemerle.Templates.Unofficial", "Nemerle.Linq.Unofficial")) {
         $stagePkgDir = Join-Path $ReadmeStageDir $pkgId
         New-Item -ItemType Directory -Force -Path $stagePkgDir | Out-Null
         $stagedReadme = Join-Path $stagePkgDir "README.md"
@@ -337,7 +354,8 @@ if ($Pack) {
 
     $PackageProjects = @(
         (Join-Path $PSScriptRoot "packaging\Nemerle.Sdk.Unofficial\Nemerle.Sdk.Unofficial.csproj"),
-        (Join-Path $PSScriptRoot "packaging\Nemerle.Templates.Unofficial\Nemerle.Templates.Unofficial.csproj")
+        (Join-Path $PSScriptRoot "packaging\Nemerle.Templates.Unofficial\Nemerle.Templates.Unofficial.csproj"),
+        (Join-Path $PSScriptRoot "packaging\Nemerle.Linq.Unofficial\Nemerle.Linq.Unofficial.csproj")
     )
 
     # NuGet caches an (id, version) in the global packages folder by identity, NOT by content:
@@ -348,7 +366,7 @@ if ($Pack) {
     # for an SDK whose version is meaningful. Evict the exact (id, version) instead, so
     # re-packing the same version during development is honest.
     $GlobalPackages = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $HOME ".nuget\packages" }
-    foreach ($id in @("nemerle.sdk.unofficial", "nemerle.templates.unofficial")) {
+    foreach ($id in @("nemerle.sdk.unofficial", "nemerle.templates.unofficial", "nemerle.linq.unofficial")) {
         $cached = Join-Path $GlobalPackages "$id\$PackageVersion"
         if (Test-Path $cached) {
             Remove-Item -Recurse -Force $cached
@@ -360,6 +378,7 @@ if ($Pack) {
         $pkgId = [System.IO.Path]::GetFileNameWithoutExtension($proj)
         & dotnet pack -c $Configuration $proj -o $PackageOutDir "-p:Version=$PackageVersion" `
             "-p:NccLayoutDir=$OutDirWithSlash" "-p:NemerleTemplateStagingDir=$TemplateStageWithSlash" `
+            "-p:NemerleLibsDir=$LibsDirWithSlash" `
             "-p:NemerleReadmeFile=$($StagedReadmes[$pkgId])" -v:minimal
         if ($LASTEXITCODE -ne 0) { throw "dotnet pack failed for $proj (exit $LASTEXITCODE)" }
     }

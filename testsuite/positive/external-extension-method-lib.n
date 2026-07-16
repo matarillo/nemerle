@@ -4,7 +4,12 @@ using SAT = System.AttributeTargets;
 
 namespace System
 {
-#if !NET_4_0
+// Pre-.NET-3.5 compatibility shim. NET_4_0 is defined by the CLR4 harness
+// (NemerleAll.nproj's -def:$(NProjectConstants)); RUNTIME_CORE by the CoreCLR harness
+// (dotnet-port\run-testsuite-core.ps1) -- CoreCLR's corelib ships ExtensionAttribute,
+// so declaring the shim there is a redefinition error, and NET_4_0's mere absence
+// cannot distinguish CoreCLR from .NET 2.0/3.0 where the shim is required.
+#if !NET_4_0 && !RUNTIME_CORE
  namespace Runtime.CompilerServices
  {
   [System.AttributeUsage (SAT.Class | SAT.Method)]

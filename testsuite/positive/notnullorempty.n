@@ -25,14 +25,21 @@ module M
 
         def see = ". See ";
         def seeIndex = e.Message.IndexOf(see);
-      
+
         def pos = "positive/";
         def posIndex  = e.Message.IndexOf(pos);
-      
+
+        // ArgumentException.Message renders ParamName differently per runtime (.NET
+        // Framework: "\nParameter name: X" line; .NET Core 3+: " (Parameter 'X')" inline):
+        // cut at the location suffix and print the name from e.ParamName instead.
+        def rest = e.Message.Substring(posIndex);
+        def endMark = ": .";
+        def endIndex = rest.IndexOf(endMark);
         print (e.Message.Substring(0, seeIndex + see.Length) +
-               e.Message.Substring(posIndex) + "\n");        
+               rest.Substring(0, endIndex + endMark.Length) + "\n");
+        print ("Parameter name: " + e.ParamName + "\n");
     }
-   
+
     try
     {
       TestNotNullOrEmpty("");
@@ -41,15 +48,20 @@ module M
     {
       | e is System.ArgumentException =>
         WriteLine(e.ParamName);
-        
+
         def see = ". See ";
         def seeIndex = e.Message.IndexOf(see);
-      
+
         def pos = "positive/";
         def posIndex  = e.Message.IndexOf(pos);
-      
+
+        // Same per-runtime normalization as above.
+        def rest = e.Message.Substring(posIndex);
+        def endMark = ": .";
+        def endIndex = rest.IndexOf(endMark);
         print (e.Message.Substring(0, seeIndex + see.Length) +
-               e.Message.Substring(posIndex) + "\n");
+               rest.Substring(0, endIndex + endMark.Length) + "\n");
+        print ("Parameter name: " + e.ParamName + "\n");
     }
     
     // Must not throw

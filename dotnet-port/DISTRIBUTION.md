@@ -407,6 +407,7 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 | SDK スタイル MSBuild 統合 | **動作**(`.nproj` 拡張子。参照/PDB/clean/マルチプロジェクト/Linux 対応済み) | Windows・WSL で `dotnet build`→実行を実証 |
 | **`Nemerle.Sdk.Unofficial` NuGet package(WP-M6)** | **動作**(repo checkout 不要。project SDK 方式) | `pack-tool.ps1 -Pack` → local feed。repo 外空 dir と WSL で `dotnet new`→build→run を実証(`35-devenv2-wp-m6-log.md`) |
 | **`Nemerle.Templates.Unofficial`(WP-M6)** | **動作**(`nemerle-console` / `nemerle-classlib`) | 同上 |
+| **`Nemerle.Linq.Unofficial`(WP-N3)** | **動作**(`linq` 構文 / `ToExpression` / 暗黙の式ツリー変換。通常の `PackageReference` で消費) | `build-libs-core.ps1` → `pack-tool.ps1 -Pack`。世代不一致の Libs は pack 前チェックで拒否(`40-prerelease-wp-n3-log.md`) |
 | **provenance(WP-M6)** | **動作**(`ncc-info.json` ↔ `bundle-info.json`) | 版不一致で server が `window/showMessage` 警告、同一版では無警告(LSP integration 2 シナリオ) |
 | インプロセス MSBuild タスク(WP-A3) | **動作**(構造化診断、ALC 隔離、Exec フォールバック付き) | HelloCore/RefDemo/一時診断プロジェクトで実証(`20-inproc-task-log.md`) |
 | 既存 CLR4 ビルド(`NemerleAll.nproj`/`build-stage2-core.ps1`) | **無改造・無回帰** | 新規ファイルのみ追加(`.gitignore` のみ既存ファイルに軽微な追記) |
