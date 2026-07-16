@@ -24,6 +24,27 @@
 > レガシーになっていたこれらを削除し、`ncc.cmd` は `dotnet ncc.dll %*` を直接呼ぶだけの単純な
 > ラッパーになった(下記「1. `dotnet ncc` 配布レイアウト」節を参照)。
 
+> **更新 (2026-07-16, WP-N1 — package 版サフィックスの規約化)**: NuGet package の版は
+> `1.2.<rev>-preview.<N>`。base の `1.2.<rev>` は同梱される `Nemerle.dll` の実 AssemblyVersion
+> (`git describe` 由来の revision)から `pack-tool.ps1` が自動導出する。サフィックス
+> `preview.<N>`(`-PackageVersionSuffix`)の規約は次のとおり:
+>
+> 1. **base version が進んだら `preview.1` にリセット**(スクリプトの既定値。Stage リビルド後の
+>    通常の pack は引数不要)。SemVer 2.0 は base 側を優先して順序付けるため
+>    `1.2.618-preview.1 > 1.2.601-preview.2` となり、リセットしても順序・キャッシュは壊れない。
+> 2. **同一 base version のまま中身を変えて配り直すときだけ `preview.<N+1>` を明示的に渡す**
+>    (例: 1.2.601-preview.1 → Linux hover 修正の再 pack で 1.2.601-preview.2)。NuGet は
+>    `(id, version)` を内容ごとにキャッシュするため、配布済み版番号の再利用は消費側で
+>    古いビットが静かに使われ続ける事故になる。
+> 3. **一度マシンの外へ出た版番号(GitHub release assets・共有 feed)は再発行しない**。
+>    同一 base 内でサフィックスを戻すことも不可(順序が逆行する)。スクリプトは配布済み状態を
+>    知り得ないため、同一 base の再配布バンプは操作者の責任 — 公開済み release assets を
+>    確認してから pack すること。
+>
+> なお `preview` ラベル自体は成熟度の表現(package ID には意図的に載せない — ID は恒久、
+> 成熟度は変わる)。WP-O の nuget.org 公開時にサフィックスを外した `1.2.<rev>` 安定版が終着点。
+> VSIX(`vscode-nemerle-<semver>`)は別体系(拡張の独自 semver)で、この規約の対象外。
+
 > **更新 (WP-A3 — インプロセス MSBuild タスク)**: 「タスク3」の `<Exec dotnet ncc.dll ...>` は
 > 既定で**インプロセスタスク `NccCompile`**(`dotnet-port\Nemerle.MSBuild.Tasks`)に置き換わった。
 > `dotnet-port\Nemerle.Compiler.Hosting` が `Nemerle.Compiler.dll` の `ManagerClass` API を

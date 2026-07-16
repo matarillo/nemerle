@@ -83,10 +83,20 @@ param(
     # (pack-server.ps1, the samples, the test fixtures) depends on.
     [switch]$Pack,
     [string]$PackageOutDir = "",        # default: dotnet-port\dist\release
-    # Prerelease label appended to the version derived from the compiler itself (see section 5).
-    # Bump it when re-packing the same compiler with changed packaging/targets: NuGet caches an
-    # (id, version) by content, so reusing a version silently serves stale bits.
-    [string]$PackageVersionSuffix = "preview.2"
+    # Prerelease label appended to the base version derived from the compiler itself
+    # (1.2.<revision> of the packaged Nemerle.dll, see section 5). Suffix policy (WP-N1):
+    #   - New base version (Stage rebuilt, revision advanced): use preview.1 -- the default
+    #     below, so the common case needs no argument.
+    #   - Re-distributing the SAME base version with changed contents (packaging/targets fix
+    #     without a compiler rebuild): pass preview.<N+1> explicitly. NuGet caches an
+    #     (id, version) by content, so reusing a distributed version silently serves stale bits.
+    #   - Never re-issue a version number that has left this machine (GitHub release assets,
+    #     any shared feed). Within one base version the suffix must only ever go up; across
+    #     base versions it resets (SemVer orders on the base first: 618-preview.1 > 601-preview.2).
+    # This script cannot see what has been distributed, so the same-base bump is the operator's
+    # responsibility -- check the published release assets before re-packing an already-released
+    # base version.
+    [string]$PackageVersionSuffix = "preview.1"
 )
 
 $ErrorActionPreference = "Stop"

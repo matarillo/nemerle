@@ -172,6 +172,7 @@ stage3 を作った stage2 自体が 2 回独立ビルドで一致している�
   `ncc-info.json`(commit `ec9976dd1-dirty`、Nemerle 1.2.0.618)と
   `Nemerle.Sdk.Unofficial.1.2.618-preview.2.nupkg` / `Nemerle.Templates.Unofficial.1.2.618-preview.2.nupkg`
   を生成(コンパイラー版が 601 → 618 に進んだため 36 §9 のリスク表どおり再 pack)。
+  ※この 618-preview.2 は後に版サフィックス規約の明文化に伴い破棄・再番号付けした — §10 参照。
 - `ToolchainProvenance` は AssemblyVersion を json ではなく **Nemerle.dll 自体から読む**設計
   (`ProjectInfo\ToolchainProvenance.cs`)のため、MVID がコンテンツハッシュ由来になっても
   照合ロジックに影響しない。bundled server スイートの provenance-mismatch シナリオが
@@ -280,9 +281,40 @@ Pop-Location
    `build-stage2-core.ps1` が実行のたびに再生成する生成物で、差分は前回実行の出力先パス
    (Stage2/Stage3)の揺れのみ。本 WP では HEAD の状態のまま維持した。
 7. **コンパイラー版 618 への前進**: Stage リビルドにより版が 601 → 618 に進み、
-   `1.2.618-preview.2` の Sdk/Templates package を再 pack 済み(36 §9 リスク表の想定どおり)。
+   `1.2.618-preview.2` の Sdk/Templates package を再 pack 済み(36 §9 リスク表の想定どおり。
+   この版番号は §10 で規約化に伴い破棄・再番号付け)。
    本コミット自体でさらに HEAD が進むため、次に stage スクリプトを実行すると版チェックが
    Stage1 フルリビルドを要求する — これは A2 の意図された動作である。
 
 前身: 実装計画は `36-prerelease-quality-plan.md` §6 WP-N1。関連ログ: 14(F4)/ 16(決定性診断)/
 30(版ハザード実務)/ 33・35(回帰一式の再現コマンド)。
+
+## 10. 追記(コミット a120a931b 後): package 版サフィックスの規約化と再番号付け
+
+§6 の `1.2.618-preview.2` の「`.2`」は自動採番ではなく `pack-tool.ps1 -PackageVersionSuffix` の
+ハードコード既定値(601 世代の同一 base 再配布で preview.1 → preview.2 に上げた際の据え置き)
+だったため、規約を明文化した:
+
+- **規約**(`DISTRIBUTION.md` の「package 版サフィックスの規約化」注記 + `pack-tool.ps1` の
+  パラメーターコメント): base(`1.2.<rev>`、同梱 Nemerle.dll の実 AssemblyVersion 由来)が
+  進んだら **`preview.1` にリセット**(スクリプト既定値も `preview.1` へ変更)。同一 base の
+  再配布時のみ `preview.<N+1>` を明示。配布済み版番号(GitHub release assets 等)の再発行禁止。
+  スクリプトは配布済み状態を知り得ないため同一 base のバンプは操作者責任。
+
+- **618 セットの扱い(批判的検討の結果)**: `1.2.618-preview.2` は未配布(公開済みセットは
+  601-preview.2 のまま)なので番号を破棄し規約に従い直すと判断。ただし
+  **`1.2.618-preview.1` への再発行は不可能** — WP-N1 のコミットで HEAD が 619 に進んだ時点で、
+  A2 チェックが「Stage2(618)は HEAD より古い」として pack を停止する(実測済み。§3 の
+  fixture と同じ検査が pack-tool 経路でも機能した証跡でもある)。よって 618 は欠番とし、
+  618-preview.2 の 2 nupkg は dist\release と NuGet グローバルキャッシュから削除した。
+
+- **対応**: 本追記のコミット後の rev で復旧手順(Stage1 フルリビルド → stage2)を実行し、
+  規約どおり `1.2.<rev>-preview.1` として pack。VSIX(bundle-info)も同一コミットから
+  再生成して候補セットの commit 整合を保ち、package 依存テスト
+  (`ProjectInfo.Test --integration` / `npm run test:sdk`)を再実行して PASS を確認する。
+  §6〜§8 に記録した 618 での検証結果は「当時の実測」としてそのまま残す(内容は同一ソース、
+  版文字列のみが異なる)。
+
+この「コミットするたびに成果物が版遅れになる」性質は版スキームの本質(§9-7)であり、
+リリース手順としては **「コードを確定コミット → その HEAD で Stage チェーン再構築 → pack →
+封緘(pack-release)」の順で行い、pack 後に追加コミットを挟まない**ことが規約の運用形になる。
