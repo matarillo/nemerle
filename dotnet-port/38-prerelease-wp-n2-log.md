@@ -245,16 +245,20 @@ hint-value 平文化だけでは E7-R が残るため、E7 は N2.1(markup)と N
 | 改修 | 変更するソース | CLR4 / Mono ビルドへの波及 |
 |---|---|---|
 | N2.1 hint-value 平文化 | `dotnet-port/ProjectInfo/HoverMarkup.cs`(.NET 10 LSP 専用 C#) | なし。ncc / engine / VS2010 のどのビルドにも含まれない |
-| N2.2 `FindObject` 拡張 | engine 共有ソース(`VsIntegration/Nemerle.Compiler.Utils` の `Project.Type.n` / `CompilerUnit.n` / `Project.Refactoring.n`) | VS2010 integration が同一ソースを共有。ncc 本体 / boot-4.0 には含まれない |
+| N2.2 `FindObject` 拡張 | engine 共有ソース(`VsIntegration/Nemerle.Compiler.Utils` の `Project.Type.n` / `CompilerUnit.n` / `Project.Refactoring.n`) | VS2010 integration と SharpDevelop binding(`snippets/sharpdevelop`)が同一ソースを共有。ncc 本体 / boot-4.0 には含まれない |
 | N2.3 parser parity opt-in | コンパイラー共有ソース(`ncc/parsing/MainParser.n`) | boot-4.0 → stage1(CLR4)の ncc 本体に入る。upstream 系譜では Mono でもビルドされてきたソース |
 | N2.4 semantic references | engine 共有ソース(N2.2 と同じ、中心は `Project.Refactoring.n`) | N2.2 と同じ |
 
 - **N2.1**: CLR4 / Mono コードに一切触れないため、リスクなし。
 - **N2.2 / N2.4(engine 共有ソース)**: VS2010 本体はデッド・移植対象外(36 §2.3)だが
   ソースは共有のままなので、VS2010 用に CLR4 でビルドした場合の IntelliSense /
-  references 挙動が変わり得る。当該ビルドは回帰ゲートに含まれない(CLR4 スモークは
-  ncc の hello/hello2 のみで engine を通らない)ため機械的検証はなく、
-  36 §5-5 の VsIntegration 全体 grep による影響確認が唯一の防波堤。挙動面では、
+  references 挙動が変わり得る。さらに repo 内の消費者は VS2010 だけではない:
+  `snippets/sharpdevelop/Nemerle.SharpDevelop`(OSS IDE SharpDevelop 向け binding)が
+  `Nemerle.Compiler.Utils.csproj` を ProjectReference し、`Nemerle.Completion2` API を
+  CodeCompletion 一式で直接利用している。これらのビルドは回帰ゲートに含まれない
+  (CLR4 スモークは ncc の hello/hello2 のみで engine を通らない)ため機械的検証はなく、
+  影響確認の grep は VsIntegration に加えて `snippets/sharpdevelop` も対象に含める
+  (36 §5-5 の運用をこの範囲へ拡張)。挙動面では、
   `FindObject` 拡張は「null を返していた位置で結果を返す」方向、`GetUsages` の walk 追加は
   「取りこぼしていた usage を返す」方向の変更であり、既存で解決できていた位置・集合を
   変えないことを positive control(§6 N2.4、別型 `Ping` 3件等)で担保する。
@@ -264,9 +268,14 @@ hint-value 平文化だけでは E7-R が残るため、E7 は N2.1(markup)と N
   ncc / VS2010 / Mono の parse 挙動は不変。ソースレベルでは boot-4.0 の旧コンパイラーで
   コンパイルできる言語機能に限定する必要がある(bootstrap 制約)。検証は testsuite 全数 +
   stage2/3 バイト一致 + CLR4 スモークの既存ゲートで機械的に閉じる。
-- **Mono 全般**: 本移植は Mono 非対象(36 §4 G1)で Mono 上の検証は行わない。Mono の
-  ビルド対象に入り得るのは N2.3 のみで、上記のとおり既定挙動を変えないため、
-  ソース互換(使用する言語機能・API)以外の新規リスクは想定しない。
+- **Mono 全般**: 本移植は Mono 非対象(36 §4 G1)で Mono 上の検証は行わない。ただし
+  Mono との接点は N2.3(ncc 本体)に限らない: engine 共有ソースも SharpDevelop binding
+  経由で VS 以外の IDE 環境から消費されてきた経緯があり、その系譜(SharpDevelop /
+  派生の Mono ベース環境)で利用されていた可能性を排除できないため、
+  「Mono のビルド対象に入り得るのは N2.3 のみ」とはいえない。N2.2 / N2.4 の
+  engine 変更も、public API シグネチャと既存挙動の互換(既存で解決できていた結果を
+  変えない)に注意する。N2.3 は既定挙動を変えない opt-in のため、ソース互換
+  (使用する言語機能・API)以外の新規リスクは想定しない。
 
 ## 6. 仮実装計画
 
