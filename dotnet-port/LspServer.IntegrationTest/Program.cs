@@ -15,8 +15,10 @@ internal static class Program
     public static async Task<int> Main(string[] args)
     {
         _repoRoot = FindRepositoryRoot();
-        _serverDll = args.Length > 0
-            ? Path.GetFullPath(args[0])
+        var probeOnly = args.Contains("--wp-n2-probe", StringComparer.Ordinal);
+        var serverArgument = args.FirstOrDefault(argument => !argument.StartsWith("--", StringComparison.Ordinal));
+        _serverDll = serverArgument is not null
+            ? Path.GetFullPath(serverArgument)
             : Path.Combine(_repoRoot, "dotnet-port", "LspServer", "bin", "Release", "net10.0",
                 "Nemerle.LanguageServer.dll");
         if (!File.Exists(_serverDll))
@@ -27,6 +29,15 @@ internal static class Program
 
         try
         {
+            if (probeOnly)
+            {
+                EnsureWpN2FixturesBuilt();
+                await RunScenarioAsync("WP-N2 concrete Sokoban/CompTimeSolver reproduction probe",
+                    WpN2ConcreteReprosAsync);
+                Console.WriteLine("PASS WP-N2 concrete reproduction probe");
+                return 0;
+            }
+
             EnsureFixturesBuilt();
             await RunScenarioAsync("HelloCore apply + loose-file regression", HelloCoreAndLooseRegressionAsync);
             await RunScenarioAsync("RefDemo ProjectReference project-aware analysis", RefDemoProjectAwareAsync);
@@ -72,6 +83,203 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    // ----- WP-N2 observation-only probe: concrete reported locations -----
+
+    private static async Task WpN2ConcreteReprosAsync(LspTestClient client)
+    {
+        var sokobanProject = Sample("Sokoban", "Sokoban", "Sokoban.nproj");
+        var loadMark = client.Mark();
+        AssertLoadedAndApplied(await LoadProjectAsync(client, sokobanProject), expectedSources: 5);
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "engine rebuild finished", out _),
+            loadMark, "the initial Sokoban full engine rebuild");
+
+        var probes = new[]
+        {
+            new { File = "main.n", Needle = "args", Occurrence = 1, ExpectedLine = 7, Label = "function parameter args" },
+            new { File = "splayheap.n", Needle = "SMap", Occurrence = 1, ExpectedLine = 7, Label = "variant field type SMap" },
+            new { File = "treesearch.n", Needle = "depth", Occurrence = 1, ExpectedLine = 15, Label = "inferred mutable local depth" },
+            new { File = "sokoban.n", Needle = "Hashtable [string, SMap]", Occurrence = 1, ExpectedLine = 109, Label = "generic field type Hashtable" },
+        };
+
+        var opened = new Dictionary<string, (string Uri, string Text)>();
+        foreach (var probe in probes)
+        {
+            var source = Sample("Sokoban", "Sokoban", probe.File);
+            var uri = new Uri(source).AbsoluteUri;
+            var text = await File.ReadAllTextAsync(source);
+            var (line, character) = LocateUtf16(text, probe.Needle, probe.Occurrence);
+            if (line != probe.ExpectedLine - 1)
+                throw new InvalidDataException(
+                    $"{probe.File} probe moved: expected line {probe.ExpectedLine}, located line {line + 1}.");
+
+            var mark = client.Mark();
+            await DidOpenAsync(client, uri, text, 1);
+            var publish = await client.WaitForAsync(
+                message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1,
+                mark, $"analysis of WP-N2 probe {probe.File}:{probe.ExpectedLine}");
+            var diagnostics = publish.GetProperty("params").GetProperty("diagnostics");
+            var hover = await HoverAsync(client, uri, line, character);
+            var value = HoverValue(hover);
+            Console.WriteLine(
+                $"    HOVER {probe.File}:{line + 1}:{character + 1} ({probe.Label}), diagnostics={diagnostics.GetArrayLength()}: " +
+                JsonSerializer.Serialize(value));
+            var definitions = await DefinitionAsync(client, uri, line, character);
+            Console.WriteLine($"    DEFINITION {probe.File}:{line + 1}:{character + 1} count={definitions.Length}");
+            foreach (var definition in definitions)
+            {
+                var (definitionUri, definitionLine, definitionCharacter) = LocationAt(definition);
+                Console.WriteLine(
+                    $"      {new Uri(definitionUri!).LocalPath}:{definitionLine + 1}:{definitionCharacter + 1}");
+            }
+            opened[probe.File] = (uri, text);
+        }
+
+        // Repeat the first reported hover after the actual relocation path and
+        // after a forced project reload.  This distinguishes stable engine text
+        // from a one-off bridge/version race.
+        var main = opened["main.n"];
+        var incrementalMark = client.Mark();
+        var editedMain = await ReplaceRangedAsync(client, main.Uri, main.Text, "//try", "// try", 2);
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "incremental update (relocation)", out _),
+            incrementalMark, "Sokoban main.n relocation for the WP-N2 hover repeat");
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, main.Uri, out var p) && VersionOf(p) == 2,
+            incrementalMark, "version-2 main.n diagnostics after relocation");
+        var (mainLine, mainCharacter) = LocateUtf16(editedMain, "args", 1);
+        Console.WriteLine("    HOVER main.n after relocation: " +
+            JsonSerializer.Serialize(HoverValue(await HoverAsync(client, main.Uri, mainLine, mainCharacter))));
+
+        var reloadMark = client.Mark();
+        AssertLoadedAndApplied(await LoadProjectAsync(client, sokobanProject), expectedSources: 5);
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "engine rebuild finished", out _),
+            reloadMark, "forced Sokoban project reload for the WP-N2 hover repeat");
+        Console.WriteLine("    HOVER main.n after project reload: " +
+            JsonSerializer.Serialize(HoverValue(await HoverAsync(client, main.Uri, mainLine, mainCharacter))));
+
+        // E8 boundary using a real project symbol: SMap is used throughout the
+        // five-source project.  Printing every returned location makes the
+        // current declaration-scope boundary directly inspectable.
+        var splay = opened["splayheap.n"];
+        var (smapLine, smapCharacter) = LocateUtf16(splay.Text, "SMap", 1);
+        var references = await ReferencesAtAsync(
+            client, splay.Uri, smapLine, smapCharacter, includeDeclaration: true);
+        Console.WriteLine($"    REFERENCES splayheap.n:{smapLine + 1}:{smapCharacter + 1} SMap count={references.Length}");
+        foreach (var reference in references)
+        {
+            var (uri, line, character) = LocationAt(reference);
+            Console.WriteLine($"      {new Uri(uri!).LocalPath}:{line + 1}:{character + 1}");
+        }
+
+        var sokoban = opened["sokoban.n"];
+        var (smapDeclarationLine, smapDeclarationCharacter) = LocateUtf16(sokoban.Text, "SMap", 5);
+        var declarationReferences = await ReferencesAtAsync(
+            client, sokoban.Uri, smapDeclarationLine, smapDeclarationCharacter, includeDeclaration: true);
+        Console.WriteLine(
+            $"    REFERENCES sokoban.n:{smapDeclarationLine + 1}:{smapDeclarationCharacter + 1} SMap declaration " +
+            $"count={declarationReferences.Length}");
+        foreach (var reference in declarationReferences)
+        {
+            var (uri, line, character) = LocationAt(reference);
+            Console.WriteLine($"      {new Uri(uri!).LocalPath}:{line + 1}:{character + 1}");
+        }
+
+        // Historical E7 is broader than the four owner-reported Sokoban hovers.
+        // Measure its two engine boundaries explicitly: local/method hint text,
+        // and null resolution on a static-call type qualifier / type annotation.
+        const string e7Source = """
+            class Box
+            {
+            }
+
+            module E7Probe
+            {
+              public Compute(value : int) : int
+              {
+                value + 1
+              }
+
+              public Run() : void
+              {
+                def localValue = Compute(1);
+                def annotated : Box = Box();
+                _ = E7Probe.Compute(localValue);
+                _ = annotated;
+              }
+            }
+            """;
+        var e7Uri = new Uri(Path.Combine(CreateTempDirectory("wp-n2-e7"), "e7.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, e7Uri, e7Source);
+        var e7Probes = new[]
+        {
+            new { Needle = "localValue", Occurrence = 2, Label = "local value usage" },
+            new { Needle = "Compute", Occurrence = 2, Label = "method call" },
+            new { Needle = "E7Probe", Occurrence = 2, Label = "static method type qualifier" },
+            new { Needle = "Box", Occurrence = 2, Label = "type annotation" },
+        };
+        foreach (var probe in e7Probes)
+        {
+            var (line, character) = LocateUtf16(e7Source, probe.Needle, probe.Occurrence);
+            var hover = HoverValue(await HoverAsync(client, e7Uri, line, character));
+            var definitions = await DefinitionAsync(client, e7Uri, line, character);
+            Console.WriteLine(
+                $"    E7 {probe.Label} {line + 1}:{character + 1}: " +
+                $"hover={JsonSerializer.Serialize(hover)}, definition={definitions.Length}");
+        }
+
+        // Historical E8 claimed a containing-type search boundary; that claim is
+        // distinct from the SMap/type-annotation zero-result reported above and
+        // must itself be tested.  Use a member with usages in two other type
+        // declarations so the distinction is visible even in one source file.
+        const string e8Source = """
+            class Shared
+            {
+              public Ping() : int { 1 }
+            }
+
+            class First
+            {
+              public Run(value : Shared) : int { value.Ping() }
+            }
+
+            class Second
+            {
+              public Run(value : Shared) : int { value.Ping() }
+            }
+            """;
+        var e8Uri = new Uri(Path.Combine(CreateTempDirectory("wp-n2-e8"), "e8.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, e8Uri, e8Source);
+        foreach (var occurrence in new[] { 1, 2 })
+        {
+            var (line, character) = LocateUtf16(e8Source, "Ping", occurrence);
+            var crossTypeReferences = await ReferencesAtAsync(
+                client, e8Uri, line, character, includeDeclaration: true);
+            Console.WriteLine(
+                $"    E8 Ping occurrence {occurrence} {line + 1}:{character + 1}: " +
+                $"references={crossTypeReferences.Length}");
+            foreach (var reference in crossTypeReferences)
+            {
+                var (_, referenceLine, referenceCharacter) = LocationAt(reference);
+                Console.WriteLine($"      e8.n:{referenceLine + 1}:{referenceCharacter + 1}");
+            }
+        }
+
+        var successProject = Sample("CompTimeSolver", "Success", "Success.nproj");
+        var successSource = Sample("CompTimeSolver", "Success", "success.n");
+        var successUri = new Uri(successSource).AbsoluteUri;
+        var successText = await File.ReadAllTextAsync(successSource);
+        AssertLoadedAndApplied(await LoadProjectAsync(client, successProject), expectedSources: 1);
+        var successMark = client.Mark();
+        await DidOpenAsync(client, successUri, successText, 1);
+        var successPublish = await client.WaitForAsync(
+            message => IsPublishFor(message, successUri, out var p) && VersionOf(p) == 1,
+            successMark, "CompTimeSolver/Success editor diagnostics");
+        Console.WriteLine("    DIAGNOSTICS CompTimeSolver/Success/success.n: " +
+            successPublish.GetProperty("params").GetProperty("diagnostics").GetRawText());
     }
 
     private static async Task RunScenarioAsync(string name, Func<LspTestClient, Task> scenario)
@@ -2034,6 +2242,19 @@ internal static class Program
                      Sample("PackageReference", "PackageReference.nproj"),
                      Sample("Sokoban", "Sokoban", "Sokoban.nproj"),
                      Sample("Warnings", "Warnings.nproj"),
+                 })
+        {
+            Console.WriteLine($"    building fixture {Path.GetFileName(project)}");
+            RunDotnet($"build \"{project}\" -c Debug --nologo -v:q", _repoRoot);
+        }
+    }
+
+    private static void EnsureWpN2FixturesBuilt()
+    {
+        foreach (var project in new[]
+                 {
+                     Sample("Sokoban", "Sokoban", "Sokoban.nproj"),
+                     Sample("CompTimeSolver", "Success", "Success.nproj"),
                  })
         {
             Console.WriteLine($"    building fixture {Path.GetFileName(project)}");

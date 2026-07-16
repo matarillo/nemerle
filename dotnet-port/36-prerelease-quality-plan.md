@@ -197,6 +197,9 @@ WP-O(公開)に耐える品質へ到達する。具体的には:
 (§8: 版ハザード検査と決定的ビルドを、本 WP の Stage リビルド前に用意する)であり、
 優先度は本 WP が最も高い。工数が競合する場合は WP-N3 以降を縮小して本 WP を優先する。
 
+事前調査の実測結果・原因分析・仮実装計画は `38-prerelease-wp-n2-log.md` に記録する
+(本節は事前計画のまま維持し、調査で得た知見の反映は 38 側で行う)。
+
 対象を次の 3 トラックに分けて扱う。
 
 **トラック 1: hover / definition の型欠落(E7)**
@@ -277,7 +280,8 @@ E7 への合流候補。
 
 - トラック 1/2 の再現マトリクスの fixture 化と raw LSP integration test への固定。
 - トラック 3 の挙動確認記録(再現手順・発生条件)と切り分け結果。
-- 欠落・取りこぼしの分類・原因・修正/受容の判断を記録した log(`37-*.md`)。
+- 欠落・取りこぼしの分類・原因・修正/受容の判断を記録した log(`38-prerelease-wp-n2-log.md`。
+  `37-*.md` は WP-N1 用に予約)。
 - 修正(engine / ncc / LSP server いずれか)と、修正しないパターンの README への既知制約記載。
 - ncc/engine 改修時: Stage1→2→3 リビルド、dist/server 再 pack、provenance 整合。
 
@@ -521,6 +525,7 @@ WP-O(公開フェーズ)を最優先とし、その後は以下:
 - `00-PLAN.md`: 原計画と WP 一覧・作業ログ。
 - `29-devenv2-plan.md`: WP-M 計画(§11 の優先順位リストは仮説。本計画 §10 が合意版)。
 - `35-devenv2-wp-m6-log.md`: WP-M6 実装結果とリリース後フォローアップ(preview.2 / 0.8.2)。
+- `38-prerelease-wp-n2-log.md`: WP-N2 事前調査(実測証跡・原因分析・仮実装計画。`37-*.md` は WP-N1 用に予約)。
 - `30〜34-*.md`: WP-M1〜M5 実装結果(hover/completion/definition/incremental の現況)。
 - `18-testsuite-log.md`: testsuite 失敗分類(WP-N3 の出発点)。
 - `16-determinism-diagnosis.md` / `14-pdb-log.md`: 決定性・版ハザードの診断(WP-N1 の出発点)。
