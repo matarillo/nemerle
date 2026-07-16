@@ -13,10 +13,12 @@
     EntryPoint="<AssemblyName>.dll"); there is no supported way to point PackAsTool at
     an arbitrary pre-built dll instead. So Program.cs's only job is to be that entry point
     and immediately re-invoke the bundled `ncc.dll` via `dotnet <dir>\ncc.dll
-    -from-file:<dir>\ncc.default.rsp <forwarded args>` (Process.Start with an explicit
-    ArgumentList, so forwarded args are passed byte-for-byte, no shell/PowerShell
-    re-parsing of ncc's `-name:value` switches is involved, unlike a .ps1 wrapper; see
-    pack-tool.ps1's header comment for why that matters).
+    <forwarded args>` (Process.Start with an explicit ArgumentList, so forwarded args are
+    passed byte-for-byte, no shell/PowerShell re-parsing of ncc's `-name:value` switches is
+    involved, unlike a .ps1 wrapper; see pack-tool.ps1's header comment for why that
+    matters). No `-from-file:` response file is prepended: ncc auto-resolves the standard
+    CoreCLR reference set itself (LoadCoreStdlibReferences, ncc\passes.n, WP-A2), so a bare
+    `ncc.dll hello.n` compiles with no response file (see Program.cs).
   -->
 
   <PropertyGroup>

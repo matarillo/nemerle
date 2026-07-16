@@ -44,8 +44,9 @@
 #   - -linkres/Win32 -res are still not supported when the compiler itself runs on
 #     CoreCLR (known gap carried over from WP-B/WP-C) -- stage2 rsp files below do not
 #     pass -res/-linkres. -debug IS supported on CoreCLR since WP-E (Portable PDB, see
-#     dotnet-port\14-pdb-log.md) but is not passed here either, to keep the stage2
-#     output minimal/deterministic-ish. /doc: is NOT passed: it was dropped
+#     dotnet-port\14-pdb-log.md) but is not passed by default here, to keep the stage2
+#     output minimal/deterministic-ish -- pass -EmitDebug to this script to opt it back
+#     in (e.g. for PDB determinism verification). /doc: is NOT passed: it was dropped
 #     opportunistically to keep the rsp files minimal and closer to the ncc.nproj
 #     (Release) set; it is not known to be broken, just untested here -- a documented
 #     gap, not a finding.
@@ -53,15 +54,17 @@
 #     last tag), so the -Compiler's own Nemerle.dll must have been built from the same
 #     commit as HEAD -- otherwise loading the freshly built Stage2\Nemerle.dll (newer
 #     version, same simple name) into the compiler process fails with a ref-def
-#     mismatch FileLoadException. If that happens, force a full Stage1 rebuild first
-#     (touch lib/macros/ncc AssemblyInfo.n).
+#     mismatch FileLoadException. This is now checked automatically (WP-N1,
+#     dotnet-port\assembly-version-check.ps1) right after the -Compiler existence check
+#     below, and throws with the recovery steps (full Stage1 rebuild) if it is stale.
 
 param(
     [string]$Configuration = "Release",
     [string]$Compiler = "",                # path to the ncc.exe to run the build WITH (default: Stage1)
     [string]$OutDir = "",                  # path to write the built Stage2 assemblies to
     [string]$RspDir = "",                  # where to write the 4 .rsp files
-    [switch]$SkipRspGeneration             # reuse existing .rsp files verbatim (for manual edits/reruns)
+    [switch]$SkipRspGeneration,            # reuse existing .rsp files verbatim (for manual edits/reruns)
+    [switch]$EmitDebug                     # pass -debug to all 4 compilations (PDB determinism verification); off by default
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,6 +75,15 @@ if ($OutDir   -eq "") { $OutDir   = Join-Path $RepoRoot "bin\$Configuration\core
 if ($RspDir   -eq "") { $RspDir   = Join-Path $PSScriptRoot "rsp\stage2" }
 
 if (-not (Test-Path $Compiler)) { throw "Compiler not found: $Compiler" }
+
+# WP-N1 (A2): make sure -Compiler's own Nemerle.dll was built from the same commit as HEAD
+# before using it to build Stage2 -- without this check, a stale -Compiler fails partway
+# through the build with an unexplained ref-def mismatch FileLoadException (see the design
+# notes above and dotnet-port\assembly-version-check.ps1) instead of stopping here with the
+# recovery steps.
+. "$PSScriptRoot\assembly-version-check.ps1"
+Test-NemerleAssemblyVersionFreshness -NemerleDllPath (Join-Path (Split-Path $Compiler) "Nemerle.dll") -RepoRoot $RepoRoot -Label "Compiler ($Compiler)"
+
 New-Item -ItemType Directory -Force -Path $OutDir  | Out-Null
 New-Item -ItemType Directory -Force -Path $RspDir  | Out-Null
 
@@ -181,6 +193,7 @@ function Write-Rsp {
     $lines.Add("-greedy-references:-")
     $lines.Add("-use-loaded-corlib")
     $lines.Add("-define:RUNTIME_MS")
+    if ($EmitDebug) { $lines.Add("-debug") }
     $lines.Add("-keyfile:$(Q $KeyFile)")
     $lines.Add("-target:$Target")
     foreach ($s in $Sources) { $lines.Add((Q $s)) }

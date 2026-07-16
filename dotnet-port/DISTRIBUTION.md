@@ -19,8 +19,10 @@
 > を `-ref:` として配線(フレームワーク ref パック facade は `%(FrameworkReferenceName)` で除外)
 > したので、`ProjectReference`/`PackageReference` を持つ `.nproj` も `dotnet build` できる
 > (コミット ee2ae06f3、`samples\RefDemo` で実証)。以下の「制約」節のうち rsp 依存・参照未配線に
-> 関する記述はこの2コミットで解消済み。`pack-tool.ps1` の rsp/cmd/gen-default-rsp 生成は
-> now 任意(レガシー)で、整理は未実施。
+> 関する記述はこの2コミットで解消済み。`pack-tool.ps1` の `ncc.default.rsp`/`gen-default-rsp.ps1`
+> 生成と `ncc.cmd` の rsp 前置/自動再生成ロジックは **WP-N1(D7)で整理済み** — auto-ref 化により
+> レガシーになっていたこれらを削除し、`ncc.cmd` は `dotnet ncc.dll %*` を直接呼ぶだけの単純な
+> ラッパーになった(下記「1. `dotnet ncc` 配布レイアウト」節を参照)。
 
 > **更新 (WP-A3 — インプロセス MSBuild タスク)**: 「タスク3」の `<Exec dotnet ncc.dll ...>` は
 > 既定で**インプロセスタスク `NccCompile`**(`dotnet-port\Nemerle.MSBuild.Tasks`)に置き換わった。
@@ -98,25 +100,18 @@ dotnet-port\dist\ncc\
                                  "ncc" なので拡張子に関係なく両方をカバーする
   ncc.runtimeconfig.json
   Nemerle.dll / Nemerle.Compiler.dll / Nemerle.Macros.dll / Nemerle.CoreEmit.dll
-  ncc.default.rsp            -- 標準参照セット(-no-stdlib -use-loaded-corlib
-                                 -greedy-references:- + 実体分割アセンブリ + 自身の
-                                 Nemerle.dll への -ref:)。**絶対パスはマシン/設置場所固有**
-                                 (下記「再配置(relocation)」参照)
-  gen-default-rsp.ps1        -- ncc.default.rsp を現在の設置場所・ランタイムから再生成
-  ncc.cmd                    -- 利便性ラッパー(後述)。移動を検知して rsp を自動再生成
+  ncc.cmd                    -- 利便性ラッパー(後述)。`dotnet ncc.dll %*` を素で呼ぶだけ
 ```
 
-> **再配置(relocation)について**: `ncc.default.rsp` の `-ref:` は絶対パスである必要がある
-> (ncc は `-ref:` の相対パスをカレントディレクトリ基準で解決するため、相対パスでは
-> 任意の場所から使えない)。そのため、このレイアウトを別マシン・別ディレクトリへコピーすると、
-> pack 時に焼き込まれた (a) 共有フレームワークのパス(`...\Microsoft.NETCore.App\10.0.9\` の
-> ようにバージョン番号込み)と (b) 自身の `Nemerle.dll` のパスが両方とも無効になる。
-> これを避けるため、同梱の `gen-default-rsp.ps1` が **自分の設置場所** と **その場の
-> インストール済みランタイム** から全絶対パスを再計算する。`ncc.cmd` は rsp 内の
-> `Nemerle.dll` パスが現在地を指していない(=移動された)ときにこれを自動実行するので、
-> **`ncc.cmd` 経由なら配布物はそのまま再配置可能**。`dotnet <dir>\ncc.dll -from-file:...`
-> の直接呼び出しパスを使う場合や、.NET ランタイムをアップグレードした場合は、
-> `gen-default-rsp.ps1` を一度手動実行して rsp を更新すること。
+> **更新 (WP-N1, D7 — rsp レガシー整理)**: 以前はここに `ncc.default.rsp`(標準参照セットを
+> 焼き込んだ手組みのラッパー応答ファイル)と `gen-default-rsp.ps1`(レイアウトの再配置後に
+> その絶対パスを再計算するスクリプト)も含まれ、`ncc.cmd` は前者を `-from-file:` で前置し、
+> 移動を検知すると後者を自動再実行していた。WP-A2 の auto-ref 化(`ncc\passes.n` の
+> `LoadCoreStdlibReferences`)により ncc 自身が標準参照セットを解決するようになったため、
+> この3点はすべて**不要になり削除した**(`pack-tool.ps1` はもう生成しない)。再配置に関する
+> 懸念(絶対パスがマシン/設置場所固有になる問題)もこれで解消している — `ncc.cmd` は
+> `dotnet "%HERE%ncc.dll" %*` を呼ぶだけなので、レイアウトごとコピー/移動しても
+> 追加の再生成なしにそのまま動く。
 
 ### 検証済みの事実
 
@@ -126,20 +121,22 @@ dotnet-port\dist\ncc\
   つまり現状の stage2/stage3 出力は追加コード変更なしで「`dotnet <dll>`」規約に
   すでに適合していた — 必要だったのは新しい実装ではなく、レイアウト整理と
   デフォルト参照のラップだった。
-- `-from-file:` は Getopt の `SubstitutionString`(`lib\getopt.n` / `ncc\CompilationOptions.n`)
-  であり、**その場でファイル内容を再帰的にパースしてから残りのコマンドラインの
-  パースを続ける**(`parse_opts` の再帰呼び出しの後に外側の `parse_opts(rest)` が
-  必ず実行される、`lib\getopt.n:265-288` で確認)。よって
-  `-from-file:ncc.default.rsp -out:hello.exe hello.n` は
-  「rsp の内容 + `-out:hello.exe hello.n`」と等価に振る舞う。これが
-  「ラッパー rsp」方式の土台。
+- **(歴史的経緯、現在は使っていない)** `-from-file:` は Getopt の `SubstitutionString`
+  (`lib\getopt.n` / `ncc\CompilationOptions.n`)であり、**その場でファイル内容を再帰的に
+  パースしてから残りのコマンドラインのパースを続ける**(`parse_opts` の再帰呼び出しの後に
+  外側の `parse_opts(rest)` が必ず実行される、`lib\getopt.n:265-288` で確認)。よって
+  `-from-file:ncc.default.rsp -out:hello.exe hello.n` は「rsp の内容 +
+  `-out:hello.exe hello.n`」と等価に振る舞う ── これが撤去済みの「ラッパー rsp」方式
+  (`ncc.default.rsp` / `gen-default-rsp.ps1`、上記 WP-N1/D7 の更新を参照)の土台だった。
+  auto-ref 化後の現在は `-from-file:` を使わずとも標準参照セットが解決されるため、
+  この仕組み自体は使われていない。
 
 ### 再現手順
 
 ```powershell
 pwsh dotnet-port\pack-tool.ps1                # 既定: Stage2 -> dotnet-port\dist\ncc
-# 任意のディレクトリで:
-dotnet <repo>\dotnet-port\dist\ncc\ncc.dll -from-file:<repo>\dotnet-port\dist\ncc\ncc.default.rsp -out:hello.exe hello.n
+# 任意のディレクトリで(auto-ref のため rsp 不要):
+dotnet <repo>\dotnet-port\dist\ncc\ncc.dll -out:hello.exe hello.n
 dotnet exec hello.exe
 # または利便性ラッパー:
 <repo>\dotnet-port\dist\ncc\ncc.cmd -out:hello.exe hello.n

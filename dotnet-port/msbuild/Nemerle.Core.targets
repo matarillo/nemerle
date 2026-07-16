@@ -171,13 +171,44 @@
        <EmbeddedResource> items are used by NemerleCompile-based projects). -->
   <Target Name="CreateManifestResourceNames" Condition="'$(MSBuildProjectExtension)' != '.csproj'" />
 
+  <!-- MSBuild's Inputs/Outputs up-to-date check only understands items and files, not property
+       values, so $(DefineConstants)/$(NemerleAdditionalOptions) (both passed to NccCompile below)
+       cannot be listed in CoreCompile's Inputs directly - a rebuild with only those properties
+       changed (e.g. -p:EnableCustom=false flipping DefineConstants) would otherwise be considered
+       up-to-date and silently skipped, even though ncc would compile different code. Write them
+       to a small cache file instead and list THAT file as an Input. WriteOnlyWhenDifferent is the
+       part that matters: without it, this target would touch the cache file's timestamp on every
+       build, defeating incremental builds even when nothing actually changed. -->
+  <Target Name="_NemerleWriteCoreCompileCache" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <!-- Escape ';' first: an unescaped one inside an Include value is MSBuild's own list
+           separator, which would silently shatter $(DefineConstants) (itself a ';'-separated
+           list, e.g. "CUSTOM_FEATURE;NET10_0;...") across several cache-file lines instead of
+           keeping each property on one readable line. -->
+      <_NemerleCacheDefineConstants>$(DefineConstants.Replace(';', '%3B'))</_NemerleCacheDefineConstants>
+      <_NemerleCacheAdditionalOptions>$(NemerleAdditionalOptions.Replace(';', '%3B'))</_NemerleCacheAdditionalOptions>
+    </PropertyGroup>
+    <ItemGroup>
+      <_NemerleCoreCompileCacheLine Include="DefineConstants=$(_NemerleCacheDefineConstants)" />
+      <_NemerleCoreCompileCacheLine Include="NemerleAdditionalOptions=$(_NemerleCacheAdditionalOptions)" />
+    </ItemGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)Nemerle.coreCompileInputs.cache"
+                       Lines="@(_NemerleCoreCompileCacheLine)"
+                       Overwrite="true"
+                       WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <FileWrites Include="$(IntermediateOutputPath)Nemerle.coreCompileInputs.cache" />
+    </ItemGroup>
+  </Target>
+
   <!-- Overrides the SDK's built-in CoreCompile (normally Csc). @(IntermediateAssembly) is
        already computed by the common targets imported ahead of this file (Sdk.targets), to the
        same path csc would have written; reusing it verbatim keeps every downstream target
        (copy-to-output, runtimeconfig/deps generation, Clean, incremental up-to-date checks via
        Inputs/Outputs below) working exactly as the SDK expects. -->
   <Target Name="CoreCompile"
-          Inputs="@(NemerleCompile);@(ReferencePath);@(NemerleMacroReference);$(NccDll);$(NemerleTaskAssembly)"
+          Inputs="@(NemerleCompile);@(ReferencePath);@(NemerleMacroReference);$(NccDll);$(NemerleTaskAssembly);$(IntermediateOutputPath)Nemerle.coreCompileInputs.cache"
           Outputs="@(IntermediateAssembly)">
     <MakeDir Directories="$(IntermediateOutputPath)" Condition="!Exists('$(IntermediateOutputPath)')" />
     <!-- Pass this project's own ProjectReference/PackageReference outputs to ncc as -ref:.

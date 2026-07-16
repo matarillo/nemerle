@@ -17,6 +17,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -24,6 +25,7 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 
 namespace Nemerle.CoreEmit
 {
@@ -131,6 +133,50 @@ namespace Nemerle.CoreEmit
         public static AssemblyBuilder CreateRunBuilder(AssemblyName name)
         {
             return AssemblyBuilder.DefineDynamicAssembly(name, AssemblyBuilderAccess.RunAndCollect);
+        }
+
+        // Deterministic content ID (MVID / PE timestamp / PDB ID) derived from a SHA1 hash of
+        // the emitted bytes, same technique Roslyn's csc /deterministic uses -- SHA1 here is
+        // purely a content-addressing digest, not a security primitive.
+        private static BlobContentId ComputeDeterministicId(IEnumerable<Blob> blobs)
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+            foreach (var blob in blobs)
+                hash.AppendData(blob.GetBytes());
+            return BlobContentId.FromHash(hash.GetHashAndReset());
+        }
+
+        // PersistedAssemblyBuilder.GenerateMetadata bakes a random MVID into the GUID heap
+        // before ManagedPEBuilder ever runs, so ComputeDeterministicId's hash input above still
+        // includes that random value -- the derived MVID/PE-timestamp differ across otherwise
+        // identical builds. Roslyn avoids this by reserving a zeroed MVID blob upfront and
+        // patching it in afterwards; PersistedAssemblyBuilder has no such hook, so we do the
+        // same fixup after the fact: zero both stamp fields, hash the rest of the file, and
+        // write the hash-derived MVID/timestamp back into the same two spots.
+        private static void PatchDeterministicPeStamp(byte[] peBytes)
+        {
+            using var peReader = new PEReader(ImmutableArray.Create(peBytes));
+            MetadataReader mdReader = peReader.GetMetadataReader();
+            GuidHandle mvidHandle = mdReader.GetModuleDefinition().Mvid;
+
+            int guidHeapStart = peReader.PEHeaders.MetadataStartOffset + mdReader.GetHeapMetadataOffset(HeapIndex.Guid);
+            int guidIndex = MetadataTokens.GetHeapOffset(mvidHandle); // 1-based; each GUID heap entry is 16 bytes
+            int mvidOffset = guidHeapStart + (guidIndex - 1) * 16;
+
+            if (new Guid(peBytes.AsSpan(mvidOffset, 16)) != mdReader.GetGuid(mvidHandle))
+                throw new InvalidOperationException(
+                    "Nemerle.CoreEmit.Emitter: computed MVID offset does not match the module's " +
+                    "own Mvid value -- offset math must be wrong on this runtime, refusing to patch.");
+
+            int timeDateStampOffset = peReader.PEHeaders.CoffHeaderStartOffset + 4;
+
+            Array.Clear(peBytes, mvidOffset, 16);
+            Array.Clear(peBytes, timeDateStampOffset, 4);
+
+            BlobContentId id = BlobContentId.FromHash(SHA1.HashData(peBytes));
+
+            id.Guid.ToByteArray().CopyTo(peBytes, mvidOffset);
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(peBytes.AsSpan(timeDateStampOffset, 4), id.Stamp);
         }
 
         /// <summary>
@@ -261,7 +307,7 @@ namespace Nemerle.CoreEmit
             if (emitDebug)
             {
                 pdbPath = Path.ChangeExtension(Path.GetFullPath(outputPath), ".pdb");
-                var pdbBuilder = new PortablePdbBuilder(pdbMetadata, metadata.GetRowCounts(), entryPointHandle);
+                var pdbBuilder = new PortablePdbBuilder(pdbMetadata, metadata.GetRowCounts(), entryPointHandle, idProvider: ComputeDeterministicId);
                 pdbBlob = new BlobBuilder();
                 BlobContentId pdbId = pdbBuilder.Serialize(pdbBlob);
                 debugDir = new DebugDirectoryBuilder();
@@ -280,17 +326,19 @@ namespace Nemerle.CoreEmit
                 managedResources: resourcesBlob,
                 nativeResources: nativeResources,
                 debugDirectoryBuilder: debugDir,
-                entryPoint: entryPointHandle);
+                entryPoint: entryPointHandle,
+                deterministicIdProvider: ComputeDeterministicId);
 
             var peBlob = new BlobBuilder();
             peBuilder.Serialize(peBlob);
+            byte[] peBytes = peBlob.ToArray();
+            PatchDeterministicPeStamp(peBytes);
 
             string dir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            using (var fs = File.Create(outputPath))
-                peBlob.WriteContentTo(fs);
+            File.WriteAllBytes(outputPath, peBytes);
 
             if (emitDebug)
             {

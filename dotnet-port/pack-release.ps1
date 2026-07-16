@@ -127,6 +127,33 @@ if ($bundleInfo.commit -ne $commit) {
 }
 
 # ---------------------------------------------------------------------------
+# 3b. WP-N1 (A2): the packaged toolchain's own Nemerle assembly version must match what HEAD
+#     (the commit just verified above) expects. This is a narrower, mechanized restatement of
+#     the same hazard build-stage2-core.ps1/pack-tool.ps1 now guard against earlier in the
+#     pipeline (dotnet-port\assembly-version-check.ps1) -- catching it here too means a release
+#     built from a correct commit but with a stale (not-rebuilt) compiler inside the package
+#     still gets flagged, instead of only being caught by a load failure at a consumer's site.
+#     This script does not build anything, so on mismatch it reports and halts the same way as
+#     the commit checks above rather than offering a rebuild command mid-script.
+# ---------------------------------------------------------------------------
+. "$PSScriptRoot\assembly-version-check.ps1"
+$expectedNemerleAssemblyVersion = Get-ExpectedNemerleAssemblyVersion -RepoRoot $RepoRoot
+if ($null -eq $expectedNemerleAssemblyVersion) {
+    Write-Warning "Could not determine an expected Nemerle assembly version from 'git describe --tags --long' at $RepoRoot -- skipping the packaged-toolchain freshness check."
+}
+elseif ($toolchainInfo.nemerleAssemblyVersion -ne $expectedNemerleAssemblyVersion) {
+    throw @"
+Release halted: the packaged toolchain's Nemerle assembly version does not match what HEAD ($commit) expects.
+  packages         nemerleAssemblyVersion $($toolchainInfo.nemerleAssemblyVersion) (from ncc-info.json, commit $($toolchainInfo.commit))
+  HEAD expects     $expectedNemerleAssemblyVersion (from 'git describe --tags --long')
+This means the packaged compiler was built before the current commit's assembly-version-affecting
+history, even though its recorded commit matched. Rebuild the toolchain from HEAD and re-pack:
+  pwsh dotnet-port\build-stage2-core.ps1
+  pwsh dotnet-port\pack-tool.ps1 -Pack
+"@
+}
+
+# ---------------------------------------------------------------------------
 # 4. Record it.
 # ---------------------------------------------------------------------------
 $releaseInfo = [ordered]@{
