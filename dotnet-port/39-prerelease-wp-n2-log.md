@@ -177,7 +177,7 @@ node に TypedObject が乗らないという第 2 の欠陥もあった。
 | raw LSP 全 29 シナリオ | **PASS**(最終ソース状態で再実行) |
 | ProjectInfo.Test(unit + `--integration`) | **PASS**(HoverMarkup 追加 12 assertion 含む) |
 | pack(`pack-tool.ps1 -Pack -PackageVersionSuffix preview.2`) | 成功(freshness OK 1.2.0.621、`1.2.621-preview.2` — 同一 base の再配布のため規約どおり N+1。§7-7 参照) |
-| npm スイート(ci / check-types / lint / test / test:integration / test:sdk / package / test:vsix / test-bundled-server) | **PASS**(bundled server は `-VsixPath ..\dist\release\vscode-nemerle-0.8.2.vsix` 明示 — 37 §9-2 の既知の食い違い) |
+| npm スイート(ci / check-types / lint / test / test:integration / test:sdk / package / test:vsix / test-bundled-server) | **PASS**(bundled server は `-VsixPath ..\dist\release\vscode-nemerle-0.8.2.vsix` 明示 — 37 §9-2 の既知の食い違い。0.8.2 はゲート実行当時の版、§12 で 0.9.0 へ bump) |
 | `npm audit`(通常 + `--omit=dev`)/ `dotnet` 脆弱 package | 0 vulnerabilities |
 | `git diff --check` | **PASS**。CRLF 収載の legacy `VsIntegration` ソースでは追加行の CR が trailing whitespace として flag される(過去に engine の CRLF ファイルを触ったコミットも同様)ため、`.gitattributes` に `VsIntegration/** whitespace=cr-at-eol` を追加して「CR は行終端の一部」を宣言した。実スペースの trailing whitespace は引き続き flag される |
 
@@ -276,7 +276,7 @@ pwsh dotnet-port\vscode-nemerle\pack-server.ps1
 Push-Location dotnet-port\vscode-nemerle
 npm ci; npm run check-types; npm run lint; npm test
 npm run test:integration; npm run test:sdk; npm run package; npm run test:vsix
-pwsh .\test-bundled-server.ps1 -VsixPath ..\dist\release\vscode-nemerle-0.8.2.vsix -NoBuild
+pwsh .\test-bundled-server.ps1 -VsixPath ..\dist\release\vscode-nemerle-0.9.0.vsix -NoBuild   # ゲート実行当時は 0.8.2(§12 で 0.9.0 へ bump)
 npm audit; npm audit --omit=dev
 Pop-Location
 ```
@@ -382,8 +382,11 @@ PO の WSL 実機手動テスト(1.2.623-preview.1 セット + 宣言 hover 修�
 
 38 §7 の仮受け入れ基準は §1 のとおり全項目 PASS。フォローアップは §10(rsp untrack)、
 §11(CoreEmit 衝突=バックログ候補、宣言 hover 修正=実装済み)に記録済み。
-本節のクローズコミット後の HEAD で Stage チェーンを再構築し、`1.2.<rev>-preview.1` +
-VSIX 0.8.2 を pack-release で封緘して WP-N2 を完了とする(封緘記録は release-info.json)。
+本節のクローズコミット後、**extension 版を 0.8.2 → 0.9.0 に bump**(0.8.2 は 601 世代の
+公開済み番号のため、中身の異なる VSIX への再利用は「配布済み版番号の再発行禁止」の
+精神に反する — PO 指摘。ServerInfo / `package:vsix` スクリプトの版文字列も同時更新)した
+うえで、その HEAD で Stage チェーンを再構築し、`1.2.<rev>-preview.1` + VSIX 0.9.0 を
+pack-release で封緘して WP-N2 を完了とする(封緘記録は release-info.json)。
 
 ## 13. バックログ起票メモ(38 §5.1 メモの持ち越し)
 
