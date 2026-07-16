@@ -172,10 +172,15 @@ hint markup 修正とは別になる。
 `MarkupKind.Markdown` + `HoverMarkup.ToMarkdown` を返す(VS Code は該当。ただし現在の
 Markdown 形は平文全体を ```` ```nemerle ```` フェンスで包むだけ)。一方 completion の
 `documentation` は `MarkupKind.PlainText` 固定(`NemerleCompletionHandler.cs`)。
-「completion documentation の Markdown 化」と「hover Markdown 表現の高度化
-(フェンス一枚から signature / doc の構造化へ)」は N2.1 では扱わない。
-仮の予定: **WP-N 完了までに 36 §10 のバックログ(E9「completion/hover 表示の細部」の
-明示項目)として起票する**。N2.1 の hint-value 平文化は `ToPlainText` 修正であり、
+「completion documentation の Markdown 化」と「hover Markdown 表現の高度化」は
+N2.1 では扱わない。高度化の素材はすでにある: engine の擬似 markup は
+`<keyword>` / `<b>` / `<params>` / `<pname>` / `<ptype>` / `<hint>` の構造を持つ
+(現在の `ToPlainText` はこれらを一括除去している)ため、シグネチャ部のみ code fence、
+doc コメントは地の文、パラメーターはリスト化する Roslyn 風の構造化 hover が、
+engine 無改修・LSP 変換層(`HoverMarkup`)のみで実現できる見込み。
+仮の予定: **WP-N 完了までに、(a) completion documentation の Markdown 化と
+(b) hover Markdown の構造化の 2 点を、36 §10 のバックログ
+(E9「completion/hover 表示の細部」の明示項目)として起票する**。N2.1 の hint-value 平文化は `ToPlainText` 修正であり、
 `ToMarkdown` はその結果をフェンスするだけなので、両経路に同時に効く(競合しない)。
 
 ### 5.2 E7-R: `FindObject` の位置解決不足
