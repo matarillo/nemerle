@@ -3,7 +3,7 @@
   <!--
     WP-M6: `dotnet new` templates for Nemerle projects (29-devenv2-plan.md §6.7).
 
-      dotnet new install Nemerle.Templates.Unofficial::1.2.601-preview.2
+      dotnet new install Nemerle.Templates.Unofficial::<version>
       dotnet new nemerle-console
 
     A SEPARATE package from Nemerle.Sdk.Unofficial, per the official guidance: a template
@@ -61,12 +61,17 @@
     <Content Include="$(NemerleTemplateStagingDir)**\*"
              Exclude="$(NemerleTemplateStagingDir)**\bin\**;$(NemerleTemplateStagingDir)**\obj\**"
              Pack="true" PackagePath="content\" />
-    <None Include="README.md" Pack="true" PackagePath="/" />
+    <!-- Same staging story as content\ above: the README's copy-paste commands pin the
+         package version, so pack-tool.ps1 passes NemerleReadmeFile pointing at a staged copy
+         with __NEMERLE_SDK_VERSION__ substituted. -->
+    <None Include="$(NemerleReadmeFile)" Pack="true" PackagePath="/" />
   </ItemGroup>
 
   <Target Name="ValidateTemplateStaging" BeforeTargets="Build;Pack">
     <Error Condition="'$(NemerleTemplateStagingDir)' == '' OR !Exists('$(NemerleTemplateStagingDir)')"
            Text="NemerleTemplateStagingDir ($(NemerleTemplateStagingDir)) does not exist. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which stages the templates with the SDK version substituted in; packing this project directly would ship a literal __NEMERLE_SDK_VERSION__ placeholder." />
+    <Error Condition="'$(NemerleReadmeFile)' == '' OR !Exists('$(NemerleReadmeFile)')"
+           Text="NemerleReadmeFile ($(NemerleReadmeFile)) does not exist. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which stages README.md with the package version substituted in; packing this project directly would ship a literal __NEMERLE_SDK_VERSION__ placeholder." />
   </Target>
 
   <Target Name="ValidateExplicitVersion" BeforeTargets="Pack">

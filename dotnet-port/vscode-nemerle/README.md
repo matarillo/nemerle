@@ -22,7 +22,7 @@ overriding disk content.
   - the **`Nemerle.Sdk.Unofficial` NuGet package** (no repository checkout):
 
     ```xml
-    <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
+    <Project Sdk="Nemerle.Sdk.Unofficial/<version>">
       <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0</TargetFramework>

@@ -5,7 +5,7 @@
     dotnet-port\pack-tool.ps1) plus the shared MSBuild logic into an MSBuild project SDK
     package, so a Nemerle project can be built with no repository checkout at all:
 
-      <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
+      <Project Sdk="Nemerle.Sdk.Unofficial/<version>">
 
     Nothing is compiled here; like dotnet-port\Nemerle.Tool this project is pure repackaging of
     pre-built bits (ncc\*.n is never touched by any C# build). Drive it through
@@ -101,10 +101,16 @@
                    $(NccLayoutDir)ncc-info.json"
           Pack="true" PackagePath="tools/ncc/" Visible="false" />
 
-    <None Include="README.md" Pack="true" PackagePath="/" />
+    <!-- The README carries copy-paste commands that pin the package version, so like the
+         templates it is packed from a staged copy with __NEMERLE_SDK_VERSION__ substituted
+         (pack-tool.ps1 passes NemerleReadmeFile); packing packaging\...\README.md verbatim
+         would ship the literal placeholder. -->
+    <None Include="$(NemerleReadmeFile)" Pack="true" PackagePath="/" />
   </ItemGroup>
 
   <Target Name="ValidateNccLayout" BeforeTargets="Build;Pack">
+    <Error Condition="'$(NemerleReadmeFile)' == '' OR !Exists('$(NemerleReadmeFile)')"
+           Text="NemerleReadmeFile ($(NemerleReadmeFile)) does not exist. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which stages README.md with the package version substituted in; packing this project directly would ship a literal __NEMERLE_SDK_VERSION__ placeholder." />
     <Error Condition="!Exists('$(NccLayoutDir)ncc.dll')"
            Text="NccLayoutDir ($(NccLayoutDir)) does not contain ncc.dll: run dotnet-port\pack-tool.ps1 first (or pass -p:NccLayoutDir=&lt;path&gt;)." />
     <Error Condition="!Exists('$(NccLayoutDir)ncc-info.json')"

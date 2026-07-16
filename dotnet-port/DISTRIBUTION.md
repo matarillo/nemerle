@@ -44,6 +44,15 @@
 > なお `preview` ラベル自体は成熟度の表現(package ID には意図的に載せない — ID は恒久、
 > 成熟度は変わる)。WP-O の nuget.org 公開時にサフィックスを外した `1.2.<rev>` 安定版が終着点。
 > VSIX(`vscode-nemerle-<semver>`)は別体系(拡張の独自 semver)で、この規約の対象外。
+>
+> **配布物内の文書に版番号のリテラルを書かない**(同 WP-N1 フォローアップ): package README
+> (`packaging\*\README.md`)・インストールガイド(`packaging\README.md` → `dist\release\README.md`)・
+> `dotnet new` テンプレートは、版を `__NEMERLE_SDK_VERSION__`(インストールガイドの VSIX 例のみ
+> `__NEMERLE_VSIX_VERSION__`)と書き、`pack-tool.ps1 -Pack` が pack 時に実版へ置換した staging 済み
+> コピーを同梱する(プレースホルダーが見つからないと pack が停止するドリフト検知つき。csproj 側も
+> staged パス未指定の直 pack を拒否する)。コメント等の説明用途では固定版ではなく `<version>` 表記を
+> 使う(`Sdk.props` / 各 README / csproj ヘッダーで適用済み)。固定版の手書きは
+> 「1.2.601-preview.2 が 1.2.618 以降の配布物に残る」形で実際に腐った経緯による。
 
 > **更新 (WP-A3 — インプロセス MSBuild タスク)**: 「タスク3」の `<Exec dotnet ncc.dll ...>` は
 > 既定で**インプロセスタスク `NccCompile`**(`dotnet-port\Nemerle.MSBuild.Tasks`)に置き換わった。

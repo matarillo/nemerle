@@ -47,9 +47,9 @@ keep the folder somewhere permanent. Any path works; these are just examples:
 
 ```text
 C:\nemerle-packages\                     ~/nemerle-packages/
-  Nemerle.Sdk.Unofficial.1.2.601-preview.2.nupkg
-  Nemerle.Templates.Unofficial.1.2.601-preview.2.nupkg
-  vscode-nemerle-0.8.2.vsix
+  Nemerle.Sdk.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
+  Nemerle.Templates.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
+  vscode-nemerle-__NEMERLE_VSIX_VERSION__.vsix
   README.md
   release-info.json
 ```
@@ -92,7 +92,7 @@ Undo it later with `dotnet nuget remove source nemerle-local`.
 ### 1.3 Install the templates (optional)
 
 ```console
-dotnet new install Nemerle.Templates.Unofficial::1.2.601-preview.2 --add-source C:\nemerle-packages
+dotnet new install Nemerle.Templates.Unofficial::__NEMERLE_SDK_VERSION__ --add-source C:\nemerle-packages
 ```
 
 `--add-source` is only needed for this command; `dotnet new install` does not read the
@@ -123,7 +123,7 @@ The templates save typing, nothing more. A complete Nemerle project is:
 
 ```xml
 <!-- MyApp.nproj -->
-<Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
+<Project Sdk="Nemerle.Sdk.Unofficial/__NEMERLE_SDK_VERSION__">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -156,7 +156,7 @@ produce confusing ones.
 To keep the version out of every project file, drop it from the `Sdk` attribute and pin it once:
 
 ```json
-{ "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "1.2.601-preview.2" } }
+{ "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "__NEMERLE_SDK_VERSION__" } }
 ```
 
 ```xml
@@ -184,7 +184,7 @@ the resolved package, in a path specific to your machine):
 
 ```xml
 <!-- MyMacros.nproj -->
-<Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
+<Project Sdk="Nemerle.Sdk.Unofficial/__NEMERLE_SDK_VERSION__">
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -227,7 +227,7 @@ so an existing project that lists its sources keeps working as-is when converted
 hover, completion, and go-to-definition in VS Code:
 
 ```console
-code --install-extension vscode-nemerle-0.8.2.vsix
+code --install-extension vscode-nemerle-__NEMERLE_VSIX_VERSION__.vsix
 ```
 
 (Or in VS Code: **Extensions** → `...` → *Install from VSIX…*, which needs no `code` on your

@@ -308,6 +308,33 @@ if ($Pack) {
 
     $TemplateStageWithSlash = (Resolve-Path $TemplateStageDir).Path.TrimEnd('\') + '\'
 
+    # The package READMEs and the install guide (packaging\README.md, shipped below) carry
+    # copy-paste install commands that pin the version, so -- same story as the templates --
+    # they are authored with __NEMERLE_SDK_VERSION__ (plus __NEMERLE_VSIX_VERSION__ for the
+    # install guide's example folder listing) and staged with the real versions substituted
+    # at pack time. A hard-coded version in these documents rots into misleading instructions
+    # the first time the compiler generation moves (WP-N1 follow-up: the 1.2.601-preview.2
+    # literals that survived into the 1.2.618+ candidates are exactly that failure mode).
+    $VsixVersion = (Get-Content -Raw (Join-Path $PSScriptRoot "vscode-nemerle\package.json") | ConvertFrom-Json).version
+    function Expand-PackagingPlaceholders {
+        param([string]$SourcePath, [string]$DestinationPath)
+        $text = Get-Content -Raw -Path $SourcePath
+        if ($text -notmatch '__NEMERLE_SDK_VERSION__') { throw "No __NEMERLE_SDK_VERSION__ placeholder found in $SourcePath -- the packaging docs and this script have drifted apart." }
+        $text = $text.Replace('__NEMERLE_SDK_VERSION__', $PackageVersion).Replace('__NEMERLE_VSIX_VERSION__', $VsixVersion)
+        Set-Content -Path $DestinationPath -Value $text -NoNewline -Encoding utf8
+    }
+    $ReadmeStageDir = Join-Path $PSScriptRoot "dist\readmes"
+    if (Test-Path $ReadmeStageDir) { Remove-Item -Recurse -Force $ReadmeStageDir }
+    $StagedReadmes = @{}
+    foreach ($pkgId in @("Nemerle.Sdk.Unofficial", "Nemerle.Templates.Unofficial")) {
+        $stagePkgDir = Join-Path $ReadmeStageDir $pkgId
+        New-Item -ItemType Directory -Force -Path $stagePkgDir | Out-Null
+        $stagedReadme = Join-Path $stagePkgDir "README.md"
+        Expand-PackagingPlaceholders -SourcePath (Join-Path $PSScriptRoot "packaging\$pkgId\README.md") -DestinationPath $stagedReadme
+        $StagedReadmes[$pkgId] = $stagedReadme
+    }
+    Write-Host "Staged package READMEs -> $ReadmeStageDir (pinned to $PackageVersion / VSIX $VsixVersion)"
+
     $PackageProjects = @(
         (Join-Path $PSScriptRoot "packaging\Nemerle.Sdk.Unofficial\Nemerle.Sdk.Unofficial.csproj"),
         (Join-Path $PSScriptRoot "packaging\Nemerle.Templates.Unofficial\Nemerle.Templates.Unofficial.csproj")
@@ -330,16 +357,19 @@ if ($Pack) {
     }
 
     foreach ($proj in $PackageProjects) {
+        $pkgId = [System.IO.Path]::GetFileNameWithoutExtension($proj)
         & dotnet pack -c $Configuration $proj -o $PackageOutDir "-p:Version=$PackageVersion" `
-            "-p:NccLayoutDir=$OutDirWithSlash" "-p:NemerleTemplateStagingDir=$TemplateStageWithSlash" -v:minimal
+            "-p:NccLayoutDir=$OutDirWithSlash" "-p:NemerleTemplateStagingDir=$TemplateStageWithSlash" `
+            "-p:NemerleReadmeFile=$($StagedReadmes[$pkgId])" -v:minimal
         if ($LASTEXITCODE -ne 0) { throw "dotnet pack failed for $proj (exit $LASTEXITCODE)" }
     }
 
     # Ship the install guide alongside the packages. Whoever downloads a GitHub release asset has
     # the .nupkg files and no checkout, so a guide that only exists in the repository is a guide
     # they cannot read; $PackageOutDir is what gets archived, so it has to explain itself.
-    Copy-Item -Path (Join-Path $PSScriptRoot "packaging\README.md") -Destination $PackageOutDir -Force
-    Write-Host "Wrote $(Join-Path $PackageOutDir 'README.md') (install guide)"
+    # Substituted, not copied verbatim: the guide's commands pin the version (see above).
+    Expand-PackagingPlaceholders -SourcePath (Join-Path $PSScriptRoot "packaging\README.md") -DestinationPath (Join-Path $PackageOutDir "README.md")
+    Write-Host "Wrote $(Join-Path $PackageOutDir 'README.md') (install guide, pinned to $PackageVersion)"
 
     Write-Host ""
     Write-Host "Packages -> $PackageOutDir"

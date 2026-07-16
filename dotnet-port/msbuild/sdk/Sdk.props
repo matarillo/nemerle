@@ -3,10 +3,11 @@
     Nemerle.Sdk.Unofficial - MSBuild project SDK entry point (props half).
     WP-M6, dotnet-port\29-devenv2-plan.md §6.7.
 
-    Consumed as:
-      <Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
+    Consumed as (<version> = the version of the installed package; deliberately not a
+    literal here, a hard-coded example rots as compiler generations move):
+      <Project Sdk="Nemerle.Sdk.Unofficial/<version>">
     or with the version pinned in global.json:
-      { "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "1.2.601-preview.2" } }
+      { "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "<version>" } }
       <Project Sdk="Nemerle.Sdk.Unofficial">
 
     Why a project SDK (Sdk/Sdk.props + Sdk/Sdk.targets) and NOT the build/<id>.targets NuGet

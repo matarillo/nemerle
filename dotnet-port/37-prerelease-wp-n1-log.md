@@ -11,7 +11,7 @@ D2 増分ビルド判定 / D7 rsp レガシー整理)。
 
 | 基準(36 §6 WP-N1) | 結果 |
 |---|---|
-| 1. stage2 の 2 回独立ビルドがマスク無しで 4 アセンブリ完全バイト一致。stage3 も同様(`-debug` 時は PDB も) | **PASS(一部読み替え)**: stage2×2 完全一致、`-EmitDebug`×2 は PDB 含む 8/8 完全一致、stage3==stage4 完全一致。**stage2==stage3 は既知の世代差(16 §3)により原理的に不成立** — §4.2 に読み替えの根拠を記録 |
+| 1. stage2 の 2 回独立ビルドがマスク無しで 4 アセンブリ完全バイト一致。stage3 も同様(`-debug` 時は PDB も) | **PASS(一部読み替え)**: stage2×2 完全一致、`-EmitDebug`×2 は PDB 含む 8/8 完全一致、stage3\=\=stage4 完全一致。**stage2\=\=stage3 は既知の世代差(16 §3)により原理的に不成立** — §4.2 に読み替えの根拠を記録 |
 | 2. 古い Stage1 で `build-stage2-core.ps1` を実行するとビルド前に版不一致エラー+復旧手順で停止 | **PASS**(§3。実際に古かった Stage1 1.2.0.601 vs HEAD 期待 1.2.0.618 の実地 fixture で確認) |
 | 3. `DefineConstants` のみ変更した `dotnet build` が再コンパイルを実行し、無変更の再ビルドはスキップ | **PASS**(§5。`samples/Defines` の 6 ステップで確認) |
 | 4. provenance(`ncc-info.json` / server 版照合)が決定的 MVID と矛盾しない | **PASS**(§6。provenance-mismatch シナリオ含む bundled server スイート PASS) |
@@ -139,12 +139,12 @@ GUID ヒープへ埋め込む**ため、provider のハッシュ入力自体に�
 | stage3 vs stage4 | **4/4 完全一致**(コアフレーバー同士のフィックスポイント) |
 | `-EmitDebug` ×2(同一 OutDir、間で退避) | **8/8 完全一致**(4 アセンブリ + 4 PDB) |
 
-**stage2 ≠ stage3 について**: 36 §6 の受け入れ基準 1 は「stage3 == stage2 も同様」と
+**stage2 ≠ stage3 について**: 36 §6 の受け入れ基準 1 は「stage3 \=\= stage2 も同様」と
 書かれていたが、これは既知の**世代差**(16 §3: Stage1 は net4 フレーバー、stage2 は core
 フレーバーで、コンパイル中の gensym ID 消費数が異なり生成名の連番が全体にシフトする。
 非決定性ではなく世代にのみ依存する決定的な差)により原理的に成立しない。
 本 WP では「同一コンパイラーでの再現性(stage2×2、`-EmitDebug`×2)」と
-「自己ホストのフィックスポイント(stage3 == stage4 完全バイト一致)」で決定性を検証・達成した。
+「自己ホストのフィックスポイント(stage3 \=\= stage4 完全バイト一致)」で決定性を検証・達成した。
 stage3 を作った stage2 自体が 2 回独立ビルドで一致しているため、チェーン全体が再現可能である。
 なお ncc.exe(ソースが小さく gensym シフトの影響を受けない)は世代を跨いでも一致した。
 
@@ -261,7 +261,7 @@ Pop-Location
 1. **stage2 ≠ stage3(世代差)**: Stage1(net4 フレーバー)と stage2(core フレーバー)で
    gensym ID 消費数が異なるため、stage2 と stage3 はコンテンツレベルで一致しない(16 §3 の
    既知事実、非決定性ではない)。決定性の保証は「同一コンパイラーの再現性」と
-   「stage3 == stage4 フィックスポイント」で担保する。Stage1 を core フレーバー化しない限り
+   「stage3 \=\= stage4 フィックスポイント」で担保する。Stage1 を core フレーバー化しない限り
    恒久(36 の WP-N6 が checked-in stage 起点の CI を組む際もこの前提で設計する)。
 2. **`test-bundled-server.ps1` の既定 `-VsixPath` が古い**: 既定は拡張ディレクトリ直下だが、
    `npm run package:vsix` は WP-M6 フォローアップ以降 `../dist/release/` へ出力するため、

@@ -10,7 +10,7 @@ at <https://github.com/matarillo/nemerle>, and the projects they generate build 
 ## Install
 
 ```console
-$ dotnet new install Nemerle.Templates.Unofficial::1.2.601-preview.2
+$ dotnet new install Nemerle.Templates.Unofficial::__NEMERLE_SDK_VERSION__
 ```
 
 ## Templates
@@ -50,7 +50,7 @@ The generated project pins the SDK version in its `Sdk` attribute. To pin it cen
 instead, drop the version from the attribute and use `global.json`:
 
 ```json
-{ "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "1.2.601-preview.2" } }
+{ "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "__NEMERLE_SDK_VERSION__" } }
 ```
 
 ## License

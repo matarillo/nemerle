@@ -15,7 +15,7 @@ extension (see *Limitations*):
 
 ```xml
 <!-- hello.nproj -->
-<Project Sdk="Nemerle.Sdk.Unofficial/1.2.601-preview.2">
+<Project Sdk="Nemerle.Sdk.Unofficial/__NEMERLE_SDK_VERSION__">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -45,7 +45,7 @@ globs `**/*.cs`.
 Alternatively, pin the version in `global.json` and drop it from the project file:
 
 ```json
-{ "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "1.2.601-preview.2" } }
+{ "msbuild-sdks": { "Nemerle.Sdk.Unofficial": "__NEMERLE_SDK_VERSION__" } }
 ```
 
 ```xml
@@ -55,7 +55,7 @@ Alternatively, pin the version in `global.json` and drop it from the project fil
 Project templates are available separately as `Nemerle.Templates.Unofficial`:
 
 ```console
-$ dotnet new install Nemerle.Templates.Unofficial::1.2.601-preview.2
+$ dotnet new install Nemerle.Templates.Unofficial::__NEMERLE_SDK_VERSION__
 $ dotnet new nemerle-console
 ```
 
