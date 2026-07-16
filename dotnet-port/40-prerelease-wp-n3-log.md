@@ -223,7 +223,36 @@ README は `__NEMERLE_SDK_VERSION__` 置換方式)。`pack-tool.ps1 -Pack` に�
 
 ## 9. 封緘(コミット後の Stage 再構築と release set)
 
-*(本節はクローズ時に追記)*
+WP-N3 本体コミット = **5245d5345**(共有ソース ncc/Linq マクロ変更を含むため、
+規約どおり「確定コミット → その HEAD で Stage 再構築 → pack → 封緘」を実施)。
+
+| 工程 | 結果 |
+|---|---|
+| Stage1 フルリビルド(CLR4、dir 削除 + `/t:Stage1`)+ refresh-stage1-core | OK、**1.2.0.627** |
+| CLR4 スモーク(Stage1 ncc ネイティブ hello / hello2 compile+run) | PASS |
+| stage2 ×2 独立ビルド(compare-stage、マスク無し) | **4 アセンブリ完全バイト一致** |
+| stage3(stage2 産)vs stage4(stage3 産)fixpoint | **4 アセンブリ完全バイト一致** |
+| build-libs-core(Nemerle.Linq) | OK、1.2.0.627(コンパイラーと同世代) |
+| testsuite 全数 @627 | **614/636(positive 448/469, negative 166/167)** — コミット前(§6)と同一 |
+| pack-tool -Pack | Sdk / Templates / **Linq** = **1.2.627-preview.1**、ncc-info = 5245d5345(clean) |
+| 消費 e2e 再検証(repo 外 + local feed、627 版) | build/run PASS(linq 構文・式ツリー・タプル射影) |
+| pack-server + `npm run package`(lint + unit + verify-server 込み) | VSIX **0.9.0** 再生成(627 server 同梱) |
+| test-bundled-server(-VsixPath 明示) | PASS(WP-L3 全シナリオ) |
+| `npm run test:sdk` / `npm run test:vsix` | PASS / PASS |
+| `npm audit` | **0 vulnerabilities** |
+| pack-release | **封緘済み**: dist\release = 3 nupkg(1.2.627-preview.1)+ vscode-nemerle-0.9.0.vsix + README + release-info.json(commit 5245d5345、1.2.0.627) |
+
+運用ノート:
+
+- **VSIX 0.9.0 は同一版番号のまま内容更新**(627 世代 server)。0.9.0 は未公開
+  (local セットのみ)のため WP-N1 のローカル候補運用に従い番号を維持した。
+  公開時(WP-O)には extension 版 bump 要否を再確認すること。
+- WP-N2 の **1.2.626-preview.1 セットは本セットに置換(superseded)**し、dist\release から
+  削除した(公開歴なし。なお本 WP の開発中、試験 pack が封緘済み 626 nupkg を同名で
+  一時上書きしていた — 最終的に 626 は全て削除済みで実害はないが、封緘済みセットの
+  置き場と作業用 pack の出力が同一ディレクトリである構造は将来の注意点)。
+- WSL 側は SDK pin を **1.2.627-preview.1** へ、VSIX 0.9.0 再インストール、
+  版切替後は `dotnet build-server shutdown`(CoreEmit 衝突の既知回避)が必要。
 
 ## 10. 再現コマンド
 
