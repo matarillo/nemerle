@@ -9,6 +9,13 @@
 dotnet-port/dist/
 *.nupkg
 
+# WP-N2 follow-up: stage response files are regenerated in full by
+# dotnet-port\build-stage2-core.ps1 on every run (machine-specific absolute
+# paths, shared-framework patch version, last -OutDir), i.e. build
+# intermediates, not sources.  Tracking them made every stage rebuild dirty
+# the tree, which conflicts with the clean-tree sealing gate (pack-release).
+dotnet-port/rsp/
+
 *.ReSharper
 _ReSharper.*
 *.user
