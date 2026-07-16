@@ -82,7 +82,9 @@ E10 ConsoleTest 期待値ずれ 6 件 / E11 nunit.framework.dll 手動コピー[
 さらに **PO 報告(2026-07-16)**: hover で一部の主要 BCL 型が表示されない、
 プロジェクトで定義した型も表示されないことがある。**事象自体がまだ正確に捉えられて
 いない**ため、挙動確認から始める。E7/E8 の対応で解決する可能性も、別原因の可能性も
-ある(→ WP-N2 トラック 3)。
+ある(→ WP-N2 トラック 3)。その後、具体的な再現ケース(`samples/Sokoban` の
+hover 型名欠落 4 件、`samples/CompTimeSolver/Success` の parse error 1 件)が
+報告された — 一覧は §6 WP-N2 トラック 3 に記録。
 
 **F. リリース工程**: F1 nuget.org/Marketplace/署名/CI 未実施[高・WP-O] /
 F2 net10 runtime package 未公開(D1 の前提。既存 net4x パッケージ消費者との版方針判断要)[高・WP-O] /
@@ -235,6 +237,31 @@ references の結果が少なく出るだけでなく、**将来の rename / cod
 force-out による正当な null との混同、relocation 後の型ツリー不整合、project reload
 タイミング、`collect_members` フィルタ)。切り分け後、該当トラックへ合流させるか、
 独立した修正項目として扱うかを確定する。
+
+**報告ケース(2026-07-16、具体的な再現箇所つき)**
+
+`samples/Sokoban/Sokoban` — hover の型名欠落 4 件:
+
+| ファイル | 行 | hover 対象 | 表示 | 欠落しているもの |
+|---|---|---|---|---|
+| main.n | 7 | `Main (args : array[string])` の `args` | `(function parameter) args : []` | `string`(配列要素型) |
+| splayheap.n | 7 | `elem : SMap;` の `SMap` | `NSokoban.` | `SMap`(単純名。名前空間修飾のみ残る) |
+| treesearch.n | 15 | `mutable depth = 0;` の `depth` | `(mutable local value) depth : `(型欄が空、`defined in BFS(...)` は表示) | 推論された local の型 |
+| sokoban.n | 109 | `Hashtable [string, SMap]` の `Hashtable` | `Nemerle.Collections.[, NSokoban.]` | `Hashtable`・`string`・`SMap` の単純名すべて。※109 行目は `public class SMap`(107 行目)の内部 |
+
+観察される共通パターン: 名前空間修飾(`NSokoban.` / `Nemerle.Collections.`)や
+記号(`[]`、`[, ]`)は表示されるが、型の**単純名**が欠落する。ユーザー定義型(`SMap`)・
+BCL 型(`string`)・Nemerle ライブラリ型(`Hashtable`)のいずれでも発生。
+treesearch.n の件は E7 の既知特性(local value の型欄が空)と同型に見えるため、
+E7 への合流候補。
+
+`samples/CompTimeSolver/Success/success.n` — hover ではなくエディター診断 1 件:
+
+- 2 行目 `WriteLine(SolveMaze("success.txt"));` に
+  ``parse error near identifier `WriteLine': expecting type declaration`` が報告される。
+  報告者の仮説: SolveMaze マクロの戻り値の型が不明のため(トップレベル式プログラム +
+  コンパイル時マクロの組み合わせ)。挙動確認時に ncc 本体でのビルド成否と比較する
+  (LSP 経路のみで出るのか、ncc でも出るのか)。
 
 進め方(調査 → 中間判断 → 修正の三段):
 
