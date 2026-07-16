@@ -29,6 +29,21 @@ public static partial class HoverMarkup
     [GeneratedRegex(@"<[^<>]*>")]
     private static partial Regex AnyTag();
 
+    // A self-closing <hint value='...' key='...' /> tag: SubHintForType emits these
+    // for a bare type simple name ("SMap", "array", ...) that the old VS2010 UI
+    // rendered inline from the "value" attribute. Attribute order and quote style
+    // are not fixed, so this just isolates the whole self-closing tag; the value
+    // itself is pulled out by HintValueAttribute() below. Paired <hint>...</hint>
+    // tags (used elsewhere for tooltips-on-punctuation) never match here because
+    // they have no trailing "/>", so they still fall through to AnyTag() unchanged.
+    [GeneratedRegex(@"<\s*hint\b[^<>]*/\s*>", RegexOptions.IgnoreCase)]
+    private static partial Regex SelfClosingHintTag();
+
+    // The value='...'/"..." attribute inside an already-isolated self-closing hint
+    // tag. Searched (not anchored), so it is found regardless of attribute order.
+    [GeneratedRegex(@"\bvalue\s*=\s*(?:'([^']*)'|""([^""]*)"")", RegexOptions.IgnoreCase)]
+    private static partial Regex HintValueAttribute();
+
     /// <summary>
     /// Strips pseudo-markup to a plain-text hint: <c>&lt;lb/&gt;</c> becomes a
     /// newline, every other tag is removed (its visible content is kept), and
@@ -41,15 +56,36 @@ public static partial class HoverMarkup
             return string.Empty;
 
         var text = LineBreakTag().Replace(markup, "\n");
+        // Expand self-closing <hint value='...' /> tags to their visible type
+        // name before the generic tag stripper below would otherwise delete the
+        // whole tag (this was the R-H / E7-D information loss: a hover like
+        // "args : []" instead of "args : array[string]"; 38-prerelease-wp-n2-log.md
+        // §5.1). A malformed/valueless self-closing hint tag is left as-is here
+        // and falls through to AnyTag() removal, i.e. today's behavior, so no raw
+        // markup ever leaks either way.
+        text = SelfClosingHintTag().Replace(text, ExpandSelfClosingHint);
         text = AnyTag().Replace(text, string.Empty);
         // Reverse HintHelper.HtmlMangling (& -> &amp;, > -> &gt;, < -> &lt;):
         // decode &amp; last so an escaped "&amp;lt;" round-trips to "&lt;" rather
-        // than collapsing to "<".
+        // than collapsing to "<". This also covers entities that were carried
+        // inside an expanded hint value above (that step never itself decodes).
         text = text
             .Replace("&lt;", "<")
             .Replace("&gt;", ">")
             .Replace("&amp;", "&");
         return NormalizeNewlines(text).Trim();
+    }
+
+    // Extracts the visible text from a self-closing <hint value='...' /> tag.
+    // Returns the match unchanged when there is no "value" attribute, so the
+    // caller's fallback (AnyTag() removal) applies exactly as it did before this
+    // expansion step existed.
+    private static string ExpandSelfClosingHint(Match tag)
+    {
+        var value = HintValueAttribute().Match(tag.Value);
+        if (!value.Success)
+            return tag.Value;
+        return value.Groups[1].Success ? value.Groups[1].Value : value.Groups[2].Value;
     }
 
     /// <summary>

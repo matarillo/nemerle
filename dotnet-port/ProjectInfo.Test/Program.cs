@@ -122,6 +122,49 @@ internal static class Program
         var hint = HoverMarkup.ToPlainText("<hint value='name'>the parameter</hint>");
         Equal("the parameter", hint, "hint tag keeps inner text and drops the value attribute");
 
+        // Self-closing <hint value='...' /> (SubHintForType's bare type simple name,
+        // e.g. "<hint value='SMap' key='42' />") expands to the value text instead of
+        // being deleted like a decorative tag (WP-N2 N2.1, R-H / E7-D: this was the
+        // hint markup information loss that turned "args : array[string]" into
+        // "args : []").
+        Equal("args : array[string]",
+            HoverMarkup.ToPlainText("args : <hint value='array' key='1' />[<hint value='string' key='2' />]"),
+            "self-closing hint value expands to the visible type name (single-quoted, value before key)");
+        Equal("SMap",
+            HoverMarkup.ToPlainText("<hint value=\"SMap\" key=\"7\" />"),
+            "self-closing hint value expands with double-quoted attributes");
+        Equal("SMap",
+            HoverMarkup.ToPlainText("<hint key='7' value='SMap' />"),
+            "self-closing hint value expands regardless of attribute order (key before value)");
+        Equal("SMap",
+            HoverMarkup.ToPlainText("<hint   value = 'SMap'   key = '7'   />"),
+            "self-closing hint value expands across arbitrary whitespace");
+        Equal("SMap",
+            HoverMarkup.ToPlainText("<hint value='SMap'/>"),
+            "self-closing hint value expands with no space before the closing slash");
+
+        // Entities inside the value survive the expansion step untouched and are
+        // decoded once, by the existing entity-decode step that already ran after
+        // tag stripping (not double-decoded here).
+        Equal("List<int>",
+            HoverMarkup.ToPlainText("<hint value='List&lt;int&gt;' key='9' />"),
+            "escaped entities inside a self-closing hint value are decoded exactly once");
+
+        // Malformed / valueless self-closing hint tags fall back to today's
+        // behavior: the tag is simply removed, same as any other decorative tag,
+        // so raw pseudo-markup never leaks to the client.
+        Equal("x", HoverMarkup.ToPlainText("<hint key='1' />x"),
+            "a self-closing hint tag with no value attribute falls back to tag removal");
+        var malformed = HoverMarkup.ToPlainText("<hint value />x");
+        True(!malformed.Contains('<') && !malformed.Contains('>') && malformed.Contains('x'),
+            "a self-closing hint tag with a bare 'value' (no '=') falls back to tag removal, no markup leaks");
+
+        // Paired <hint>...</hint> tags (no self-closing "/>") keep behaving exactly
+        // as before: the tags are removed and the inner content is kept.
+        Equal("the parameter",
+            HoverMarkup.ToPlainText("<hint value='name' key='3'>the parameter</hint>"),
+            "paired hint tags with a value attribute still keep only their inner text");
+
         // HtmlMangling is reversed; &amp; is decoded last so &amp;lt; round-trips to &lt;.
         Equal("List<int> & Map<K,V>",
             HoverMarkup.ToPlainText("List&lt;int&gt; &amp; Map&lt;K,V&gt;"),
@@ -143,6 +186,12 @@ internal static class Program
         Equal("```nemerle\npublic M(a : int) : void\n```", md, "markdown fences the hint as a Nemerle code block");
         True(md.StartsWith("```nemerle\n", StringComparison.Ordinal) && md.EndsWith("\n```", StringComparison.Ordinal),
             "markdown result is a fenced code block");
+
+        // ToMarkdown reuses ToPlainText, so the fence wraps the expanded hint
+        // value too: the markdown path gets the same R-H / E7-D fix for free.
+        Equal("```nemerle\nSMap\n```",
+            HoverMarkup.ToMarkdown("<hint value='SMap' key='42' />"),
+            "markdown fences the expanded self-closing hint value");
 
         // Metacharacters and residual identifiers are never interpreted as markdown.
         var meta = HoverMarkup.ToMarkdown("value *n* _k_ [x](y) : int");

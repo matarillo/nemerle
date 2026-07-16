@@ -344,6 +344,17 @@ namespace Nemerle.Compiler
     /// on the top-level token of given source.
     public static Parse (lex : LexerBase, tokenHandler : Token -> void) : list [TopDeclaration]
     {
+      Parse (lex, tokenHandler, false)
+    }
+
+    /// Same as Parse(lex, tokenHandler), with an opt-in for IntelliSense hosts:
+    /// when allowTopLevelExpressions is true, token groups that do not look like
+    /// type declarations are parsed as top-level expressions and wrapped into a
+    /// synthetic Main class exactly like the batch compiler does, instead of the
+    /// historical IntelliSense-mode behavior of forcing ParseTopLevel (which
+    /// reports "expecting type declaration" on top-level-expression programs).
+    public static Parse (lex : LexerBase, tokenHandler : Token -> void, allowTopLevelExpressions : bool) : list [TopDeclaration]
+    {
       //def timer = System.Diagnostics.Stopwatch.StartNew();
       lex.BeginParseFile();
       def isIndntSyntax = lex.Manager.Options.IndentationSyntax;
@@ -372,7 +383,7 @@ namespace Nemerle.Compiler
          {
           parser.eat_assembly_attributes (topstream);
 
-          if (lex.Manager.IsIntelliSenseMode || IsTopLevel (topstream))
+          if ((lex.Manager.IsIntelliSenseMode && !allowTopLevelExpressions) || IsTopLevel (topstream))
           {
             result = parser.ParseTopLevel (topstream, result);
             topstream = topstream.Next :> Token.LooseGroup;

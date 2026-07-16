@@ -70,6 +70,17 @@ namespace Nemerle.Completion2
         try { susp.Resolve(); }
         catch { e is Exception => Trace.WriteLine($"$(e.GetType().Name): $(e.Message)"); }
         if (susp.IsResolved) susp.ResolutionResult else null
+      // A qualifier sub-expression that is only meaningful as a type name (e.g.
+      // the "E7Probe" in "E7Probe.Compute(...)") is still speculatively typed as
+      // a value expression by the compiler and left with a TExpr.Error stub on
+      // its own PExpr node, even though the enclosing PExpr.Member/TExpr.StaticRef
+      // resolves correctly. Treating that stub the same as "untyped" (null) lets
+      // the walker fall back to the innermost node that actually carries a real
+      // resolution (e.g. the enclosing member access) instead of latching onto
+      // the discarded error placeholder. This does not change behavior when no
+      // such enclosing resolution exists: a bare TExpr.Error position already
+      // produced a null/empty hover and definition result before this change.
+      | _ is TExpr.Error   => null
       | _                  => obj;
     }
 
@@ -202,7 +213,7 @@ namespace Nemerle.Completion2
           // Making it possible to find empty Sequence.
           else match(obj)
           {
-          | PExpr.Sequence([]) => 
+          | PExpr.Sequence([]) =>
               _parentObject = _pexprObject;
               _location     = loc;
               _pexprObject  = info.Node;

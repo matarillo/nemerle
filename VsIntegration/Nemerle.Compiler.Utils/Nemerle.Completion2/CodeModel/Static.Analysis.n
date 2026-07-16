@@ -40,19 +40,141 @@ namespace Nemerle.Completion2
       CoreFind(expressionRoot, FindFunctionParameterEntriesNodeVisitor(_, functionParameter, _))
     }
     
+    /// Request-time, correctness-first walk of every current-project TypeBuilder
+    /// reachable from `roots` (WP-N2 N2.4, R-R/E8: the previous implementation,
+    /// FindTypeEntriesVisitor walking parsed TopDeclaration trees via
+    /// ExprDeclWalker, only ever recognized function-parameter types,
+    /// constructor calls and a (structurally unreachable from a Decl.Type root)
+    /// TypeBuilder self-check - it never visited field/property/event/return
+    /// types or method bodies at all, so ordinary type-annotation usages such
+    /// as "elem : SMap" were silently dropped and even the type's own
+    /// declaration produced zero results). This walks the *compiled* member
+    /// list of each TypeBuilder directly instead, so it doesn't depend on
+    /// which FunBody state (Parsed/Typed) a member's original ClassMember AST
+    /// node happens to carry.
     public FindTypeUsages(roots : list[Decl], typeToFind : TypeInfo) : list[GotoInfo]
     {
-      def result = SCG.List();
-      foreach(root in roots.RemoveDuplicates())
-        result.AddRange(CoreFind(root, FindTypeEntriesVisitor(_, typeToFind, _)));
+      def foundEntries = SCG.List();
+      def visited       = SCG.HashSet();
 
-      result
+      foreach (root in roots.RemoveDuplicates())
+        match (root)
+        {
+        | Decl.Type(ast) when ast.TypeBuilder != null =>
+            FindTypeUsagesInTypeBuilder(ast.TypeBuilder, typeToFind, foundEntries, visited);
+        | _ => ()
+        }
+
+      foundEntries
+        .NToList()
         .RemoveDuplicates()
         .Sort((left, right) => left.Location.CompareTo(right.Location));
-
-      result.NToList();
     }
-    
+
+    /// Visits `tb`'s own declaration (a Definition, once per partial-type
+    /// part), every member's type-annotation positions (field/event type,
+    /// property return/indexer-parameter types, method return/parameter
+    /// types), and - by walking each compilable method's BodyParsed with the
+    /// ordinary ExprWalker - every body-internal type-annotation position
+    /// (local/lambda/nested-function parameter types, generic type-argument
+    /// positions such as "Hashtable.[string, SMap]") and constructor call.
+    /// Recurses into nested types and variant options so a variant field
+    /// declared on a variant *option* (not the base variant TypeBuilder) is
+    /// still found starting from the base type's root Decl.
+    ///
+    /// Static-member-access qualifier positions (e.g. the "SMap" in
+    /// "SMap.Leq(...)" or "SMap.Visited") need no special casing: the body
+    /// walk sees the qualifier's own PExpr node with a resolved type and
+    /// reports it like any other usage (measured on the Sokoban SMap set).
+    /// Deliberately out of scope (record, do not chase with special-case
+    /// machinery per 38-prerelease-wp-n2-log.md §6 N2.4): macro-expanded-only
+    /// positions that aren't visible on the parsed (pre-expansion) tree.
+    private FindTypeUsagesInTypeBuilder(
+      tb           : TypeBuilder,
+      typeToFind   : TypeInfo,
+      foundEntries : SCG.List[GotoInfo],
+      visited      : SCG.HashSet[TypeBuilder]
+    ) : void
+    {
+      when (visited.Add(tb))
+      {
+        def targetMemType = typeToFind.GetMemType();
+
+        when (tb.Equals(typeToFind))
+          foreach (part in tb.AstParts)
+            unless (part.name.Location.IsGenerated)
+              foundEntries.Add(GotoInfo(part.name.Location, UsageType.Definition));
+
+        def isCtorOfTarget(typedObject : object) : bool
+        {
+          match (typedObject)
+          {
+          | TExpr.StaticRef(_, mem, _) =>
+              match (mem)
+              {
+              | mb is MethodBuilder when mb.Name == ".ctor" && mb.DeclaringType.Equals(typeToFind) => true
+              | _ => false
+              }
+          | T.Pattern.HasType(mtype)      => mtype.Equals(targetMemType)
+          | T.Pattern.Application(ti, _)  => ti.Equals(typeToFind)
+          | _                             => false
+          }
+        }
+
+        def walkTypeExpr(root : PExpr) : void
+        {
+          when (root != null)
+            ExprWalker().Walk(root, (info : ExprWalkInfo) =>
+            {
+              match (info.Node)
+              {
+              | pexpr is PExpr when !pexpr.Location.IsGenerated =>
+                  match (pexpr.TypedObject)
+                  {
+                  | mType is FixedType when mType.Equals(targetMemType) =>
+                      foundEntries.Add(GotoInfo(pexpr.Location, UsageType.Usage));
+                  | typedObject when isCtorOfTarget(typedObject) =>
+                      foundEntries.Add(GotoInfo(pexpr.Location, UsageType.Usage));
+                  | _ => ()
+                  }
+              | _ => ()
+              }
+            });
+        }
+
+        foreach (member in tb.GetDirectMembers())
+          match (member)
+          {
+          | nested is TypeBuilder => FindTypeUsagesInTypeBuilder(nested, typeToFind, foundEntries, visited);
+          | fb is FieldBuilder    => walkTypeExpr(fb.Ast.ty);
+          | eb is EventBuilder    => walkTypeExpr(eb.Ast.ty);
+          | pb is PropertyBuilder =>
+              walkTypeExpr(pb.Ast.returnType);
+              foreach (p in pb.Ast.parameters)
+                walkTypeExpr(p.Type);
+          | mb is MethodBuilder   =>
+              walkTypeExpr(mb.Ast.header.ParsedReturnType);
+              foreach (p in mb.Ast.header.ParsedParameters)
+                walkTypeExpr(p.Type);
+              when (mb.IsBodyCompilable)
+              {
+                // Method bodies are typed lazily: the whole-project rebuild
+                // resolves signatures eagerly (which is why header parameter/
+                // return types above already carry a bound TypedObject) but
+                // leaves body-internal PExpr nodes' TypedObject unset until
+                // something asks for that specific method's body, same as
+                // FindPExprs/GetMethodTip do before walking BodyParsed.
+                mb.EnsureCompiled();
+                walkTypeExpr(mb.BodyParsed);
+              }
+          | _ => ()
+          }
+
+        foreach (option in tb.GetVariantOptions())
+          FindTypeUsagesInTypeBuilder(option, typeToFind, foundEntries, visited);
+      }
+    }
+
     public CoreFind(expressionRoot : TExpr, finder : ExprWalkInfo * SCG.List[GotoInfo] -> void) : list[GotoInfo]
     {
       def walk(foundEntries)
@@ -123,48 +245,6 @@ namespace Nemerle.Completion2
         | Pattern.As(_, definition) when (definition.Equals(localValue)) =>
           foundEntries.Add(GotoInfo(definition.Location, UsageType.Definition));
         | _ => ()
-      }
-    }
-    
-    FindTypeEntriesVisitor(info : ExprWalkInfo, typeToFind : TypeInfo, foundEntries : SCG.List[GotoInfo]) : void
-    {
-      def isRightCtor(rref)
-      {
-        match(rref.TypedObject)
-        {
-        | TExpr.StaticRef(_, mem, _) =>
-              match(mem)
-              {
-              | mb is MethodBuilder when mb.Name == ".ctor" && mb.DeclaringType.Equals(typeToFind) => true
-              | _ => false
-              }
-        | T.Pattern.HasType(mtype) when mtype.Equals(typeToFind.GetMemType())
-        | T.Pattern.Application(ti, _) when ti.Equals(typeToFind) => true
-        | _ => false
-        }
-      }
-
-      def node = info.Node;
-      
-      def isContainsTypeEntry(rootType, typeToFind)
-      {
-        if (rootType.Equals(typeToFind))
-          true
-        else match (rootType)
-        {
-          | FixedType.Class(_tycon, args) => args.Exists(isContainsTypeEntry(_, typeToFind))
-          | _ => false
-        }
-      }
-      
-      match(node)
-      {
-      | fp is Typedtree.TParameter when isContainsTypeEntry(fp.ty, typeToFind.GetMemType()) with loc = fp.TypeLocation
-      | PExpr.Ref as rref when isRightCtor(rref) with loc = rref.Location =>
-          foundEntries.Add(GotoInfo(loc, UsageType.Usage));
-      | tb is TypeBuilder when tb.Equals(typeToFind) with loc = tb.Ast.name.Location =>
-          foundEntries.Add(GotoInfo(loc, UsageType.Definition));
-      | _ => ()
       }
     }
     

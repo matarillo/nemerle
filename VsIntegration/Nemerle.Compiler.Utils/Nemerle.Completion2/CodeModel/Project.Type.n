@@ -509,7 +509,7 @@ namespace Nemerle.Completion2
       match (member, result)
       {
         | (mb is MemberBuilder, (_, null, null)) => mb.CallForAllRelated(processMember)
-        | _ => 
+        | _ =>
           match (result)
           {
             //HACK: VladD2: The compiler not set information for static type ref in TExpr.StaticRef.

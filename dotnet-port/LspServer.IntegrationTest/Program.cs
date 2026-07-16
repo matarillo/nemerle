@@ -96,15 +96,20 @@ internal static class Program
             message => LspTestClient.IsLogMessageContaining(message, "engine rebuild finished", out _),
             loadMark, "the initial Sokoban full engine rebuild");
 
+        // N2.1: the R-H hover markup fix (38-prerelease-wp-n2-log.md §5.1/§6 N2.1)
+        // expands self-closing <hint value='...' /> tags instead of deleting them,
+        // so these four owner-reported Sokoban hovers must now carry their type
+        // simple name(s), not just the surrounding namespace/[]/[,] skeleton.
         var probes = new[]
         {
-            new { File = "main.n", Needle = "args", Occurrence = 1, ExpectedLine = 7, Label = "function parameter args" },
-            new { File = "splayheap.n", Needle = "SMap", Occurrence = 1, ExpectedLine = 7, Label = "variant field type SMap" },
-            new { File = "treesearch.n", Needle = "depth", Occurrence = 1, ExpectedLine = 15, Label = "inferred mutable local depth" },
-            new { File = "sokoban.n", Needle = "Hashtable [string, SMap]", Occurrence = 1, ExpectedLine = 109, Label = "generic field type Hashtable" },
+            new { File = "main.n", Needle = "args", Occurrence = 1, ExpectedLine = 7, Label = "function parameter args", ExpectedTypeSubstrings = new[] { "array", "string" } },
+            new { File = "splayheap.n", Needle = "SMap", Occurrence = 1, ExpectedLine = 7, Label = "variant field type SMap", ExpectedTypeSubstrings = new[] { "SMap" } },
+            new { File = "treesearch.n", Needle = "depth", Occurrence = 1, ExpectedLine = 15, Label = "inferred mutable local depth", ExpectedTypeSubstrings = new[] { "int" } },
+            new { File = "sokoban.n", Needle = "Hashtable [string, SMap]", Occurrence = 1, ExpectedLine = 109, Label = "generic field type Hashtable", ExpectedTypeSubstrings = new[] { "Hashtable", "string", "SMap" } },
         };
 
         var opened = new Dictionary<string, (string Uri, string Text)>();
+        string? mainHoverValue = null;
         foreach (var probe in probes)
         {
             var source = Sample("Sokoban", "Sokoban", probe.File);
@@ -126,6 +131,15 @@ internal static class Program
             Console.WriteLine(
                 $"    HOVER {probe.File}:{line + 1}:{character + 1} ({probe.Label}), diagnostics={diagnostics.GetArrayLength()}: " +
                 JsonSerializer.Serialize(value));
+            if (value is null)
+                throw new InvalidDataException($"R-H {probe.Label}: hover returned no content.");
+            AssertNoRawMarkup(value, $"R-H {probe.Label}");
+            foreach (var expected in probe.ExpectedTypeSubstrings)
+            {
+                if (!value.Contains(expected, StringComparison.Ordinal))
+                    throw new InvalidDataException(
+                        $"R-H {probe.Label}: hover did not contain the expected type text '{expected}': {value}");
+            }
             var definitions = await DefinitionAsync(client, uri, line, character);
             Console.WriteLine($"    DEFINITION {probe.File}:{line + 1}:{character + 1} count={definitions.Length}");
             foreach (var definition in definitions)
@@ -135,11 +149,17 @@ internal static class Program
                     $"      {new Uri(definitionUri!).LocalPath}:{definitionLine + 1}:{definitionCharacter + 1}");
             }
             opened[probe.File] = (uri, text);
+            if (probe.File == "main.n")
+                mainHoverValue = value;
         }
+
+        if (mainHoverValue is null)
+            throw new InvalidDataException("R-H main.n args: initial hover value was not captured for the relocation/reload repeat.");
 
         // Repeat the first reported hover after the actual relocation path and
         // after a forced project reload.  This distinguishes stable engine text
-        // from a one-off bridge/version race.
+        // from a one-off bridge/version race, and pins that the fixed (not the
+        // historically-broken) text is what survives relocation/reload.
         var main = opened["main.n"];
         var incrementalMark = client.Mark();
         var editedMain = await ReplaceRangedAsync(client, main.Uri, main.Text, "//try", "// try", 2);
@@ -150,26 +170,37 @@ internal static class Program
             message => IsPublishFor(message, main.Uri, out var p) && VersionOf(p) == 2,
             incrementalMark, "version-2 main.n diagnostics after relocation");
         var (mainLine, mainCharacter) = LocateUtf16(editedMain, "args", 1);
-        Console.WriteLine("    HOVER main.n after relocation: " +
-            JsonSerializer.Serialize(HoverValue(await HoverAsync(client, main.Uri, mainLine, mainCharacter))));
+        var relocatedHoverValue = HoverValue(await HoverAsync(client, main.Uri, mainLine, mainCharacter));
+        Console.WriteLine("    HOVER main.n after relocation: " + JsonSerializer.Serialize(relocatedHoverValue));
+        if (relocatedHoverValue != mainHoverValue)
+            throw new InvalidDataException(
+                $"R-H function parameter args: hover after relocation ('{relocatedHoverValue}') did not match the initial fixed hover ('{mainHoverValue}').");
 
         var reloadMark = client.Mark();
         AssertLoadedAndApplied(await LoadProjectAsync(client, sokobanProject), expectedSources: 5);
         _ = await client.WaitForAsync(
             message => LspTestClient.IsLogMessageContaining(message, "engine rebuild finished", out _),
             reloadMark, "forced Sokoban project reload for the WP-N2 hover repeat");
-        Console.WriteLine("    HOVER main.n after project reload: " +
-            JsonSerializer.Serialize(HoverValue(await HoverAsync(client, main.Uri, mainLine, mainCharacter))));
+        var reloadedHoverValue = HoverValue(await HoverAsync(client, main.Uri, mainLine, mainCharacter));
+        Console.WriteLine("    HOVER main.n after project reload: " + JsonSerializer.Serialize(reloadedHoverValue));
+        if (reloadedHoverValue != mainHoverValue)
+            throw new InvalidDataException(
+                $"R-H function parameter args: hover after project reload ('{reloadedHoverValue}') did not match the initial fixed hover ('{mainHoverValue}').");
 
-        // E8 boundary using a real project symbol: SMap is used throughout the
-        // five-source project.  Printing every returned location makes the
-        // current declaration-scope boundary directly inspectable.
+        // R-R/E8 (N2.4): SMap is used throughout the five-source Sokoban
+        // project as a field/local/parameter/return-type annotation, a
+        // generic type argument, a constructor call and a static-member-
+        // access qualifier.  Both a type-annotation origin and the class
+        // declaration itself must now return the identical, complete set;
+        // the previous legacy collector returned zero from both origins
+        // (38-prerelease-wp-n2-log.md §4.3/§5.3).
         var splay = opened["splayheap.n"];
         var (smapLine, smapCharacter) = LocateUtf16(splay.Text, "SMap", 1);
-        var references = await ReferencesAtAsync(
+        var referencesFromAnnotation = await ReferencesAtAsync(
             client, splay.Uri, smapLine, smapCharacter, includeDeclaration: true);
-        Console.WriteLine($"    REFERENCES splayheap.n:{smapLine + 1}:{smapCharacter + 1} SMap count={references.Length}");
-        foreach (var reference in references)
+        Console.WriteLine(
+            $"    REFERENCES splayheap.n:{smapLine + 1}:{smapCharacter + 1} SMap count={referencesFromAnnotation.Length}");
+        foreach (var reference in referencesFromAnnotation)
         {
             var (uri, line, character) = LocationAt(reference);
             Console.WriteLine($"      {new Uri(uri!).LocalPath}:{line + 1}:{character + 1}");
@@ -177,16 +208,61 @@ internal static class Program
 
         var sokoban = opened["sokoban.n"];
         var (smapDeclarationLine, smapDeclarationCharacter) = LocateUtf16(sokoban.Text, "SMap", 5);
-        var declarationReferences = await ReferencesAtAsync(
+        var referencesFromDeclaration = await ReferencesAtAsync(
             client, sokoban.Uri, smapDeclarationLine, smapDeclarationCharacter, includeDeclaration: true);
         Console.WriteLine(
             $"    REFERENCES sokoban.n:{smapDeclarationLine + 1}:{smapDeclarationCharacter + 1} SMap declaration " +
-            $"count={declarationReferences.Length}");
-        foreach (var reference in declarationReferences)
+            $"count={referencesFromDeclaration.Length}");
+        foreach (var reference in referencesFromDeclaration)
         {
             var (uri, line, character) = LocationAt(reference);
             Console.WriteLine($"      {new Uri(uri!).LocalPath}:{line + 1}:{character + 1}");
         }
+
+        // Measured exact count: every literal "SMap" occurrence in real code
+        // across the five Sokoban sources (field/local/parameter/return-type
+        // annotations, generic type arguments such as
+        // "Hashtable.[string, SMap]", constructor calls, static-member-access
+        // qualifiers such as "SMap.Leq(...)", and the class declaration
+        // itself) is 55; a 56th literal occurrence inside a comment
+        // ("/* end of SMap class */" in sokoban.n) is correctly excluded
+        // since it is not part of the AST.
+        const int expectedSmapCount = 55;
+        static HashSet<(string Path, int Line, int Character)> ToLocationSet(JsonElement[] locations) =>
+            locations.Select(l =>
+            {
+                var (uri, line, character) = LocationAt(l);
+                return (NormalizedLocalPath(uri!), line, character);
+            }).ToHashSet();
+
+        if (referencesFromAnnotation.Length != expectedSmapCount)
+            throw new InvalidDataException(
+                $"R-R SMap from the splayheap.n annotation origin: expected {expectedSmapCount} locations, " +
+                $"got {referencesFromAnnotation.Length}.");
+        if (referencesFromDeclaration.Length != expectedSmapCount)
+            throw new InvalidDataException(
+                $"R-R SMap from the sokoban.n declaration origin: expected {expectedSmapCount} locations, " +
+                $"got {referencesFromDeclaration.Length}.");
+        if (!ToLocationSet(referencesFromAnnotation).SetEquals(ToLocationSet(referencesFromDeclaration)))
+            throw new InvalidDataException(
+                "R-R SMap: the annotation origin and the declaration origin returned different location sets.");
+
+        var smapDeclarationPath = NormalizedLocalPath(sokoban.Uri);
+        var smapDeclarationKey = (smapDeclarationPath, smapDeclarationLine, smapDeclarationCharacter);
+        if (!ToLocationSet(referencesFromDeclaration).Contains(smapDeclarationKey))
+            throw new InvalidDataException("R-R SMap: includeDeclaration=true did not include the class declaration.");
+
+        var annotationWithoutDeclaration = await ReferencesAtAsync(
+            client, splay.Uri, smapLine, smapCharacter, includeDeclaration: false);
+        Console.WriteLine(
+            $"    REFERENCES splayheap.n:{smapLine + 1}:{smapCharacter + 1} SMap includeDeclaration=false " +
+            $"count={annotationWithoutDeclaration.Length}");
+        if (annotationWithoutDeclaration.Length != expectedSmapCount - 1)
+            throw new InvalidDataException(
+                $"R-R SMap: includeDeclaration=false should drop exactly the declaration " +
+                $"(with={expectedSmapCount}, without={annotationWithoutDeclaration.Length}).");
+        if (ToLocationSet(annotationWithoutDeclaration).Contains(smapDeclarationKey))
+            throw new InvalidDataException("R-R SMap: includeDeclaration=false still returned the declaration location.");
 
         // Historical E7 is broader than the four owner-reported Sokoban hovers.
         // Measure its two engine boundaries explicitly: local/method hint text,
@@ -209,17 +285,27 @@ internal static class Program
                 def annotated : Box = Box();
                 _ = E7Probe.Compute(localValue);
                 _ = annotated;
+                def sb : System.Text.StringBuilder = System.Text.StringBuilder();
+                _ = sb;
               }
             }
             """;
         var e7Uri = new Uri(Path.Combine(CreateTempDirectory("wp-n2-e7"), "e7.n")).AbsoluteUri;
         await OpenAndAwaitAnalysisAsync(client, e7Uri, e7Source);
+        // E7-D (local value usage, method call): the same hint-value markup fix as
+        // R-H applies here, so these two must now show their types too. E7-R
+        // (static method type qualifier, project-type annotation): N2.2 fixed
+        // Project.FindObject/ExprFinder (38-prerelease-wp-n2-log.md §5.2/§6) so
+        // both now resolve too - "Box" already worked before N2.2 (markup-only;
+        // see the E7-D fix note above) and must not regress, "E7Probe" was the
+        // null-resolution defect N2.2 fixes. ExpectedDefinitionCount pins the
+        // definition-side improvement separately from the hover text.
         var e7Probes = new[]
         {
-            new { Needle = "localValue", Occurrence = 2, Label = "local value usage" },
-            new { Needle = "Compute", Occurrence = 2, Label = "method call" },
-            new { Needle = "E7Probe", Occurrence = 2, Label = "static method type qualifier" },
-            new { Needle = "Box", Occurrence = 2, Label = "type annotation" },
+            new { Needle = "localValue", Occurrence = 2, Label = "local value usage", ExpectedTypeSubstrings = (string[]?)["int"], ExpectedDefinitionCount = 1 },
+            new { Needle = "Compute", Occurrence = 2, Label = "method call", ExpectedTypeSubstrings = (string[]?)["int"], ExpectedDefinitionCount = 1 },
+            new { Needle = "E7Probe", Occurrence = 2, Label = "static method type qualifier", ExpectedTypeSubstrings = (string[]?)["E7Probe"], ExpectedDefinitionCount = 1 },
+            new { Needle = "Box", Occurrence = 2, Label = "type annotation", ExpectedTypeSubstrings = (string[]?)["Box"], ExpectedDefinitionCount = 1 },
         };
         foreach (var probe in e7Probes)
         {
@@ -229,6 +315,55 @@ internal static class Program
             Console.WriteLine(
                 $"    E7 {probe.Label} {line + 1}:{character + 1}: " +
                 $"hover={JsonSerializer.Serialize(hover)}, definition={definitions.Length}");
+            if (probe.ExpectedTypeSubstrings is { } expectedSubstrings)
+            {
+                if (hover is null)
+                    throw new InvalidDataException($"E7 {probe.Label}: hover returned no content.");
+                AssertNoRawMarkup(hover, $"E7 {probe.Label}");
+                foreach (var expected in expectedSubstrings)
+                {
+                    if (!hover.Contains(expected, StringComparison.Ordinal))
+                        throw new InvalidDataException(
+                            $"E7 {probe.Label}: hover did not contain the expected type text '{expected}': {hover}");
+                }
+            }
+            if (definitions.Length != probe.ExpectedDefinitionCount)
+                throw new InvalidDataException(
+                    $"E7 {probe.Label}: expected {probe.ExpectedDefinitionCount} definition location(s), got {definitions.Length}.");
+            foreach (var definition in definitions)
+            {
+                var (definitionUri, _, _) = LocationAt(definition);
+                if (!AreEquivalentDocumentUris(definitionUri, e7Uri))
+                    throw new InvalidDataException($"E7 {probe.Label}: definition pointed outside the e7.n fixture: {definitionUri}");
+            }
+        }
+
+        // E7-R matrix (38 §6 N2.2): an external (BCL) type annotation.  The
+        // qualifier/annotation position-resolution fix in FindObject is
+        // type-agnostic, so it applies here too, but external types have no
+        // workspace source location, so definition staying an empty result is
+        // correct behavior (the same shape as DefinitionExternalEmptyAsync),
+        // not a defect. Hover is measured rather than required: whether BCL
+        // metadata resolves a QuickTip is a separate, independent concern from
+        // the position-resolution fix this work item makes (§6 N2.2 - measure,
+        // assert only if it resolves).
+        {
+            var (line, character) = LocateUtf16(e7Source, "StringBuilder", 1);
+            var hover = HoverValue(await HoverAsync(client, e7Uri, line, character));
+            var definitions = await DefinitionAsync(client, e7Uri, line, character);
+            Console.WriteLine(
+                $"    E7 external type annotation {line + 1}:{character + 1}: " +
+                $"hover={JsonSerializer.Serialize(hover)}, definition={definitions.Length}");
+            if (definitions.Length != 0)
+                throw new InvalidDataException(
+                    $"E7-R external type annotation: definition should be empty (no workspace source), got {definitions.Length}.");
+            if (hover is not null)
+            {
+                AssertNoRawMarkup(hover, "E7-R external type annotation");
+                if (!hover.Contains("StringBuilder", StringComparison.Ordinal))
+                    throw new InvalidDataException(
+                        $"E7-R external type annotation: hover resolved but did not contain 'StringBuilder': {hover}");
+            }
         }
 
         // Historical E8 claimed a containing-type search boundary; that claim is
@@ -253,6 +388,11 @@ internal static class Program
             """;
         var e8Uri = new Uri(Path.Combine(CreateTempDirectory("wp-n2-e8"), "e8.n")).AbsoluteUri;
         await OpenAndAwaitAnalysisAsync(client, e8Uri, e8Source);
+        var e8Path = NormalizedLocalPath(e8Uri);
+        var expectedPingLocations = Enumerable.Range(1, 3)
+            .Select(occurrence => LocateUtf16(e8Source, "Ping", occurrence))
+            .Select(pos => (e8Path, pos.Line, pos.Character))
+            .ToHashSet();
         foreach (var occurrence in new[] { 1, 2 })
         {
             var (line, character) = LocateUtf16(e8Source, "Ping", occurrence);
@@ -266,6 +406,105 @@ internal static class Program
                 var (_, referenceLine, referenceCharacter) = LocationAt(reference);
                 Console.WriteLine($"      e8.n:{referenceLine + 1}:{referenceCharacter + 1}");
             }
+            // Positive control (38 §6 N2.4, §5.6): cross-type member usages
+            // already worked before N2.4 and must not regress. Ping is
+            // declared on Shared and called from two unrelated types (First,
+            // Second); both the declaration origin (occurrence 1) and a
+            // call-site origin (occurrence 2) must return the same exact
+            // 3-location set.
+            if (crossTypeReferences.Length != 3)
+                throw new InvalidDataException(
+                    $"E8 Ping occurrence {occurrence}: expected 3 locations, got {crossTypeReferences.Length}.");
+            var actualPingSet = crossTypeReferences.Select(r =>
+            {
+                var (uri, l, c) = LocationAt(r);
+                return (NormalizedLocalPath(uri!), l, c);
+            }).ToHashSet();
+            if (!actualPingSet.SetEquals(expectedPingLocations))
+                throw new InvalidDataException(
+                    $"E8 Ping occurrence {occurrence}: returned a different location set than expected.");
+        }
+
+        // N2.4 type-usage matrix (38 §6 N2.4): a self-contained fixture
+        // covering every annotation shape the current-project semantic walk
+        // must recognize - field type, local-variable type, parameter type,
+        // return type, and a constructor call - spread across two classes,
+        // so the walk must reach both a type's own declaring members and a
+        // second, unrelated type's members starting from a single
+        // declaration-origin root.
+        const string typeUsageMatrixSource = """
+            class Widget
+            {
+            }
+
+            class Container
+            {
+              private mutable part : Widget;
+
+              public Make() : Widget
+              {
+                def local : Widget = Widget();
+                local
+              }
+
+              public Configure(item : Widget) : void
+              {
+                _ = item;
+              }
+            }
+
+            class Holder
+            {
+              private mutable cached : Widget;
+
+              public Wrap(source : Widget) : Widget
+              {
+                source
+              }
+            }
+            """;
+        var typeUsageMatrixUri =
+            new Uri(Path.Combine(CreateTempDirectory("wp-n2-type-matrix"), "matrix.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, typeUsageMatrixUri, typeUsageMatrixSource);
+        var typeUsageMatrixPath = NormalizedLocalPath(typeUsageMatrixUri);
+
+        // "Widget" appears exactly 9 times in real code: the class
+        // declaration, two field-type annotations (Container.part,
+        // Holder.cached), a local-variable annotation and a constructor call
+        // on the same line in Make(), a return-type annotation in Make(), a
+        // parameter-type annotation in Configure(), and a parameter-type plus
+        // a return-type annotation (two occurrences) in Wrap().
+        var expectedMatrixLocations = Enumerable.Range(1, 9)
+            .Select(occurrence => LocateUtf16(typeUsageMatrixSource, "Widget", occurrence))
+            .Select(pos => (typeUsageMatrixPath, pos.Line, pos.Character))
+            .ToHashSet();
+
+        var (matrixDeclLine, matrixDeclCharacter) = LocateUtf16(typeUsageMatrixSource, "Widget", 1);
+        var (matrixAnnotationLine, matrixAnnotationCharacter) = LocateUtf16(typeUsageMatrixSource, "Widget", 2);
+
+        foreach (var (originLabel, originLine, originCharacter) in new[]
+        {
+            ("declaration", matrixDeclLine, matrixDeclCharacter),
+            ("field annotation", matrixAnnotationLine, matrixAnnotationCharacter),
+        })
+        {
+            var references = await ReferencesAtAsync(
+                client, typeUsageMatrixUri, originLine, originCharacter, includeDeclaration: true);
+            Console.WriteLine(
+                $"    N2.4 matrix Widget from {originLabel} {originLine + 1}:{originCharacter + 1}: " +
+                $"references={references.Length}");
+            if (references.Length != expectedMatrixLocations.Count)
+                throw new InvalidDataException(
+                    $"N2.4 matrix Widget from {originLabel}: expected {expectedMatrixLocations.Count} locations, " +
+                    $"got {references.Length}.");
+            var actualMatrixSet = references.Select(r =>
+            {
+                var (uri, l, c) = LocationAt(r);
+                return (NormalizedLocalPath(uri!), l, c);
+            }).ToHashSet();
+            if (!actualMatrixSet.SetEquals(expectedMatrixLocations))
+                throw new InvalidDataException(
+                    $"N2.4 matrix Widget from {originLabel}: returned a different location set than expected.");
         }
 
         var successProject = Sample("CompTimeSolver", "Success", "Success.nproj");
@@ -278,8 +517,16 @@ internal static class Program
         var successPublish = await client.WaitForAsync(
             message => IsPublishFor(message, successUri, out var p) && VersionOf(p) == 1,
             successMark, "CompTimeSolver/Success editor diagnostics");
+        var successDiagnostics = successPublish.GetProperty("params").GetProperty("diagnostics");
         Console.WriteLine("    DIAGNOSTICS CompTimeSolver/Success/success.n: " +
-            successPublish.GetProperty("params").GetProperty("diagnostics").GetRawText());
+            successDiagnostics.GetRawText());
+        // R-P (N2.3 parser parity): a top-level-expression program that builds
+        // cleanly with ncc must also analyze cleanly in the IntelliSense-mode
+        // engine (no "expecting type declaration" parse errors).
+        if (successDiagnostics.GetArrayLength() != 0)
+            throw new InvalidOperationException(
+                "R-P: CompTimeSolver/Success must produce zero editor diagnostics, got: " +
+                successDiagnostics.GetRawText());
     }
 
     private static async Task RunScenarioAsync(string name, Func<LspTestClient, Task> scenario)
@@ -2226,6 +2473,15 @@ internal static class Program
 
         return leftUri.Equals(rightUri);
     }
+
+    /// <summary>
+    /// A case-insensitive file-path key for de-duplicating/comparing sets of
+    /// locations across two different URI strings that may name the same
+    /// file with different drive-letter casing (Windows paths are case-
+    /// insensitive; <see cref="AreEquivalentDocumentUris"/> already compares
+    /// this way for single-URI checks).
+    /// </summary>
+    private static string NormalizedLocalPath(string uri) => new Uri(uri).LocalPath.ToLowerInvariant();
 
     private static string Sample(params string[] segments) =>
         Path.Combine([_repoRoot, "dotnet-port", "samples", .. segments]);

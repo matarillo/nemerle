@@ -13,7 +13,11 @@ namespace Nemerle.Compiler.Utils
       def lexer = LexerString(manager, source.GetText(), Location(source.FileIndex, 1, 1));
       when(manager.Options.IndentationSyntax)
         lexer.SwitchToIndentationMode();
-      DefaultParseResult(MainParser.Parse(lexer), lexer)
+      // allowTopLevelExpressions: parse top-level-expression programs the same
+      // way the batch compiler does (synthetic Main class) instead of the
+      // historical IntelliSense-mode behavior of reporting "expecting type
+      // declaration" on them (WP-N2 / R-P parser parity).
+      DefaultParseResult(MainParser.Parse(lexer, null, true), lexer)
     }
   }
 }

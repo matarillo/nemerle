@@ -1,2 +1,8 @@
 
 ncc/testsuite/positive/lexer1.n eol=lf
+
+# Legacy VS2010-era engine sources are stored with CRLF endings (the repo does
+# not normalize: core.autocrlf=false).  Declare CR-at-EOL part of the line
+# terminator there so `git diff --check` flags real trailing whitespace only,
+# instead of every added line.
+VsIntegration/** whitespace=cr-at-eol
