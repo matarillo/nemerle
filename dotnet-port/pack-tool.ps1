@@ -102,10 +102,10 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
-if ($CompilerDir -eq "") { $CompilerDir = Join-Path $RepoRoot "bin\$Configuration\core\Stage2" }
-if ($OutDir      -eq "") { $OutDir      = Join-Path $PSScriptRoot "dist\ncc" }
+if ($CompilerDir -eq "") { $CompilerDir = Join-Path $RepoRoot "bin/$Configuration/core/Stage2" }
+if ($OutDir      -eq "") { $OutDir      = Join-Path $PSScriptRoot "dist/ncc" }
 
-if (-not (Test-Path $CompilerDir)) { throw "Compiler directory not found: $CompilerDir (build it first, e.g. dotnet-port\build-stage2-core.ps1)" }
+if (-not (Test-Path $CompilerDir)) { throw "Compiler directory not found: $CompilerDir (build it first, e.g. dotnet-port/build-stage2-core.ps1)" }
 foreach ($required in @("ncc.exe", "Nemerle.dll", "Nemerle.Compiler.dll", "Nemerle.Macros.dll", "ncc.runtimeconfig.json")) {
     if (-not (Test-Path (Join-Path $CompilerDir $required))) { throw "Missing '$required' in $CompilerDir -- not a complete core compiler directory" }
 }
@@ -114,7 +114,7 @@ foreach ($required in @("ncc.exe", "Nemerle.dll", "Nemerle.Compiler.dll", "Nemer
 # see dotnet-port\assembly-version-check.ps1 / build-stage2-core.ps1's design notes for why a
 # stale compiler directory (built from an older commit) causes a ref-def mismatch FileLoadException
 # rather than a clean, actionable failure.
-. "$PSScriptRoot\assembly-version-check.ps1"
+. "$PSScriptRoot/assembly-version-check.ps1"
 Test-NemerleAssemblyVersionFreshness -NemerleDllPath (Join-Path $CompilerDir "Nemerle.dll") -RepoRoot $RepoRoot -Label "CompilerDir ($CompilerDir)"
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -178,16 +178,16 @@ Write-Host "Wrote $WrapperPath"
 #    ncc\*.n itself is never touched by any C# build).
 # ---------------------------------------------------------------------------
 $OutDirFull = (Resolve-Path $OutDir).Path
-$OutDirWithSlash = if ($OutDirFull.EndsWith('\')) { $OutDirFull } else { "$OutDirFull\" }
+$OutDirWithSlash = $OutDirFull.TrimEnd('\','/') + '/'
 $DotnetPortDir = $PSScriptRoot
-$HostingProj = Join-Path $DotnetPortDir "Nemerle.Compiler.Hosting\Nemerle.Compiler.Hosting.csproj"
-$TasksProj   = Join-Path $DotnetPortDir "Nemerle.MSBuild.Tasks\Nemerle.MSBuild.Tasks.csproj"
+$HostingProj = Join-Path $DotnetPortDir "Nemerle.Compiler.Hosting/Nemerle.Compiler.Hosting.csproj"
+$TasksProj   = Join-Path $DotnetPortDir "Nemerle.MSBuild.Tasks/Nemerle.MSBuild.Tasks.csproj"
 
 Write-Host ""
 Write-Host "Building Nemerle.Compiler.Hosting (NccLayoutDir=$OutDirWithSlash) ..."
 & dotnet build -c $Configuration $HostingProj "-p:NccLayoutDir=$OutDirWithSlash" -v:minimal
 if ($LASTEXITCODE -ne 0) { throw "Nemerle.Compiler.Hosting build failed (exit $LASTEXITCODE)" }
-$HostingOutDir = Join-Path $DotnetPortDir "Nemerle.Compiler.Hosting\bin\$Configuration\net10.0"
+$HostingOutDir = Join-Path $DotnetPortDir "Nemerle.Compiler.Hosting/bin/$Configuration/net10.0"
 Copy-Item -Path (Join-Path $HostingOutDir "Nemerle.Compiler.Hosting.dll") -Destination $OutDir -Force
 $HostingPdb = Join-Path $HostingOutDir "Nemerle.Compiler.Hosting.pdb"
 if (Test-Path $HostingPdb) { Copy-Item -Path $HostingPdb -Destination $OutDir -Force }
@@ -197,7 +197,7 @@ Write-Host ""
 Write-Host "Building Nemerle.MSBuild.Tasks ..."
 & dotnet build -c $Configuration $TasksProj -v:minimal
 if ($LASTEXITCODE -ne 0) { throw "Nemerle.MSBuild.Tasks build failed (exit $LASTEXITCODE)" }
-$TasksOutDir = Join-Path $DotnetPortDir "Nemerle.MSBuild.Tasks\bin\$Configuration\net10.0"
+$TasksOutDir = Join-Path $DotnetPortDir "Nemerle.MSBuild.Tasks/bin/$Configuration/net10.0"
 $TaskDestDir = Join-Path $OutDir "msbuild-task"
 New-Item -ItemType Directory -Force -Path $TaskDestDir | Out-Null
 Copy-Item -Path (Join-Path $TasksOutDir "Nemerle.MSBuild.Tasks.dll") -Destination $TaskDestDir -Force
@@ -234,7 +234,7 @@ $nccInfo = [ordered]@{
     describe               = $describe
     configuration          = $Configuration
     nemerleAssemblyVersion = $NemerleAssemblyVersion
-    sourceDir              = (Resolve-Path $CompilerDir).Path.Substring($RepoRoot.Length).TrimStart('\').Replace('\', '/')
+    sourceDir              = (Resolve-Path $CompilerDir).Path.Substring($RepoRoot.Length).TrimStart('\','/').Replace('\', '/')
     packedAtUtc            = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
 $NccInfoPath = Join-Path $OutDir "ncc-info.json"
@@ -246,7 +246,7 @@ Write-Host "Layout complete -> $OutDir"
 Get-ChildItem $OutDir | Format-Table Name, Length
 Write-Host ""
 Write-Host "Smoke test:"
-Write-Host "  dotnet `"$OutDir\ncc.dll`" -out:hello.exe hello.n && dotnet exec hello.exe"
+Write-Host "  dotnet `"$OutDir/ncc.dll`" -out:hello.exe hello.n && dotnet exec hello.exe"
 Write-Host "  (or)  `"$WrapperPath`" -out:hello.exe hello.n && dotnet exec hello.exe"
 
 # ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ if ($Pack) {
     # only looks for *.nupkg in a folder source and ignores everything else, so a user can point
     # a NuGet.config straight at the extracted release archive - which is exactly what
     # packaging\README.md tells them to do.
-    if ($PackageOutDir -eq "") { $PackageOutDir = Join-Path $PSScriptRoot "dist\release" }
+    if ($PackageOutDir -eq "") { $PackageOutDir = Join-Path $PSScriptRoot "dist/release" }
     New-Item -ItemType Directory -Force -Path $PackageOutDir | Out-Null
 
     $v = [System.Reflection.AssemblyName]::GetAssemblyName((Join-Path $OutDirFull "Nemerle.dll")).Version
@@ -287,16 +287,16 @@ if ($Pack) {
     # a Libs dll whose version differs from the packed layout's Nemerle.dll is a
     # mixed-generation set (stale build) -- refuse it the same way the A2 freshness check
     # refuses a stale compiler, instead of packing bits the version would lie about.
-    $LibsDir = Join-Path $RepoRoot "bin\$Configuration\core\Libs"
+    $LibsDir = Join-Path $RepoRoot "bin/$Configuration/core/Libs"
     $LinqDllPath = Join-Path $LibsDir "Nemerle.Linq.dll"
     if (-not (Test-Path $LinqDllPath)) {
-        throw "Nemerle.Linq.dll not found in $LibsDir -- build it first: pwsh dotnet-port\build-libs-core.ps1"
+        throw "Nemerle.Linq.dll not found in $LibsDir -- build it first: pwsh dotnet-port/build-libs-core.ps1"
     }
     $LinqVersion = [System.Reflection.AssemblyName]::GetAssemblyName($LinqDllPath).Version
     if ($LinqVersion -ne $v) {
-        throw "Nemerle.Linq.dll is $LinqVersion but the packed compiler layout is $v (mixed generations). Rebuild it: pwsh dotnet-port\build-libs-core.ps1"
+        throw "Nemerle.Linq.dll is $LinqVersion but the packed compiler layout is $v (mixed generations). Rebuild it: pwsh dotnet-port/build-libs-core.ps1"
     }
-    $LibsDirWithSlash = (Resolve-Path $LibsDir).Path.TrimEnd('\') + '\'
+    $LibsDirWithSlash = (Resolve-Path $LibsDir).Path.TrimEnd('\','/') + '/'
 
     Write-Host ""
     Write-Host "Packing Nemerle.Sdk.Unofficial / Nemerle.Templates.Unofficial / Nemerle.Linq.Unofficial $PackageVersion ..."
@@ -307,8 +307,8 @@ if ($Pack) {
     # into "generates projects referencing a package that no longer exists" the first time the
     # compiler generation moves. Stage a copy with __NEMERLE_SDK_VERSION__ substituted and pack
     # THAT (Nemerle.Templates.Unofficial.csproj refuses to pack without it).
-    $TemplateSrcDir   = Join-Path $PSScriptRoot "packaging\Nemerle.Templates.Unofficial\content"
-    $TemplateStageDir = Join-Path $PSScriptRoot "dist\templates"
+    $TemplateSrcDir   = Join-Path $PSScriptRoot "packaging/Nemerle.Templates.Unofficial/content"
+    $TemplateStageDir = Join-Path $PSScriptRoot "dist/templates"
     if (Test-Path $TemplateStageDir) { Remove-Item -Recurse -Force $TemplateStageDir }
     New-Item -ItemType Directory -Force -Path $TemplateStageDir | Out-Null
     Copy-Item -Path (Join-Path $TemplateSrcDir "*") -Destination $TemplateStageDir -Recurse -Force
@@ -323,7 +323,7 @@ if ($Pack) {
     if ($substituted -eq 0) { throw "No __NEMERLE_SDK_VERSION__ placeholder found under $TemplateSrcDir -- the template sources and this script have drifted apart." }
     Write-Host "Staged templates -> $TemplateStageDir ($substituted files pinned to $PackageVersion)"
 
-    $TemplateStageWithSlash = (Resolve-Path $TemplateStageDir).Path.TrimEnd('\') + '\'
+    $TemplateStageWithSlash = (Resolve-Path $TemplateStageDir).Path.TrimEnd('\','/') + '/'
 
     # The package READMEs and the install guide (packaging\README.md, shipped below) carry
     # copy-paste install commands that pin the version, so -- same story as the templates --
@@ -332,7 +332,7 @@ if ($Pack) {
     # at pack time. A hard-coded version in these documents rots into misleading instructions
     # the first time the compiler generation moves (WP-N1 follow-up: the 1.2.601-preview.2
     # literals that survived into the 1.2.618+ candidates are exactly that failure mode).
-    $VsixVersion = (Get-Content -Raw (Join-Path $PSScriptRoot "vscode-nemerle\package.json") | ConvertFrom-Json).version
+    $VsixVersion = (Get-Content -Raw (Join-Path $PSScriptRoot "vscode-nemerle/package.json") | ConvertFrom-Json).version
     function Expand-PackagingPlaceholders {
         param([string]$SourcePath, [string]$DestinationPath)
         $text = Get-Content -Raw -Path $SourcePath
@@ -340,22 +340,22 @@ if ($Pack) {
         $text = $text.Replace('__NEMERLE_SDK_VERSION__', $PackageVersion).Replace('__NEMERLE_VSIX_VERSION__', $VsixVersion)
         Set-Content -Path $DestinationPath -Value $text -NoNewline -Encoding utf8
     }
-    $ReadmeStageDir = Join-Path $PSScriptRoot "dist\readmes"
+    $ReadmeStageDir = Join-Path $PSScriptRoot "dist/readmes"
     if (Test-Path $ReadmeStageDir) { Remove-Item -Recurse -Force $ReadmeStageDir }
     $StagedReadmes = @{}
     foreach ($pkgId in @("Nemerle.Sdk.Unofficial", "Nemerle.Templates.Unofficial", "Nemerle.Linq.Unofficial")) {
         $stagePkgDir = Join-Path $ReadmeStageDir $pkgId
         New-Item -ItemType Directory -Force -Path $stagePkgDir | Out-Null
         $stagedReadme = Join-Path $stagePkgDir "README.md"
-        Expand-PackagingPlaceholders -SourcePath (Join-Path $PSScriptRoot "packaging\$pkgId\README.md") -DestinationPath $stagedReadme
+        Expand-PackagingPlaceholders -SourcePath (Join-Path $PSScriptRoot "packaging/$pkgId/README.md") -DestinationPath $stagedReadme
         $StagedReadmes[$pkgId] = $stagedReadme
     }
     Write-Host "Staged package READMEs -> $ReadmeStageDir (pinned to $PackageVersion / VSIX $VsixVersion)"
 
     $PackageProjects = @(
-        (Join-Path $PSScriptRoot "packaging\Nemerle.Sdk.Unofficial\Nemerle.Sdk.Unofficial.csproj"),
-        (Join-Path $PSScriptRoot "packaging\Nemerle.Templates.Unofficial\Nemerle.Templates.Unofficial.csproj"),
-        (Join-Path $PSScriptRoot "packaging\Nemerle.Linq.Unofficial\Nemerle.Linq.Unofficial.csproj")
+        (Join-Path $PSScriptRoot "packaging/Nemerle.Sdk.Unofficial/Nemerle.Sdk.Unofficial.csproj"),
+        (Join-Path $PSScriptRoot "packaging/Nemerle.Templates.Unofficial/Nemerle.Templates.Unofficial.csproj"),
+        (Join-Path $PSScriptRoot "packaging/Nemerle.Linq.Unofficial/Nemerle.Linq.Unofficial.csproj")
     )
 
     # NuGet caches an (id, version) in the global packages folder by identity, NOT by content:
@@ -365,9 +365,9 @@ if ($Pack) {
     # section 2 with "bump the version on every re-pack" as the workaround, which is untenable
     # for an SDK whose version is meaningful. Evict the exact (id, version) instead, so
     # re-packing the same version during development is honest.
-    $GlobalPackages = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $HOME ".nuget\packages" }
+    $GlobalPackages = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $HOME ".nuget/packages" }
     foreach ($id in @("nemerle.sdk.unofficial", "nemerle.templates.unofficial", "nemerle.linq.unofficial")) {
-        $cached = Join-Path $GlobalPackages "$id\$PackageVersion"
+        $cached = Join-Path $GlobalPackages "$id/$PackageVersion"
         if (Test-Path $cached) {
             Remove-Item -Recurse -Force $cached
             Write-Host "Evicted stale $id/$PackageVersion from the global packages folder"
@@ -387,7 +387,7 @@ if ($Pack) {
     # the .nupkg files and no checkout, so a guide that only exists in the repository is a guide
     # they cannot read; $PackageOutDir is what gets archived, so it has to explain itself.
     # Substituted, not copied verbatim: the guide's commands pin the version (see above).
-    Expand-PackagingPlaceholders -SourcePath (Join-Path $PSScriptRoot "packaging\README.md") -DestinationPath (Join-Path $PackageOutDir "README.md")
+    Expand-PackagingPlaceholders -SourcePath (Join-Path $PSScriptRoot "packaging/README.md") -DestinationPath (Join-Path $PackageOutDir "README.md")
     Write-Host "Wrote $(Join-Path $PackageOutDir 'README.md') (install guide, pinned to $PackageVersion)"
 
     Write-Host ""

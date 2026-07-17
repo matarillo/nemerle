@@ -32,7 +32,9 @@ There is no need to clone this repository to use any of them.
 ## Requirements
 
 - The **.NET 10 SDK** (<https://dotnet.microsoft.com/download/dotnet/10.0>).
-- Windows or Linux. Both are verified; the packages contain only managed IL and the same package
+- Windows or Linux. Both are verified against this release set — Windows 11 in daily use, and
+  Ubuntu Linux on a clean VM (install → `dotnet new nemerle-console` → build → run, plus the
+  VS Code extension's test suites). The packages contain only managed IL and the same package
   works on both.
 
 ## 1. Install
@@ -77,7 +79,9 @@ your solution):
 ```
 
 A relative `value` is resolved against the `NuGet.config`'s own location, so `value="..\packages"`
-works and keeps the file portable across machines.
+works and keeps the file portable across machines. On Linux, use the folder's absolute path
+(`value="/home/you/nemerle-packages"`) or a relative one — `~` is not expanded inside
+`NuGet.config`.
 
 > Do **not** add `<clear />` here unless you mean it. It drops nuget.org, and then any ordinary
 > `PackageReference` in your project stops resolving. The example above *adds* the local feed to
@@ -86,7 +90,8 @@ works and keeps the file portable across machines.
 **Option B — register the feed machine-wide**, once:
 
 ```console
-dotnet nuget add source C:\nemerle-packages -n nemerle-local
+dotnet nuget add source C:\nemerle-packages -n nemerle-local     # Windows
+dotnet nuget add source ~/nemerle-packages -n nemerle-local      # Linux
 ```
 
 Undo it later with `dotnet nuget remove source nemerle-local`.
@@ -96,6 +101,8 @@ Undo it later with `dotnet nuget remove source nemerle-local`.
 ```console
 dotnet new install Nemerle.Templates.Unofficial::__NEMERLE_SDK_VERSION__ --add-source C:\nemerle-packages
 ```
+
+(On Linux: `--add-source ~/nemerle-packages` — here the shell does expand `~`.)
 
 `--add-source` is only needed for this command; `dotnet new install` does not read the
 `NuGet.config` above. Templates are installed for your user account, not per project — remove them
@@ -321,12 +328,15 @@ are redistributed in them.
 A release set is produced from a clean checkout by, in order:
 
 ```powershell
-pwsh dotnet-port\build-libs-core.ps1               # auxiliary libs (Nemerle.Linq) -> bin\Release\core\Libs
-pwsh dotnet-port\pack-tool.ps1 -Pack               # toolchain + packages + this page -> dist\release
-pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # stages the server from that same toolchain
-cd dotnet-port\vscode-nemerle; npm run package     # VSIX -> dist\release
-pwsh dotnet-port\pack-release.ps1                  # verifies the set, writes release-info.json
+pwsh dotnet-port/build-libs-core.ps1               # auxiliary libs (Nemerle.Linq) -> bin/Release/core/Libs
+pwsh dotnet-port/pack-tool.ps1 -Pack               # toolchain + packages + this page -> dist/release
+pwsh dotnet-port/vscode-nemerle/pack-server.ps1    # stages the server from that same toolchain
+cd dotnet-port/vscode-nemerle; npm run package     # VSIX -> dist/release
+pwsh dotnet-port/pack-release.ps1                  # verifies the set, writes release-info.json
 ```
+
+The same commands run on Linux under `pwsh` (verified — `dotnet-port/42-prerelease-wp-n5-log.md`);
+only building Stage1 itself (the .NET Framework bootstrap) requires Windows.
 
 `dist\release` is then the release: hand it over or zip it as-is. `pack-release.ps1` refuses to
 seal a set whose halves were built from different commits, or from a dirty tree — the VSIX and

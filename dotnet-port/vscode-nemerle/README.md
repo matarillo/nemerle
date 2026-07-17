@@ -9,7 +9,10 @@ overriding disk content.
 
 ## Requirements
 
-- Windows 11 (the preview is validated on Windows; the server is managed IL).
+- Windows 11 or Linux (the preview is validated on Windows 11 and on Ubuntu
+  Linux — clean-VM VSIX install plus the extension's own test suites; the
+  server is managed IL). See `dotnet-port/42-prerelease-wp-n5-log.md` for the
+  Linux verification record.
 - VS Code 1.125.0 or later.
 - The **.NET 10 runtime** (the SDK includes it). The VSIX bundles the language
   server and its managed dependencies under `server/`, but not the .NET
@@ -54,7 +57,7 @@ pwsh dotnet-port\vscode-nemerle\pack-server.ps1    # builds LspServer, stages se
 cd dotnet-port\vscode-nemerle
 npm ci
 npm run package                                    # lint + tests + verify-server + vsce package
-code --install-extension vscode-nemerle-0.8.2.vsix
+code --install-extension vscode-nemerle-<version>.vsix
 ```
 
 Then open a trusted folder containing a `.nproj` project. The server starts

@@ -70,9 +70,9 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
-if ($Compiler -eq "") { $Compiler = Join-Path $RepoRoot "bin\$Configuration\net-4.0\Stage1\ncc.exe" }
-if ($OutDir   -eq "") { $OutDir   = Join-Path $RepoRoot "bin\$Configuration\core\Stage2" }
-if ($RspDir   -eq "") { $RspDir   = Join-Path $PSScriptRoot "rsp\stage2" }
+if ($Compiler -eq "") { $Compiler = Join-Path $RepoRoot "bin/$Configuration/net-4.0/Stage1/ncc.exe" }
+if ($OutDir   -eq "") { $OutDir   = Join-Path $RepoRoot "bin/$Configuration/core/Stage2" }
+if ($RspDir   -eq "") { $RspDir   = Join-Path $PSScriptRoot "rsp/stage2" }
 
 if (-not (Test-Path $Compiler)) { throw "Compiler not found: $Compiler" }
 
@@ -81,7 +81,7 @@ if (-not (Test-Path $Compiler)) { throw "Compiler not found: $Compiler" }
 # through the build with an unexplained ref-def mismatch FileLoadException (see the design
 # notes above and dotnet-port\assembly-version-check.ps1) instead of stopping here with the
 # recovery steps.
-. "$PSScriptRoot\assembly-version-check.ps1"
+. "$PSScriptRoot/assembly-version-check.ps1"
 Test-NemerleAssemblyVersionFreshness -NemerleDllPath (Join-Path (Split-Path $Compiler) "Nemerle.dll") -RepoRoot $RepoRoot -Label "Compiler ($Compiler)"
 
 New-Item -ItemType Directory -Force -Path $OutDir  | Out-Null
@@ -124,7 +124,7 @@ $CoreRefs = @(
     "System.Data.Common.dll"
 ) | ForEach-Object { FwRef $_ }
 
-$KeysDir = Join-Path $RepoRoot "misc\keys"
+$KeysDir = Join-Path $RepoRoot "misc/keys"
 $NemerleKey  = Join-Path $KeysDir "Nemerle.snk"
 $CompilerKey = Join-Path $KeysDir "Nemerle.Compiler.snk"
 
@@ -141,29 +141,29 @@ function Sources([string[]]$patterns) {
         ForEach-Object { $_.FullName }
 }
 
-$NemerleSources = Sources @("lib\*.n")
+$NemerleSources = Sources @("lib/*.n")
 
 $CompilerSources = @(
-    (Join-Path $RepoRoot "ncc\CompilationOptions.n"),
-    (Join-Path $RepoRoot "ncc\passes.n")
+    (Join-Path $RepoRoot "ncc/CompilationOptions.n"),
+    (Join-Path $RepoRoot "ncc/passes.n")
 ) + (Sources @(
-        "ncc\parsing\*.n",
-        "ncc\completion\*.n",
-        "ncc\external\*.n",
-        "ncc\external\ExternalMemberInfo\*.n",
-        "ncc\external\ExternalTypeInfo\*.n",
-        "ncc\generation\*.n",
-        "ncc\hierarchy\*.n",
-        "ncc\misc\*.n",
-        "ncc\optimization\*.n",
-        "ncc\typing\*.n"
+        "ncc/parsing/*.n",
+        "ncc/completion/*.n",
+        "ncc/external/*.n",
+        "ncc/external/ExternalMemberInfo/*.n",
+        "ncc/external/ExternalTypeInfo/*.n",
+        "ncc/generation/*.n",
+        "ncc/hierarchy/*.n",
+        "ncc/misc/*.n",
+        "ncc/optimization/*.n",
+        "ncc/typing/*.n"
     ))
 
-$MacrosSources = Sources @("macros\*.n")
+$MacrosSources = Sources @("macros/*.n")
 
 $NccSources = @(
-    (Join-Path $RepoRoot "ncc\misc\AssemblyInfo.n"),
-    (Join-Path $RepoRoot "ncc\main.n")
+    (Join-Path $RepoRoot "ncc/misc/AssemblyInfo.n"),
+    (Join-Path $RepoRoot "ncc/main.n")
 )
 
 Write-Host "Source counts: Nemerle=$($NemerleSources.Count) Nemerle.Compiler=$($CompilerSources.Count) Nemerle.Macros=$($MacrosSources.Count) ncc=$($NccSources.Count)"
@@ -255,10 +255,10 @@ Invoke-Ncc -RspFile $NccRsp      -Label "ncc.exe"
 # helper assembly (see dotnet-port\11-emission-log.md) and write a runtimeconfig.json
 # for ncc.exe so `dotnet exec $OutDir\ncc.exe ...` can start directly.
 # ---------------------------------------------------------------------------
-$CoreEmitSrc = Join-Path $RepoRoot "dotnet-port\Nemerle.CoreEmit\bin\$Configuration\net10.0\Nemerle.CoreEmit.dll"
+$CoreEmitSrc = Join-Path $RepoRoot "dotnet-port/Nemerle.CoreEmit/bin/$Configuration/net10.0/Nemerle.CoreEmit.dll"
 if (-not (Test-Path $CoreEmitSrc)) {
     Write-Host "Building Nemerle.CoreEmit ($Configuration)..."
-    dotnet build -c $Configuration (Join-Path $RepoRoot "dotnet-port\Nemerle.CoreEmit\Nemerle.CoreEmit.csproj") --nologo -v:quiet
+    dotnet build -c $Configuration (Join-Path $RepoRoot "dotnet-port/Nemerle.CoreEmit/Nemerle.CoreEmit.csproj") --nologo -v:quiet
     if ($LASTEXITCODE -ne 0) { throw "Nemerle.CoreEmit build failed" }
 }
 Copy-Item -Path $CoreEmitSrc -Destination $OutDir -Force

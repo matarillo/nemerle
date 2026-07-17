@@ -47,16 +47,16 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
-if ($Compiler -eq "") { $Compiler = Join-Path $RepoRoot "bin\$Configuration\core\Stage2\ncc.exe" }
-if ($OutDir   -eq "") { $OutDir   = Join-Path $RepoRoot "bin\$Configuration\core\Libs" }
-if ($RspDir   -eq "") { $RspDir   = Join-Path $PSScriptRoot "rsp\libs" }
+if ($Compiler -eq "") { $Compiler = Join-Path $RepoRoot "bin/$Configuration/core/Stage2/ncc.exe" }
+if ($OutDir   -eq "") { $OutDir   = Join-Path $RepoRoot "bin/$Configuration/core/Libs" }
+if ($RspDir   -eq "") { $RspDir   = Join-Path $PSScriptRoot "rsp/libs" }
 
-if (-not (Test-Path $Compiler)) { throw "Compiler not found: $Compiler (build it first: dotnet-port\build-stage2-core.ps1)" }
+if (-not (Test-Path $Compiler)) { throw "Compiler not found: $Compiler (build it first: dotnet-port/build-stage2-core.ps1)" }
 
 # WP-N1 (A2): the compiler must match HEAD's generation, both so it can load the
 # freshly-built lib during later use and so the GeneratedAssemblyVersion the Linq dll
 # gets stamped with agrees with the compiler's own.
-. "$PSScriptRoot\assembly-version-check.ps1"
+. "$PSScriptRoot/assembly-version-check.ps1"
 Test-NemerleAssemblyVersionFreshness -NemerleDllPath (Join-Path (Split-Path $Compiler) "Nemerle.dll") -RepoRoot $RepoRoot -Label "Compiler ($Compiler)"
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -99,7 +99,7 @@ $CoreRefs = @(
 $CompilerDir = Split-Path $Compiler
 $NemerleDll  = Join-Path $CompilerDir "Nemerle.dll"
 $NemerleCompilerDll = Join-Path $CompilerDir "Nemerle.Compiler.dll"
-$CompilerKey = Join-Path $RepoRoot "misc\keys\Nemerle.Compiler.snk"   # same key as Linq\Macro\Linq.nproj
+$CompilerKey = Join-Path $RepoRoot "misc/keys/Nemerle.Compiler.snk"   # same key as Linq\Macro\Linq.nproj
 
 function Sources([string[]]$patterns) {
     $patterns | ForEach-Object { Get-ChildItem -Path (Join-Path $RepoRoot $_) -File | Sort-Object Name } |
@@ -107,7 +107,7 @@ function Sources([string[]]$patterns) {
 }
 
 # Same file set as Linq\Macro\Linq.nproj's <Compile> items (all 7 files).
-$LinqSources = (Sources @("Linq\Macro\*.n")) + @(Join-Path $RepoRoot "Linq\Macro\Properties\AssemblyInfo.n")
+$LinqSources = (Sources @("Linq/Macro/*.n")) + @(Join-Path $RepoRoot "Linq/Macro/Properties/AssemblyInfo.n")
 
 Write-Host "Source counts: Nemerle.Linq=$($LinqSources.Count)"
 

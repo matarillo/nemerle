@@ -95,15 +95,29 @@ function workspaceRoot(): string {
 }
 
 function normalize(value: string): string {
-  return value.replace(/\//gu, '\\').toLowerCase();
+  // Windows paths compare case-insensitively and mix separators; POSIX paths
+  // are case-sensitive and already use '/', so they must compare verbatim.
+  if (process.platform === 'win32') {
+    return value.replace(/\//gu, '\\').toLowerCase();
+  }
+  return value;
 }
 
 function processCommandLine(pid: number): string {
-  const result = spawnSync('powershell.exe', [
-    '-NoProfile',
-    '-Command',
-    `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
-  ], { encoding: 'utf8', shell: false });
+  if (process.platform === 'linux') {
+    // /proc/<pid>/cmdline is the argv vector, NUL-separated.
+    return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').trim();
+  }
+  if (process.platform === 'win32') {
+    const result = spawnSync('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+    ], { encoding: 'utf8', shell: false });
+    assert.equal(result.status, 0, `Could not query the command line of process ${pid}: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+  const result = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', shell: false });
   assert.equal(result.status, 0, `Could not query the command line of process ${pid}: ${result.stderr}`);
   return result.stdout.trim();
 }

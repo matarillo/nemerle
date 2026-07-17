@@ -26,8 +26,8 @@ if ($VsixPath -eq "") {
 }
 if (-not (Test-Path $VsixPath)) { throw "VSIX not found: $VsixPath (run 'npm run package' first)" }
 
-$IntegrationTestProj = Join-Path $DotnetPortDir "LspServer.IntegrationTest\Nemerle.LanguageServer.IntegrationTest.csproj"
-$IntegrationTestDll = Join-Path $DotnetPortDir "LspServer.IntegrationTest\bin\Release\net10.0\Nemerle.LanguageServer.IntegrationTest.dll"
+$IntegrationTestProj = Join-Path $DotnetPortDir "LspServer.IntegrationTest/Nemerle.LanguageServer.IntegrationTest.csproj"
+$IntegrationTestDll = Join-Path $DotnetPortDir "LspServer.IntegrationTest/bin/Release/net10.0/Nemerle.LanguageServer.IntegrationTest.dll"
 if (-not $NoBuild) {
     & dotnet build $IntegrationTestProj -c Release
     if ($LASTEXITCODE -ne 0) { throw "Integration test build failed (exit $LASTEXITCODE)" }
@@ -35,14 +35,14 @@ if (-not $NoBuild) {
 if (-not (Test-Path $IntegrationTestDll)) { throw "Integration test not built: $IntegrationTestDll" }
 
 # Expand-Archive needs a .zip extension; a VSIX is a zip archive.
-$ExtractRoot = Join-Path $ExtensionDir ".vscode-test\vsix-extract"
+$ExtractRoot = Join-Path $ExtensionDir ".vscode-test/vsix-extract"
 if (Test-Path $ExtractRoot) { Remove-Item -Recurse -Force $ExtractRoot }
 New-Item -ItemType Directory -Force -Path $ExtractRoot | Out-Null
 $ZipCopy = Join-Path $ExtractRoot "vsix.zip"
 Copy-Item $VsixPath $ZipCopy
 Expand-Archive -Path $ZipCopy -DestinationPath (Join-Path $ExtractRoot "content")
 
-$BundledServer = Join-Path $ExtractRoot "content\extension\server\Nemerle.LanguageServer.dll"
+$BundledServer = Join-Path $ExtractRoot "content/extension/server/Nemerle.LanguageServer.dll"
 if (-not (Test-Path $BundledServer)) { throw "The VSIX does not contain extension/server/Nemerle.LanguageServer.dll" }
 
 Write-Host "Running the raw LSP integration suite against the extracted bundled server:"

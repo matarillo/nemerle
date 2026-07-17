@@ -51,9 +51,9 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
-if ($CompilerDir -eq "") { $CompilerDir = Join-Path $RepoRoot "bin\$Configuration\core\Stage2" }
-if ($LibsDir     -eq "") { $LibsDir     = Join-Path $RepoRoot "bin\$Configuration\core\Libs" }
-if ($HarnessDir  -eq "") { $HarnessDir  = Join-Path $RepoRoot "bin\$Configuration\net-4.0\TestFramework" }
+if ($CompilerDir -eq "") { $CompilerDir = Join-Path $RepoRoot "bin/$Configuration/core/Stage2" }
+if ($LibsDir     -eq "") { $LibsDir     = Join-Path $RepoRoot "bin/$Configuration/core/Libs" }
+if ($HarnessDir  -eq "") { $HarnessDir  = Join-Path $RepoRoot "bin/$Configuration/net-4.0/TestFramework" }
 if ($StagingDir  -eq "") { $StagingDir  = Join-Path ([IO.Path]::GetTempPath()) "nemerle-core-testsuite" }
 if ($TestSuiteDir -eq "") { $TestSuiteDir = Join-Path $RepoRoot "testsuite" }
 if ($OutputDir   -eq "") { $OutputDir   = Join-Path $StagingDir "out" }
@@ -82,7 +82,7 @@ if (-not $SkipCopy) {
         Write-Host "Staging auxiliary libs: $LibsDir -> $StagedCompiler"
         Copy-Item -Path (Join-Path $LibsDir "*.dll") -Destination $StagedCompiler -Force
     } else {
-        Write-Warning "LibsDir not found ($LibsDir) -- Nemerle.Linq-dependent tests will fail. Build it with dotnet-port\build-libs-core.ps1."
+        Write-Warning "LibsDir not found ($LibsDir) -- Nemerle.Linq-dependent tests will fail. Build it with dotnet-port/build-libs-core.ps1."
     }
 }
 

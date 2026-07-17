@@ -33,9 +33,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-if ($ReleaseDir -eq "") { $ReleaseDir = Join-Path $PSScriptRoot "dist\release" }
+if ($ReleaseDir -eq "") { $ReleaseDir = Join-Path $PSScriptRoot "dist/release" }
 if (-not (Test-Path $ReleaseDir)) {
-    throw "Release directory not found: $ReleaseDir (run `pwsh dotnet-port\pack-tool.ps1 -Pack` first)"
+    throw "Release directory not found: $ReleaseDir (run `pwsh dotnet-port/pack-tool.ps1 -Pack` first)"
 }
 $ReleaseDir = (Resolve-Path $ReleaseDir).Path
 
@@ -70,7 +70,7 @@ if ($describe -match '-dirty$' -and -not $AllowDirty) {
 # 1. The packages, and the compiler generation they carry.
 # ---------------------------------------------------------------------------
 $packageFiles = Get-ChildItem $ReleaseDir -Filter "*.nupkg" -File
-if ($packageFiles.Count -eq 0) { throw "No .nupkg in $ReleaseDir -- run `pwsh dotnet-port\pack-tool.ps1 -Pack` first." }
+if ($packageFiles.Count -eq 0) { throw "No .nupkg in $ReleaseDir -- run `pwsh dotnet-port/pack-tool.ps1 -Pack` first." }
 
 $packages = @()
 $toolchainInfo = $null
@@ -89,12 +89,12 @@ if (-not $toolchainInfo) { throw "No package in $ReleaseDir carries tools/ncc/nc
 # ---------------------------------------------------------------------------
 # 2. The VSIX, and the generation its bundled language server carries.
 # ---------------------------------------------------------------------------
-$manifestPath = Join-Path $PSScriptRoot "vscode-nemerle\package.json"
+$manifestPath = Join-Path $PSScriptRoot "vscode-nemerle/package.json"
 $extensionVersion = (Get-Content -Raw $manifestPath | ConvertFrom-Json).version
 $vsixName = "vscode-nemerle-$extensionVersion.vsix"
 $vsixPath = Join-Path $ReleaseDir $vsixName
 if (-not (Test-Path $vsixPath)) {
-    throw "$vsixName not found in $ReleaseDir. Build it with: pwsh dotnet-port\vscode-nemerle\pack-server.ps1; cd dotnet-port\vscode-nemerle; npm run package"
+    throw "$vsixName not found in $ReleaseDir. Build it with: pwsh dotnet-port/vscode-nemerle/pack-server.ps1; cd dotnet-port/vscode-nemerle; npm run package"
 }
 $bundleInfoText = Read-ArchiveEntry -ArchivePath $vsixPath -EntryName "extension/server/bundle-info.json"
 if (-not $bundleInfoText) { throw "$vsixName does not contain extension/server/bundle-info.json -- it was packaged without pack-server.ps1 staging the server." }
@@ -117,9 +117,9 @@ Release halted: the VSIX and the packages were built from different commits.
   $vsixName        server packed from $($bundleInfo.commit) ($($bundleInfo.describe))
   packages         toolchain packed from $($toolchainInfo.commit) ($($toolchainInfo.describe))
 Rebuild both from the current commit ($commit) and re-run:
-  pwsh dotnet-port\pack-tool.ps1 -Pack
-  pwsh dotnet-port\vscode-nemerle\pack-server.ps1
-  cd dotnet-port\vscode-nemerle; npm run package
+  pwsh dotnet-port/pack-tool.ps1 -Pack
+  pwsh dotnet-port/vscode-nemerle/pack-server.ps1
+  cd dotnet-port/vscode-nemerle; npm run package
 "@
 }
 if ($bundleInfo.commit -ne $commit) {
@@ -136,7 +136,7 @@ if ($bundleInfo.commit -ne $commit) {
 #     This script does not build anything, so on mismatch it reports and halts the same way as
 #     the commit checks above rather than offering a rebuild command mid-script.
 # ---------------------------------------------------------------------------
-. "$PSScriptRoot\assembly-version-check.ps1"
+. "$PSScriptRoot/assembly-version-check.ps1"
 $expectedNemerleAssemblyVersion = Get-ExpectedNemerleAssemblyVersion -RepoRoot $RepoRoot
 if ($null -eq $expectedNemerleAssemblyVersion) {
     Write-Warning "Could not determine an expected Nemerle assembly version from 'git describe --tags --long' at $RepoRoot -- skipping the packaged-toolchain freshness check."
@@ -148,8 +148,8 @@ Release halted: the packaged toolchain's Nemerle assembly version does not match
   HEAD expects     $expectedNemerleAssemblyVersion (from 'git describe --tags --long')
 This means the packaged compiler was built before the current commit's assembly-version-affecting
 history, even though its recorded commit matched. Rebuild the toolchain from HEAD and re-pack:
-  pwsh dotnet-port\build-stage2-core.ps1
-  pwsh dotnet-port\pack-tool.ps1 -Pack
+  pwsh dotnet-port/build-stage2-core.ps1
+  pwsh dotnet-port/pack-tool.ps1 -Pack
 "@
 }
 

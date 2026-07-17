@@ -10,9 +10,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$Stage1Dir = Join-Path $RepoRoot "bin\$Configuration\net-4.0\Stage1"
-$HelperProj = Join-Path $RepoRoot "dotnet-port\Nemerle.CoreEmit\Nemerle.CoreEmit.csproj"
-$HelperBin = Join-Path $RepoRoot "dotnet-port\Nemerle.CoreEmit\bin\$Configuration\net10.0\Nemerle.CoreEmit.dll"
+$Stage1Dir = Join-Path $RepoRoot "bin/$Configuration/net-4.0/Stage1"
+$HelperProj = Join-Path $RepoRoot "dotnet-port/Nemerle.CoreEmit/Nemerle.CoreEmit.csproj"
+$HelperBin = Join-Path $RepoRoot "dotnet-port/Nemerle.CoreEmit/bin/$Configuration/net10.0/Nemerle.CoreEmit.dll"
 
 if (-not (Test-Path $Stage1Dir)) {
     throw "Stage1 output dir not found: $Stage1Dir (build Stage1 first)"

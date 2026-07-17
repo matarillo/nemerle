@@ -34,13 +34,13 @@ $ErrorActionPreference = "Stop"
 $ExtensionDir = $PSScriptRoot
 $DotnetPortDir = Split-Path -Parent $ExtensionDir
 $RepoRoot = Split-Path -Parent $DotnetPortDir
-$ServerProject = Join-Path $DotnetPortDir "LspServer\Nemerle.LanguageServer.csproj"
-$ServerBinDir = Join-Path $DotnetPortDir "LspServer\bin\$Configuration\net10.0"
+$ServerProject = Join-Path $DotnetPortDir "LspServer/Nemerle.LanguageServer.csproj"
+$ServerBinDir = Join-Path $DotnetPortDir "LspServer/bin/$Configuration/net10.0"
 $OutDir = Join-Path $ExtensionDir "server"
 
-$NccLayout = Join-Path $DotnetPortDir "dist\ncc"
+$NccLayout = Join-Path $DotnetPortDir "dist/ncc"
 if (-not (Test-Path (Join-Path $NccLayout "Nemerle.Compiler.dll"))) {
-    throw "dist/ncc layout not found ($NccLayout): run dotnet-port\pack-tool.ps1 first (the server build references its Nemerle assemblies)."
+    throw "dist/ncc layout not found ($NccLayout): run dotnet-port/pack-tool.ps1 first (the server build references its Nemerle assemblies)."
 }
 
 if (-not $NoBuild) {
@@ -106,4 +106,4 @@ $bundleInfo | ConvertTo-Json | Set-Content -Path (Join-Path $OutDir "bundle-info
 $files = Get-ChildItem $OutDir -Recurse -File
 $totalMb = [math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 2)
 Write-Host "Staged $($files.Count) files ($totalMb MB) -> $OutDir"
-Write-Host "Next: cd dotnet-port\vscode-nemerle; npm run package"
+Write-Host "Next: cd dotnet-port/vscode-nemerle; npm run package"
