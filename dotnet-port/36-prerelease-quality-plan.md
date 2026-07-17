@@ -333,58 +333,46 @@ E7 への合流候補。
 
 ### WP-N4: 版タグ契約の修正と GitHub Release 配布の実現
 
-GitHub Release での試験配布を可能にするための前提整備と初回発行。
-log は `41-*.md` を割り当てる。
-
-背景(実測済み): AssemblyVersion は `GeneratedAssemblyVersion`
-macro(`macros\GeneratedAssemblyVersion.n`)が**コンパイル時に
-`git describe --tags --long` を実行し、「最も近いタグの数値部 + `.0.` + タグからの
-コミット数」**で組み立てる(現在 `v1.2` 起点で `1.2.0.<rev>`)。このため mainline の
-コミットにリリースタグを打つと describe がそのタグを拾い、以後の版が壊れる
-(rev が 0 に戻り、タグ名によっては 4 成分に収まらず不正)。WP-N1 の A2 検査
-(`assembly-version-check.ps1`)も同じレシピを再計算するため boot-net10 seed との照合が
-全段で throw し、pinned worktree(タグは refs 共有で worktree からも見える)も同罪。
-つまり**現行契約のままではリリースタグを打てない**。また除外規則はコンパイル時に
-macro が読むため、契約修正より前の世代(1.2.0.627 / 630 を含む)には遡ってタグを
-打つこともできない — タグ付きリリースは修正後の世代が最初になる。
+リリースタグを版計算から切り離し、GitHub Release での試験配布と「発行済みリリースの
+後日の再現」を成立させる。設計・実測証跡は `41-prerelease-wp-n4-log.md` の冒頭に記録する。
 
 成果物:
 
-1. **タグ契約の修正**: `GeneratedAssemblyVersion.n` の describe に版タグ限定の
-   match/exclude(例: `--match "v[0-9]*"`)を追加し、リリースタグを版計算から
-   不可視にする。`assembly-version-check.ps1` の `Get-ExpectedNemerleAssemblyVersion` に
-   **同一レシピを同期**する(同ファイルが「macro と same recipe の replay」を契約として
-   明文化済み)。`macros\` は共有ソースのため §5-2 の CLR4 回帰ゲートを適用。
-2. **世代の更新**: Stage1 再ビルド → `refresh-stage1-core.ps1` → `publish-boot.ps1` で
-   boot-net10 seed を修正後世代へ refresh し、その世代で release set を再生成する。
-3. **タグ命名規約の確定と初回発行**: リリースタグは **`v` 非開始**とする
-   (`v*` は upstream rsdn/nemerle のリリース名前空間であり、match 規則の保護対象。
-   案: `dist/1.2.<rev>-preview.<N>` — 最終形は実装時に PO と確定)。実ソースコミットに
-   タグを打ち、GitHub Release(**prerelease フラグ付き**)として release set 一式
-   (nupkg ×3 + VSIX + README + release-info.json、zip 化の要否も実装時に確定)を
-   assets に添付する。実ソースコミット上のタグなので GitHub が自動添付する
-   Source code アーカイブも正しい中身になる。
-4. **制約の明文化**: 「リリースタグは v 非開始」「契約修正前の世代はタグ付け不可」を
+1. **タグ契約**: `GeneratedAssemblyVersion.n` の describe に `--match "v[0-9]*"` を
+   追加し、リリースタグ・seed タグを版計算から不可視にする。`assembly-version-check.ps1` の
+   `Get-ExpectedNemerleAssemblyVersion` に同一レシピを同期。`macros\` は共有ソースのため
+   §5-2 の CLR4 回帰ゲートを適用。
+2. **タグ命名規約(v 非開始)**: リリース = `release/1.2.<rev>-preview.<N>`、
+   seed = `seed/1.2.<rev>`(`v*` は upstream の名前空間 = match の保護対象)。
+3. **seed 番地付け**(発行済みリリースを後日再現可能にする): (a) orphan seed コミットへ
+   `seed/` タグ、(b) `release-info.json` に seed コミット hash と版一式を記録、
+   (c) `build-from-boot.ps1` に seed 指名引数(tip 固定を解除)。
+4. **preview.N の再現**: N はリリース時に決めて `release/` タグ名に刻む。再現時はタグ名から
+   版一式(base + N)を読んでパックする経路を用意する(N は nupkg のバイトに影響するため)。
+5. **世代の更新と初回発行**: Stage1 再ビルド → `refresh-stage1-core.ps1` →
+   `publish-boot.ps1` で seed を修正後世代へ refresh し、その世代の release set を実ソース
+   コミットにタグ付けして GitHub Release(prerelease)の asset として発行する。
+6. **制約の明文化**: 「リリース/seed タグは v 非開始」「契約修正前の世代はタグ付け不可」を
    `DISTRIBUTION.md` へ追記する。
 
 受け入れ基準:
 
-1. fixture(使い捨て clone)で: (a) 既存タグ(`v1.2`)のみの状態で修正前後の describe
-   結果が不変(機能的 no-op の証明)、(b) リリースタグを HEAD に打っても
-   AssemblyVersion / A2 期待値 / `build-from-boot.ps1` の全チェーンが不変。
+1. fixture(使い捨て clone)で: (a) 既存タグのみで修正前後の describe が不変(no-op 証明)、
+   (b) `release/` タグを HEAD に打っても AssemblyVersion / A2 期待値 /
+   `build-from-boot.ps1` の全チェーンが不変。
 2. §5-2 の回帰ゲート green(testsuite 全数 + stage2/stage3 + CLR4 スモーク)。
-3. 修正後世代の release set が `pack-release.ps1` で封緘され、`release-info.json` の
-   commit とタグの指すコミットが一致する。
-4. GitHub Release(prerelease)が発行され、**別環境で release page からダウンロードした
-   asset だけを使い** `packaging/README.md` の手順どおり install → `dotnet new` →
-   build → run が通る。
-5. `DISTRIBUTION.md` にタグ契約が記録される。
+3. release set が `pack-release.ps1` で封緘され、`release-info.json` の commit・seed hash と
+   タグの指すコミットが整合する。
+4. GitHub Release(prerelease)が発行され、別環境で asset だけを使い `packaging/README.md`
+   の手順どおり install → `dotnet new` → build → run が通る。
+5. **再現**: 使い捨て clone で seed 番地(`seed/` タグ)+ リリースタグから release set を
+   再ビルドし、初回発行物とバイト/版一致することを確認する(Linux・CLR4 不要で成立)。
+6. `DISTRIBUTION.md` にタグ契約が記録される。
 
-リスク: **小〜中**。macro 改修は共有ソースだが、変更は describe 引数の追加のみで
-既存タグ構成では機能的 no-op(受け入れ基準 1a で証明)。ビルド機の git が
-`--match`/`--exclude` を解さない場合(git 2.13 未満)は macro 内のタグ名フィルター
-(describe 出力の後処理)で同等を実現する代替に切替。旧世代にタグを打てない制約は
-受容し、明文化(成果物 4)で対処。
+リスク: **小〜中**。macro 改修は共有ソースだが変更は describe 引数の追加のみで、既存タグ
+構成では機能的 no-op(基準 1a で証明)。git が `--match` を解さない環境(git 2.13 未満)は
+macro 内のタグ名後処理で同等を実現する代替に切替。旧世代にタグを打てない制約は受容し
+明文化で対処。
 
 ### WP-N5: Linux 実地検証とテスト基盤の cross-platform 化
 
@@ -459,6 +447,30 @@ runner 上の環境整備量(.NET 10 SDK / pwsh / npm / テストハーネス)�
 seed 鮮度の運用は boot-net10 の refresh ritual として既に存在し、CI はそれを検出する
 側に回るため新たな運用負荷は増えない。
 
+### WP-N7(評価先行・go/no-go 判断付き): 版ピン留めと boot-net10 orphan の廃止
+
+位置づけ: 独立した大テーマ。設計根拠・評価の出発点・トレードオフは
+`44-prerelease-wp-n7-log.md` の冒頭に記録する。**評価(設計 log)先行 → go/no-go** で扱い
+(WP-N6 と同方式)、go の場合のみ実装する。
+
+目的: AssemblyVersion を describe 由来(毎コミット進行)から**チェックイン済みの固定値**
+(`version.txt` 等)へ移し、世代ズレ検出を `AssemblyInformationalVersion` のコミットハッシュへ
+移す。これにより (a) seed が任意コミットをビルド可能になり **boot-net10 orphan と
+pinned worktree を廃止**、(b) seed 前進(seed refresh)を CoreCLR 化して**リリース経路から
+CLR4/Windows を外す**(残る CLR4 依存は凍結済みの創世 boot-4.0 のみ)。
+
+評価 log で確定させること:
+
+- 版ピン留め後の A2 検査を「AssemblyVersion 一致」から「Informational ハッシュ照合」へ
+  再設計する具体案と、失う安全性(ロード時の門番 → 検査時の警告)の受容可否。
+- boot-net10 orphan 廃止後の seed 置き場(in-tree / release asset 等)の再設計。
+- **工程(seed 前進)の CoreCLR 化が実際に成立するか**の検証。
+- NuGet 罠(base 据え置き再配布)への手動 suffix 運用ルールと、「`version.txt` をいつ上げるか」の
+  運用規約。
+
+前提: **WP-N4 完了後**(タグ契約は describe を Informational 側に残すため N7 をやっても
+生き続ける)。順序上の関係は §8。共有ソース(`macros\`)改修のため §5-2 の CLR4 回帰ゲート適用。
+
 ## 7. テストマトリクス
 
 | 対象 | 確認すること |
@@ -473,6 +485,7 @@ seed 鮮度の運用は boot-net10 の refresh ritual として既に存在し�
 | testsuite 全数(636) | 分類 A の Linq 起因分の救済、期待値二重化、新規 regression 0(WP-N3) |
 | リリースタグ fixture(使い捨て clone、新規) | 非 `v` タグを打っても describe / AssemblyVersion / A2 期待値 / build-from-boot が不変(WP-N4) |
 | GitHub Release asset からの install | 別環境で release page の asset のみから README 手順どおり install → build → run(WP-N4) |
+| seed 番地からの再現(使い捨て clone、新規) | `seed/` タグ + リリースタグから release set を再ビルドし初回発行物とバイト/版一致(WP-N4 乙) |
 | Linux clean-machine 相当 | VSIX install → 全 language features(WP-N5) |
 | CLR4 hello/hello2 + boot ビルド | CLR4 スモーク(共有ソース改修時、全 WP 共通) |
 
@@ -483,9 +496,12 @@ seed 鮮度の運用は boot-net10 の refresh ritual として既に存在し�
 3. **WP-N3**(Nemerle.Linq + testsuite)— 完了(log 40。release set 1.2.627-preview.1 封緘)。
 4. **WP-N5**(Linux 実地 + cross-platform 化)— 完了(log 42)。フォローアップとして
    **boot-net10**(orphan ブランチの stage1 seed + `build-from-boot.ps1`、log 43)を実施。
-5. **WP-N4**(版タグ契約 + GitHub Release)。WP-N6 より先が必須 —
-   タグ契約は CI の版整合検査と release workflow(stretch)の前提。
-6. **WP-N6**(最小 CI)。WP-N4 完了後に go/no-go を判断。
+5. **WP-N4**(版タグ契約 + seed 番地付け + 初回 GitHub Release)。以降の前提 —
+   タグ契約は CI の版整合検査と release workflow の前提。
+6. **WP-N7**(版ピン留め + orphan 廃止)の**評価 log 先行 → go/no-go**。この結論が
+   WP-N6 の seed 機構(orphan 継続か、版ピン留め後の新機構か)を決めるため、N6 より先に判断する。
+7. **WP-N6**(最小 CI)。N7 が go なら版ピン留め後の seed 機構上に、no-go なら orphan ベースで
+   構築する。go/no-go は N7 判断後に確定。
 
 ## 9. リスクと対策
 
@@ -496,7 +512,8 @@ seed 鮮度の運用は boot-net10 の refresh ritual として既に存在し�
 | 共有ソース改修による CLR4 回帰 | testsuite 全数 + stage2/3 バイト一致 + CLR4 スモークの回帰ゲート(§5-2)。VsIntegration 全体 grep(§5-5) |
 | Stage リビルドで版が進み package 再 pack が必要になる | WP-N1 の版一致チェックで混在を機械検出。provenance(ncc-info.json)で照合 |
 | Nemerle.Linq の式ツリー生成に CoreCLR 挙動差 | NET_4_0 ゲートで分岐し CLR4 回帰ゲートで検証。不成立なら理由を log に記録して撤退 |
-| リリースタグ導入が describe 由来の版契約を壊す | macro と A2 検査スクリプトの除外規則を同一 WP で同期し、fixture で不変性を証明(WP-N4)。リリースタグは `v` 非開始 + 契約修正後の世代のみに限定 |
+| リリースタグ導入が describe 由来の版契約を壊す | macro と A2 検査スクリプトの除外規則を同一 WP で同期し、fixture で不変性を証明(WP-N4)。リリース/seed タグは `v` 非開始 + 契約修正後の世代のみに限定 |
+| 版ピン留めで A2 の門番(ロード時強制)が検査時警告へ格下げ | WP-N7 を評価先行 + go/no-go とし、Informational ハッシュ照合の再設計と受容可否を評価 log で先に確定してから実装 |
 | Linux 固有の engine 問題の再発 | WP-N5 は「洗い出しが目的」と位置づけ、修正は WP-N2 と同じ回帰ゲートで実施 |
 | 最小 CI の作業量が想定超過 | WP-N6 は任意 + スコープ固定 + go/no-go。no-go でもバックログに残す |
 | 期待値二重化で testsuite の保守が複雑化 | 二重化はランタイム差のある ~9 件に限定し、方式を log で固定 |
@@ -539,6 +556,9 @@ WP-O(公開フェーズ)を最優先とし、その後は以下:
 - `29-devenv2-plan.md`: WP-M 計画(§11 の優先順位リストは仮説。本計画 §10 が合意版)。
 - `35-devenv2-wp-m6-log.md`: WP-M6 実装結果とリリース後フォローアップ(preview.2 / 0.8.2)。
 - `38-prerelease-wp-n2-log.md`: WP-N2 事前調査(実測証跡・原因分析・仮実装計画。`37-*.md` は WP-N1 用に予約)。
+- `41-prerelease-wp-n4-log.md`: WP-N4 設計・実測証跡(タグ契約・seed 番地付け・preview.N 再現)。
+- `43-boot-net10-log.md`: boot-net10 seed + `build-from-boot.ps1`(WP-N4 seed 番地付け / WP-N7 の出発点)。
+- `44-prerelease-wp-n7-log.md`: WP-N7 設計根拠(版ピン留め・orphan 廃止・評価の下敷き)。
 - `30〜34-*.md`: WP-M1〜M5 実装結果(hover/completion/definition/incremental の現況)。
 - `18-testsuite-log.md`: testsuite 失敗分類(WP-N3 の出発点)。
 - `16-determinism-diagnosis.md` / `14-pdb-log.md`: 決定性・版ハザードの診断(WP-N1 の出発点)。
