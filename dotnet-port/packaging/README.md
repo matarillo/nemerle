@@ -349,3 +349,26 @@ page). `dotnet-port\packaging\<id>\README.md` is the README embedded in each pac
 nuget.org would render); this page is the install guide, and `pack-tool.ps1 -Pack` copies it into
 `dist\release` so the archive explains itself. Design and verification:
 `dotnet-port\35-devenv2-wp-m6-log.md`; distribution status overall: `dotnet-port\DISTRIBUTION.md`.
+
+#### Building the release set from a clone (Linux or Windows, no .NET Framework required)
+
+Only building Stage1 itself needs Windows; everything after that already runs on `pwsh` on
+either OS (see above). The `boot-net10` orphan branch closes that last gap: it carries a
+Windows-built Stage1 compiler, kept off main's history so committing it never moves `git
+describe` (and therefore never disturbs the assembly versions baked into every build). On a
+clone that fetched it — a plain `git clone` does, a `--single-branch` clone or a source archive
+does not, in which case run `git fetch origin boot-net10:boot-net10` first — just run:
+
+```powershell
+pwsh dotnet-port/build-from-boot.ps1
+```
+
+It fetches the seed, verifies it, and drives the same build chain as above from it, building
+either in place or in a pinned worktree depending on whether this checkout's generation already
+matches the seed's. The output lands at `dotnet-port/dist/release` (in-place case) or
+`dotnet-port/dist/release-from-boot` (worktree case); either way the script prints the final path.
+
+#### Refreshing the boot seed
+
+After rebuilding Stage1 on Windows from the commit you want to seed, run
+`pwsh dotnet-port/publish-boot.ps1` and then `git push origin boot-net10` to publish it.
