@@ -1,12 +1,6 @@
-# 36. WP-N: 公開前の品質固めと既知制約の解消 計画(ドラフト)
+# 36. WP-N: 公開前の品質固めと既知制約の解消 計画
 
-作成日: 2026-07-16
-
-> **状態: ドラフト — Product Owner 未合意。**
-> 2026-07-16 の PO ヒアリング(公開時期・CLR4 保全・ライブラリ復活範囲・新規提案の扱い)の
-> 回答を反映しているが、それは PO の現時点の考え方を聞き取ったものであり、
-> 本計画(バックログ §10 を含む)はこのドラフトとともに見直し・合意される。
-> 合意されるまで `00-PLAN.md` / `29-devenv2-plan.md` へのリンク追記・WP 表更新は行わない。
+作成日: 2026-07-16(2026-07-17 改定)
 
 ## 1. この文書の位置づけと命名整理
 
@@ -16,12 +10,12 @@ WP-M(29-devenv2-plan.md)は WP-M1〜M6 で完了し、フォローアップと�
 バージョン文字列整理(VSIX 0.8.2)まで済んでいる(`35-devenv2-wp-m6-log.md`)。
 
 本文書はその次のフェーズ **WP-N「公開前の品質固めと既知制約の解消」** の実行計画である。
-従来と同じ方式を採る: `00-PLAN.md` にはリンクと最新到達点のみ追記し(**合意後**)、
+従来と同じ方式を採る: `00-PLAN.md` にはリンクと最新到達点のみ追記し、
 各 work package の実装結果は番号付き log 文書(`37-*.md` 以降)へ記録する。
 
 **命名整理**: 過去文書(28/29 の §4・§11 等)は「WP-N = release 工程
 (Marketplace/nuget.org 公開、署名、CI)」と呼んでいたが、これは当時の AI エージェントの
-仮説的バックログであり Product Owner と合意したものではなかった。本ドラフトは
+仮説的バックログであり Product Owner と合意したものではなかった。本計画は
 **公開工程を品質固めの後**に置く方針を採るため、公開フェーズを **WP-O** に繰り下げ、
 本フェーズが WP-N を名乗る。
 過去文書内の「WP-N(release)」への言及はすべて WP-O と読み替える。
@@ -49,17 +43,17 @@ ID は本文書内の参照用。影響度は [高/中/低]。
 |---|---|---|---|
 | A1 | 決定的ビルド未完成(MVID/PE タイムスタンプは比較時マスクのみ。`BlobContentId.FromHash` で根治可) | 16 §5 | 中 |
 | A2 | AssemblyVersion の git describe 依存による版境界ハザード(stage スクリプトに版一致チェック未実装、手動 touch 頼み) | 14 F4, 30 | 高 |
-| A3 | `-linkres` の読み戻し不可(CoreCLR がマルチファイルアセンブリ非サポート。ncc 側で解決不能) | 17 §3c | 恒久 |
+| A3 | `-linkres` の読み戻し不可(CoreCLR がマルチファイルアセンブリ非サポート。ncc 側で解決不能) | 17 §3c | 当面 |
 | A4 | 自動 Win32 バージョン情報リソース未実装(`-win32-resource` で代替可) | 17 §3b | 低 |
 | A5 | embedded PDB / Document チェックサム / SourceLink 未配線 | 14 | 低 |
 | A6 | PDB の言語 GUID 引数順バグ(全フレーバー共通の歴史的バグ、実害なし) | 14 F2 | 低 |
 | A7 | `-compile-to-memory` + `-debug` on core 未検証 | 11, 14 | 中 |
-| A8/A9 | CAS no-op・実 RSA 署名なし(CoreCLR 仕様) | 11, 12 | 恒久 |
+| A8/A9 | CAS no-op・実 RSA 署名なし(CoreCLR 仕様) | 11, 12 | 当面 |
 | A10/A11 | dotnet/runtime のバグ 2 件(PersistedAssemblyBuilder のアセンブリレベル属性 PE 破損 / TypeBuilderImpl 非互換)。ncc は回避済みだが upstream 未報告 | 15, 17 | 低 |
 
 **B. フロントエンド**: B1 C# パーサープラグイン未移植(testsuite 8 件)[中] /
 B2 `[Resource]` マクロ core で hard-error(最小 resx パーサーで代替可)[低] /
-B3 codedom 除外・B4 マルチモジュール廃止[恒久] / B5 overload tie-break の外部+ユーザー混在ケース未対応[低] /
+B3 codedom 除外・B4 マルチモジュール廃止[当面] / B5 overload tie-break の外部+ユーザー混在ケース未対応[低] /
 B6 マクロ定義本体内 hover 不可(ncc 改修 + Stage リビルド要)[中]。
 
 **C. testsuite 残 35 失敗の内訳**: 補助ライブラリ未ビルド 8+1 件(Nemerle.Linq/.Unsafe/.WPF)/
@@ -69,7 +63,7 @@ C# パーサー未登録 8 件 / 共有フレームワーク外 BCL 面 6 件 / 
 
 **D. MSBuild/SDK**: D1 `GenerateDependencyFile=false` 依存(根治には net10 runtime package
 公開 = WP-O)[高] / D2 `CoreCompile` 増分キーに DefineConstants 等が入らない[中] /
-D3 `.nproj` 必須[恒久] / D5 版据え置き再パックの非伝播 / D6 Nemerle.Tool の 2 段起動 /
+D3 `.nproj` 必須[当面] / D5 版据え置き再パックの非伝播 / D6 Nemerle.Tool の 2 段起動 /
 D7 auto-ref 化後のレガシー rsp 整理未実施[以上、低]。
 
 **E. LSP/VS Code**: E1 未実装機能(semantic tokens / signatureHelp / documentHighlight /
@@ -90,7 +84,7 @@ hover 型名欠落 4 件、`samples/CompTimeSolver/Success` の parse error 1 �
 F2 net10 runtime package 未公開(D1 の前提。既存 net4x パッケージ消費者との版方針判断要)[高・WP-O] /
 F4 provenance 完全自動化 / F5 Linux layout 手順[低]。
 
-**G. クロスプラットフォーム**: G1 Mono 非対象[恒久・方針] /
+**G. クロスプラットフォーム**: G1 Mono 非対象[当面・方針] /
 G2 Linux/macOS エディター実地未保証[中] / G3 `test:vsix` の powershell.exe 依存[低] /
 G5 Linux の DefineConstants 配線実地未検証[低]。
 
@@ -114,12 +108,12 @@ WP-O(公開)に耐える品質へ到達する。具体的には:
    (usage 収集の完全性)を満たすかどうかが確定する。
 3. Nemerle.Linq が core でビルドされ、testsuite の Linq 起因の失敗と BCL 差の
    期待値ずれが解消する(目標 PASS 数は分類 A の内訳確定後に log で宣言)。
-4. 看板ライブラリ(Nemerle.Peg / ComputationExpressions)の移植方針が評価・合意され、
-   go 判断されたものは core で動作する(本項は優先度最下位。評価結果によっては
-   WP-N からドロップしてバックログへ回す)。
+4. 版タグ契約が修正され、GitHub Release での試験配布が成立する — タグを打っても
+   AssemblyVersion / A2 検査 / boot-net10 が壊れず、release set が release page の
+   asset として配布・install できる。
 5. Linux での VS Code extension 実地検証が完了し、テスト基盤が cross-platform 化される。
 
-## 4. 非ゴールと恒久制約の受容
+## 4. 非ゴールと当面の制約
 
 **非ゴール**(バックログへ。§10 参照):
 
@@ -130,8 +124,7 @@ WP-O(公開)に耐える品質へ到達する。具体的には:
 - README・入口ドキュメントの現代化(WP-O と同時が自然)。
 - upstream 報告(A10/A11)、SourceLink / embedded PDB(A5)。
 
-**恒久制約として受容する(直さない)提案**: 「既知の制約」として文書化を維持する
-(受容の是非も本ドラフトの合意対象)。
+**当面の制約として受容する(本計画では直さない)**: 「既知の制約」として文書化を維持する。
 
 - A3 `-linkres` 読み戻し不可(CoreCLR のランタイム制約)。
 - A8/A9 CAS no-op・実 RSA 署名なし(CoreCLR は署名検証しない)。
@@ -139,7 +132,7 @@ WP-O(公開)に耐える品質へ到達する。具体的には:
 - D3 `.nproj` 必須(`.csproj` では SDK の csc CoreCompile が後勝ちする)。
 - G1 Mono 非対象(本移植は CLR4 無改造 + .NET 10 のみ)。
 
-## 5. 方針(2026-07-16 PO ヒアリング回答の反映 — 計画全体は未合意)
+## 5. 方針(2026-07-16 PO ヒアリング回答の反映)
 
 1. **公開は品質固めの後**。本計画(WP-N)完了後に WP-O(公開)へ進む。
 2. **CLR4 挙動の保全**: testsuite 全数 + stage2/stage3 + CLR4 スモークを回帰ゲートとして、
@@ -338,32 +331,60 @@ E7 への合流候補。
 挙動差(式ツリー生成)が未知。スコープを Linq に絞ったことで、System.Xaml 依存で
 不成立リスクが最も高かった WPF を切り離せている(WPF/Unsafe はバックログで個別判断)。
 
-### WP-N4: 看板ライブラリの評価と移植(Nemerle.Peg / ComputationExpressions)
+### WP-N4: 版タグ契約の修正と GitHub Release 配布の実現
 
-**本計画の中で最も優先度が低い WP**。他 WP と工数が競合する
-場合は縮小・後回しとし、状況によっては **WP-N からドロップしてバックログへ回す**
-可能性がある(ドロップ判断は評価ステップの結果を材料に PO が行う)。
+GitHub Release での試験配布を可能にするための前提整備と初回発行。
+log は `41-*.md` を割り当てる。
 
-PO 方針(§5-3)により**評価ステップ先行の二段構え**:
+背景(実測済み): AssemblyVersion は `GeneratedAssemblyVersion`
+macro(`macros\GeneratedAssemblyVersion.n`)が**コンパイル時に
+`git describe --tags --long` を実行し、「最も近いタグの数値部 + `.0.` + タグからの
+コミット数」**で組み立てる(現在 `v1.2` 起点で `1.2.0.<rev>`)。このため mainline の
+コミットにリリースタグを打つと describe がそのタグを拾い、以後の版が壊れる
+(rev が 0 に戻り、タグ名によっては 4 成分に収まらず不正)。WP-N1 の A2 検査
+(`assembly-version-check.ps1`)も同じレシピを再計算するため boot-net10 seed との照合が
+全段で throw し、pinned worktree(タグは refs 共有で worktree からも見える)も同罪。
+つまり**現行契約のままではリリースタグを打てない**。また除外規則はコンパイル時に
+macro が読むため、契約修正より前の世代(1.2.0.627 / 630 を含む)には遡ってタグを
+打つこともできない — タグ付きリリースは修正後の世代が最初になる。
 
-1. **評価**: ライブラリごとに (a) 依存 API 監査(CoreCLR 非互換の有無)、
-   (b) ストレート移植 vs .NET 10 向け再設計の比較と推奨、(c) 工数見積り、
-   (d) テスト・サンプルの現況を調べ、評価レポートを log に書き **PO の go/no-go 合意**を得る。
-2. **実装**(go のもののみ): core ビルド + 既存テスト/サンプルの .NET 10 動作 +
-   `.Unofficial` 規約での NuGet パッケージング準備(公開自体は WP-O)。
+成果物:
+
+1. **タグ契約の修正**: `GeneratedAssemblyVersion.n` の describe に版タグ限定の
+   match/exclude(例: `--match "v[0-9]*"`)を追加し、リリースタグを版計算から
+   不可視にする。`assembly-version-check.ps1` の `Get-ExpectedNemerleAssemblyVersion` に
+   **同一レシピを同期**する(同ファイルが「macro と same recipe の replay」を契約として
+   明文化済み)。`macros\` は共有ソースのため §5-2 の CLR4 回帰ゲートを適用。
+2. **世代の更新**: Stage1 再ビルド → `refresh-stage1-core.ps1` → `publish-boot.ps1` で
+   boot-net10 seed を修正後世代へ refresh し、その世代で release set を再生成する。
+3. **タグ命名規約の確定と初回発行**: リリースタグは **`v` 非開始**とする
+   (`v*` は upstream rsdn/nemerle のリリース名前空間であり、match 規則の保護対象。
+   案: `dist/1.2.<rev>-preview.<N>` — 最終形は実装時に PO と確定)。実ソースコミットに
+   タグを打ち、GitHub Release(**prerelease フラグ付き**)として release set 一式
+   (nupkg ×3 + VSIX + README + release-info.json、zip 化の要否も実装時に確定)を
+   assets に添付する。実ソースコミット上のタグなので GitHub が自動添付する
+   Source code アーカイブも正しい中身になる。
+4. **制約の明文化**: 「リリースタグは v 非開始」「契約修正前の世代はタグ付け不可」を
+   `DISTRIBUTION.md` へ追記する。
 
 受け入れ基準:
 
-1. Nemerle.Peg / ComputationExpressions の評価レポートと PO の go/no-go 判断が log に記録される。
-2. go としたライブラリは core でビルドされ、代表サンプル(Peg なら snippets 内の
-   パーサーサンプル等)が .NET 10 で動作する。
-3. nupkg が local feed から Sdk プロジェクトの `PackageReference` で consume できる。
-4. 既存パイプライン(stage2/3、testsuite、LSP)に回帰なし。
+1. fixture(使い捨て clone)で: (a) 既存タグ(`v1.2`)のみの状態で修正前後の describe
+   結果が不変(機能的 no-op の証明)、(b) リリースタグを HEAD に打っても
+   AssemblyVersion / A2 期待値 / `build-from-boot.ps1` の全チェーンが不変。
+2. §5-2 の回帰ゲート green(testsuite 全数 + stage2/stage3 + CLR4 スモーク)。
+3. 修正後世代の release set が `pack-release.ps1` で封緘され、`release-info.json` の
+   commit とタグの指すコミットが一致する。
+4. GitHub Release(prerelease)が発行され、**別環境で release page からダウンロードした
+   asset だけを使い** `packaging/README.md` の手順どおり install → `dotnet new` →
+   build → run が通る。
+5. `DISTRIBUTION.md` にタグ契約が記録される。
 
-リスク: **中〜大**。規模が大きく(Peg 125 files)、マクロ API の CoreCLR 互換性が未知の
-ため工数が不確実。ただしコンパイラー本体無改修で閉じる見込みのため失敗しても他 WP に
-波及せず、評価ステップで早期に打ち切れる。Statechart(342 files)は今回スコープ外
-(評価結果次第で次期に提案)。
+リスク: **小〜中**。macro 改修は共有ソースだが、変更は describe 引数の追加のみで
+既存タグ構成では機能的 no-op(受け入れ基準 1a で証明)。ビルド機の git が
+`--match`/`--exclude` を解さない場合(git 2.13 未満)は macro 内のタグ名フィルター
+(describe 出力の後処理)で同等を実現する代替に切替。旧世代にタグを打てない制約は
+受容し、明文化(成果物 4)で対処。
 
 ### WP-N5: Linux 実地検証とテスト基盤の cross-platform 化
 
@@ -403,42 +424,40 @@ Linux 実行が不成立だった場合、WP-N6 は「checked-in stage2(core フ
 始める」構成に縮小する(stage1→stage2 の再現だけを諦め、CI は stage2 以降のみ担当)。
 macOS は今回も対象外(バックログ)。
 
-### WP-N6(任意・go/no-go 判断付き): 最小 CI(Linux ベース、checked-in stage1 起点)
+### WP-N6(任意・go/no-go 判断付き): 最小 CI(Linux、boot-net10 起点)
 
-位置づけ: バックログ寄りだが、最小限の Linux ベース CI に限って本フェーズに任意で置く。
-作業ボリュームの不確実性が懸念のため、**WP-N5 完了時点で go/no-go を PO と判断**する。
+位置づけ: バックログ寄りの任意 WP。**WP-N4(タグ契約)完了を前提**とする
+(CI も describe 由来の版整合検査に乗るため、契約が動く前に workflow を固めない)。
 
-**アーキテクチャ**: `boot-4.0\` と同じパターンで、**現時点の stage1 成果物
-(net4 フレーバー、`Nemerle.dll`/`Nemerle.Compiler.dll`/`Nemerle.Macros.dll`/`ncc.exe`)を
-リポジトリにチェックインする**。CI(Linux 含む)は boot-4.0 → stage1 の生成ステップ
-(csc・GAC 上の .NET Framework v4.0 参照アセンブリ等、Windows/CLR4 専用ツールが必要)を
-毎回実行せず、チェックイン済み stage1 から `dotnet exec` のみで stage2 → stage3・
-testsuite・LspServer/ProjectInfo テストまで到達する。boot-4.0 → stage1 の再生成は
-ncc/lib/macros ソースが変わった際に**手動または別スケジュールで Windows 上で行い**、
-更新した stage1 を再チェックインする(WP-N1 の A2 版一致チェックを、チェックイン済み
-stage1 がソースツリーに対して古すぎないかの検出にも流用する)。
-本アーキテクチャの前提(stage1 の Linux 上 `dotnet exec` 実行可否)は WP-N5 で検証する。
+アーキテクチャ前提(stage1 成果物の保持と Linux `dotnet exec` 実行)は WP-N5
+(42 §4・§6)と **boot-net10**(43: orphan ブランチの stage1 seed +
+`build-from-boot.ps1`、Ubuntu 26.04 実 VM で新規 clone → release set 生成まで完走)で
+実証・実装済み。seed を orphan ブランチに置くのは main の describe を動かさないため
+(WP-N4 背景と同根)。本 WP の作業は workflow 化のみ。
 
 スコープ(go の場合、最小に固定):
 
-- GitHub Actions の Linux runner で、チェックイン済み stage1 から
-  `dotnet exec <ncc> /from-file:<rsp>` を実行して stage2(+ 可能なら stage3)を生成し、
-  testsuite と LspServer / ProjectInfo テスト一式を実行する workflow。
-- boot-4.0 → stage1 の生成自体と CLR4 スモークは CI の対象に**含めない**
-  (Windows/CLR4 専用ツールが必要なため。stage1 更新時の手動実行として引き続き
-  回帰ゲートを維持する)。
-- WP-N5 で stage1 の Linux 実行が不成立と判明した場合は、起点を
-  checked-in stage2(core フレーバー)に繰り下げ、CI は stage2→stage3 とテストのみを
-  担当する(stage1→stage2 の再現は CI スコープ外のまま手動回帰ゲートに残す)。
+- GitHub Actions の Linux runner で、clone → `build-from-boot.ps1` のチェーン
+  (seed 検証 → stage2 → libs → pack)と LspServer / ProjectInfo テストを push/PR で
+  実行する workflow。seed がソースツリーに対して古い場合の警告は既存の A2 流用検査
+  (boot-info.json 世代照合)をそのまま使う。
+- **testsuite 全数は CI 対象に含めない**: ハーネス(`Nemerle.Compiler.Test.exe`)が
+  CLR4 実行ファイルで Linux 実行不可(42 §8 の申し送り)。ハーネスの core 移植は
+  バックログ(§10-1)であり、本 WP で扱わない。
+- boot-4.0 → stage1 の再生成と CLR4 スモークも従来どおり CI 対象外
+  (Windows/CLR4 専用ツールが必要。seed refresh 時の手動回帰ゲートとして維持)。
+- (**stretch、余裕があれば**)リリースタグ push を起点に `build-from-boot.ps1` で
+  release set を生成し、GitHub Release へ assets を自動添付する release workflow。
+  WP-N4 で確立する手動リリース手順の自動化であり、成果物・検証内容は同一。
 
-受け入れ基準(go の場合): push/PR で自動実行され green。実行時間の目安 15 分以内。
-チェックイン済み stage1(または stage2)がソースツリーに対して古い場合、workflow が
-検出して警告する。no-go の場合: 判断理由を log に記録しバックログ(§10-1)へ。
+受け入れ基準(go の場合): push/PR で自動実行され green。実行時間の目安 15 分以内
+(超える場合は実測を log に記録しスコープを再判断)。no-go の場合: 判断理由を log に
+記録しバックログ(§10-1)へ。stretch は未実施でも本 WP の完了を妨げない。
 
-リスク: **中**。CI 環境での .NET 10 SDK / VS Code headless / テスト依存の整備量が
-読みにくい。go/no-go 判断点とスコープ固定で計画倒れ・肥大化を防ぐ。
-checked-in stage1(または stage2)の鮮度管理(WP-N2 等でソースを変更した後に更新を
-忘れる)が新たな運用負荷になるため、A2 の版一致チェックによる自動検出を必須とする。
+リスク: **小〜中**。残る不確実性は
+runner 上の環境整備量(.NET 10 SDK / pwsh / npm / テストハーネス)と実行時間。
+seed 鮮度の運用は boot-net10 の refresh ritual として既に存在し、CI はそれを検出する
+側に回るため新たな運用負荷は増えない。
 
 ## 7. テストマトリクス
 
@@ -452,28 +471,21 @@ checked-in stage1(または stage2)の鮮度管理(WP-N2 等でソースを変�
 | 報告事象の挙動確認(新規) | 再現手順・発生条件の確立と E7/E8 への合流可否の切り分け(WP-N2 トラック 3) |
 | 既存 raw LSP 29 + bundled server + Extension Host | engine/コンパイラー改修の回帰ゲート(WP-N2 以降共通) |
 | testsuite 全数(636) | 分類 A の Linq 起因分の救済、期待値二重化、新規 regression 0(WP-N3) |
-| Peg / ComputationExpressions のサンプル | go 判断後の .NET 10 動作(WP-N4、実施した場合) |
+| リリースタグ fixture(使い捨て clone、新規) | 非 `v` タグを打っても describe / AssemblyVersion / A2 期待値 / build-from-boot が不変(WP-N4) |
+| GitHub Release asset からの install | 別環境で release page の asset のみから README 手順どおり install → build → run(WP-N4) |
 | Linux clean-machine 相当 | VSIX install → 全 language features(WP-N5) |
 | CLR4 hello/hello2 + boot ビルド | CLR4 スモーク(共有ソース改修時、全 WP 共通) |
 
-## 8. 実装順序
+## 8. 実装順序と現在地
 
-1. **WP-N1**(再現性)。最小工数で以降の全 WP の回帰検証を強化する
-   (バイト一致が使えると「改修の無影響」を機械的に示せる)。版ハザード解消は
-   WP-N2 で Stage リビルドが発生する前に済ませておく必要がある。
-   ※着手順が先なだけで、**フェーズの優先度は WP-N2 が最上位**。
-2. **WP-N2**(engine 品質: E7 / E8 / 報告事象の 3 トラック)。実際の利用で体感されている
-   品質問題であり、E8 は将来の rename / codeAction の前提でもある。Stage リビルドを
-   伴う可能性が最も高いため、パッケージ再 pack の連鎖をライブラリ WP より先に済ませる。
-   工数が競合する場合は WP-N3 以降を縮小してでも本 WP を完遂する。
-3. **WP-N3**(Nemerle.Linq + testsuite)。WP-N2 で確定したコンパイラー世代の上で
-   ライブラリを積む。
-4. **WP-N4**(Peg 等の評価→移植)。**優先度は本計画で最下位**。評価は WP-N3 と
-   並行可能(読み取り調査のみのため)だが、実装は他 WP と競合したら後回し、
-   場合によっては WP-N からドロップ(§6 WP-N4)。
-5. **WP-N5**(Linux 実地)。機能・ライブラリが出揃った状態で実地検証する方が
-   検証範囲が広く、手戻りがない。
-6. **WP-N6**(最小 CI)。WP-N5 の cross-platform 化が前提。go/no-go を判断。
+1. **WP-N1**(再現性)— 完了(log 37)。
+2. **WP-N2**(engine 品質: E7 / E8 / 報告事象の 3 トラック)— 完了(log 38/39)。
+3. **WP-N3**(Nemerle.Linq + testsuite)— 完了(log 40。release set 1.2.627-preview.1 封緘)。
+4. **WP-N5**(Linux 実地 + cross-platform 化)— 完了(log 42)。フォローアップとして
+   **boot-net10**(orphan ブランチの stage1 seed + `build-from-boot.ps1`、log 43)を実施。
+5. **WP-N4**(版タグ契約 + GitHub Release)。WP-N6 より先が必須 —
+   タグ契約は CI の版整合検査と release workflow(stretch)の前提。
+6. **WP-N6**(最小 CI)。WP-N4 完了後に go/no-go を判断。
 
 ## 9. リスクと対策
 
@@ -484,15 +496,13 @@ checked-in stage1(または stage2)の鮮度管理(WP-N2 等でソースを変�
 | 共有ソース改修による CLR4 回帰 | testsuite 全数 + stage2/3 バイト一致 + CLR4 スモークの回帰ゲート(§5-2)。VsIntegration 全体 grep(§5-5) |
 | Stage リビルドで版が進み package 再 pack が必要になる | WP-N1 の版一致チェックで混在を機械検出。provenance(ncc-info.json)で照合 |
 | Nemerle.Linq の式ツリー生成に CoreCLR 挙動差 | NET_4_0 ゲートで分岐し CLR4 回帰ゲートで検証。不成立なら理由を log に記録して撤退 |
-| Peg 等の工数爆発 | 評価ステップ先行 + go/no-go(§5-3)+ WP-N からのドロップ選択肢(優先度最下位)。コンパイラー本体無改修で隔離 |
+| リリースタグ導入が describe 由来の版契約を壊す | macro と A2 検査スクリプトの除外規則を同一 WP で同期し、fixture で不変性を証明(WP-N4)。リリースタグは `v` 非開始 + 契約修正後の世代のみに限定 |
 | Linux 固有の engine 問題の再発 | WP-N5 は「洗い出しが目的」と位置づけ、修正は WP-N2 と同じ回帰ゲートで実施 |
 | 最小 CI の作業量が想定超過 | WP-N6 は任意 + スコープ固定 + go/no-go。no-go でもバックログに残す |
 | 期待値二重化で testsuite の保守が複雑化 | 二重化はランタイム差のある ~9 件に限定し、方式を log で固定 |
 
 ## 10. バックログ案(WP-N 完了後の優先順位)
 
-**このリストも未合意である。** 2026-07-16 のヒアリングで示された PO の現時点の考え方を
-反映した案であり、本ドラフトとともに見直し・合意する。
 WP-O(公開フェーズ)を最優先とし、その後は以下:
 
 **WP-O: 公開フェーズ**(本計画完了後): nuget.org 公開(F1)、
@@ -502,7 +512,9 @@ WP-O(公開フェーズ)を最優先とし、その後は以下:
 
 バックログ(優先度順):
 
-1. 最小 CI の本格化(WP-N6 を no-go とした場合はここが起点)。
+1. 最小 CI の本格化(WP-N6 を no-go とした場合はここが起点)。testsuite ハーネス
+   (`Nemerle.Compiler.Test.exe`、CLR4 実行ファイル)の core 移植もここ —
+   Linux CI で testsuite 全数を回す前提(42 §8 の申し送り)。
 2. エディター機能第2弾: semantic tokens(マクロ拡張キーワードの動的彩色は TextMate では
    原理的に不可能で価値明確)/ signatureHelp / documentHighlight / formatting(E1)。
 3. rename / codeAction(E1 の残り): WP-N2 の E8 解消を前提に、WorkspaceEdit 基盤を
@@ -518,7 +530,8 @@ WP-O(公開フェーズ)を最優先とし、その後は以下:
 9. multi-root / 複数 project(E2。project ごとの server process 分離を優先比較)。
 10. その他小粒: A4 / A6 / B5 / D5 / D6 / E3 / E4 / E5 / E9 / E10 / E11 / F4、
     Statechart 等の追加ライブラリ評価、macOS 実地検証。
-    WP-N4 を WP-N からドロップした場合の Peg / ComputationExpressions もここが受け皿。
+    Peg / ComputationExpressions の評価と移植もここ(WP-N には含めない。着手する場合は
+    §5-3 の評価先行方式を適用する)。
 
 ## 11. 参照文書
 

@@ -139,6 +139,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
 | WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | **WP-M1〜M6 完了(2026-07-15)= WP-M 完了** | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md / 34-devenv2-wp-m5-log.md / 35-devenv2-wp-m6-log.md |
+| WP-N | 公開前の品質固めと既知制約の解消(ビルド再現性・engine 品質・Nemerle.Linq/testsuite・Linux 実地・版タグ契約 + GitHub Release・最小 CI) | —(計画後) | 進行中 | 36-prerelease-quality-plan.md / 37-prerelease-wp-n1-log.md / 38-prerelease-wp-n2-log.md / 39-prerelease-wp-n2-log.md / 40-prerelease-wp-n3-log.md / 42-prerelease-wp-n5-log.md / 43-boot-net10-log.md |
 
 ## 作業ログ
 
