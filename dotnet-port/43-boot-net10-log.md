@@ -129,8 +129,12 @@ boot-net10 + tags)からの clone で実リモートと同じ ref 形状を再�
 (チェーンの各段は Windows での常用経路そのもので、スクリプト固有部は OS 非依存の
 git/パス操作のみ。publish-boot.ps1 は Windows で実測済み)。
 
-(https clone での煙テストは、オーナーが `wip/dotnet-port` と `boot-net10` を push した後に
-別途 1 回実施する — bundle では「GitHub に実際に上がっているか」だけは検証できないため。)
+**https clone 煙テスト(push 後、2026-07-17 実施): PASS。**
+`git clone https://github.com/matarillo/nemerle.git` → `git checkout wip/dotnet-port`
+(tip `a93d4bc0b` = 世代 631)→ `pwsh dotnet-port/build-from-boot.ps1` が
+GitHub 上の `origin/boot-net10`(seed 630)を解決し、pinned worktree 経路で
+release set 1.2.630-preview.1 一式を `dist/release-from-boot` に生成した。
+bundle では検証できない「GitHub に seed が実在すること」まで確認済み。
 
 ## 5. 運用(メンテナーの refresh 儀式)
 
