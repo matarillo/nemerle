@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "flavor": "stage1 (net-4.0 flavor, runs on CoreCLR via dotnet exec)",
+  "generation": {
+    "commit": "8bdbacbb0f39a4a8a90673f1d1ce5dc9e4b25931",
+    "describe": "v1.2-630-g8bdbacbb0",
+    "nemerleAssemblyVersion": "1.2.0.630"
+  },
+  "builtOnUtc": "2026-07-17T07:20:10Z",
+  "files": {
+    "ncc.exe": "493eb4ad00f17be44e5116da48816055913f117daf7d87a4f9ee6edf8e837b55",
+    "ncc.runtimeconfig.json": "8e0aeeb1f538543aab9cb2f6ed2cd66941ba7219bbd0d44cb4eba8db8182a4e6",
+    "Nemerle.dll": "367e3521932e8d037777a1f3b5e6cf06ed41a061fd91891930e02650f5097944",
+    "Nemerle.Compiler.dll": "eaddfb1c0340c11acfc04b244b0e942f8fbe8e375ac87636c461203317e9ce5d",
+    "Nemerle.Macros.dll": "9c584c940480d1d415a62f63108779abcbd91de98e93dd3a0cbb86428910fc58",
+    "Nemerle.CoreEmit.dll": "12cce0317b2c8135eca0a0c90dda27b6c540adb46362378efcd31d09f9f14cd5"
+  }
+}
