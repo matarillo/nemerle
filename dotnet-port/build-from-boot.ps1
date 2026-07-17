@@ -15,7 +15,7 @@
 #     (pack-release.ps1 refuses to seal a release from a dirty one).
 #   - PINNED WORKTREE, when the generations differ (the common case right after a fresh clone,
 #     since the seed was published from whatever commit last had Stage1 rebuilt on Windows):
-#     adds a `git worktree` at bin/boot-build-tree, checked out at the seed's own commit, and
+#     adds a `git worktree` at .boot-build-tree, checked out at the seed's own commit, and
 #     builds there instead -- so the sources match the compiler the seed actually is. The
 #     worktree path is fixed (not a temp directory) so that repeated runs check out to the same
 #     absolute path: generated binaries embed their checkout path (see dotnet-port's WP-N5
@@ -28,7 +28,7 @@
 # Usage:
 #   pwsh dotnet-port/build-from-boot.ps1                  # boot-net10 (or origin/boot-net10)
 #   pwsh dotnet-port/build-from-boot.ps1 -Branch other-seed-branch
-#   pwsh dotnet-port/build-from-boot.ps1 -KeepWorktree     # leave bin/boot-build-tree in place
+#   pwsh dotnet-port/build-from-boot.ps1 -KeepWorktree     # leave .boot-build-tree in place
 #                                                           # for inspection/debugging
 
 param(
@@ -120,7 +120,10 @@ if ($describeNow -eq $G.describe) {
     $usingWorktree = $false
 }
 else {
-    $WorktreeDir = Join-Path $RepoRoot "bin/boot-build-tree"
+    # NOT under bin/: the VS Code extension's project discovery (and its unit-test fixtures,
+    # which npm run package executes inside this worktree) excludes any path with a bin/obj/
+    # dist/node_modules segment, so a worktree under bin/ makes those tests structurally fail.
+    $WorktreeDir = Join-Path $RepoRoot ".boot-build-tree"
     if (Test-Path $WorktreeDir) {
         Write-Host "Removing existing worktree at $WorktreeDir ..."
         & git -C $RepoRoot worktree remove --force $WorktreeDir 2>$null
