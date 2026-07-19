@@ -157,6 +157,21 @@ try {
     & git -C $RepoRoot rev-parse --verify --quiet "refs/heads/$Branch" | Out-Null
     $branchExists = ($LASTEXITCODE -eq 0)
 
+    # WP-N4 follow-up: a checkout that only has the remote-tracking ref (the shape any fresh
+    # clone leaves behind) must NOT fall into the create-a-new-orphan-root path below -- that
+    # would silently start a second, disconnected history whose push force-overwrites (and
+    # thus discards) every previously published seed commit. Recreate the local branch from
+    # origin's instead, so the new seed commit lands on top of the published history.
+    if (-not $branchExists) {
+        & git -C $RepoRoot rev-parse --verify --quiet "refs/remotes/origin/$Branch" | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Local branch '$Branch' is missing but 'origin/$Branch' exists; creating the local branch from it."
+            & git -C $RepoRoot branch $Branch "origin/$Branch"
+            if ($LASTEXITCODE -ne 0) { throw "'git branch $Branch origin/$Branch' failed (exit $LASTEXITCODE)" }
+            $branchExists = $true
+        }
+    }
+
     try {
         if ($branchExists) {
             Write-Host "Branch '$Branch' already exists; checking it out into a worktree ..."

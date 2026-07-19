@@ -496,8 +496,9 @@ CLR4/Windows を外す**(残る CLR4 依存は凍結済みの創世 boot-4.0 の
 3. **WP-N3**(Nemerle.Linq + testsuite)— 完了(log 40。release set 1.2.627-preview.1 封緘)。
 4. **WP-N5**(Linux 実地 + cross-platform 化)— 完了(log 42)。フォローアップとして
    **boot-net10**(orphan ブランチの stage1 seed + `build-from-boot.ps1`、log 43)を実施。
-5. **WP-N4**(版タグ契約 + seed 番地付け + 初回 GitHub Release)。以降の前提 —
-   タグ契約は CI の版整合検査と release workflow の前提。
+5. **WP-N4**(版タグ契約 + seed 番地付け + 初回 GitHub Release)— 完了(log 41。
+   release/1.2.635-preview.1 を GitHub Release(prerelease)として発行、受け入れ 6 項目充足)。
+   以降の前提 — タグ契約は CI の版整合検査と release workflow の前提。
 6. **WP-N7**(版ピン留め + orphan 廃止)の**評価 log 先行 → go/no-go**。この結論が
    WP-N6 の seed 機構(orphan 継続か、版ピン留め後の新機構か)を決めるため、N6 より先に判断する。
 7. **WP-N6**(最小 CI)。N7 が go なら版ピン留め後の seed 機構上に、no-go なら orphan ベースで

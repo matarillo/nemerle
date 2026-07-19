@@ -392,5 +392,9 @@ the version of every later commit. See the tag-contract section in `dotnet-port/
 4. Publish `dist/release-from-boot`'s files as the assets of a GitHub prerelease on that tag:
    `gh release create release/1.2.<rev>-preview.<N> --prerelease <files...>`
 
-Reproducing a published release later is step 3 again, in a fresh clone at the same path; the
-result byte-matches the published assets there (and matches by version/content anywhere else).
+Reproducing a published release later is step 3 again, in a fresh clone at the same path. The
+result matches the published assets by version and content; the Nemerle-built binaries inside
+byte-match when built from the same absolute path. Whole-file hashes of the .nupkg/.vsix
+containers do NOT match — NuGet's package metadata (psmdcp), the provenance pack timestamps,
+and the C#-built helper assemblies' PE headers change per build — so verify a reproduction by
+version plus per-entry content hashes, not by hashing the container files.

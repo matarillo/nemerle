@@ -504,6 +504,14 @@ pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>
 ```
 
 がタグ名から seed(`seed/1.2.<rev>`)と版 suffix を導出し、常に pinned worktree
-(`<cloneRoot>\.boot-build-tree`)でビルドする。**バイト一致は同一マシン・同一絶対パスの
-clone でのみ成立**(WP-N5 §5.1 のチェックアウトパス埋め込みのため)。他環境では版・内容の
-一致のみが保証範囲。詳細な設計と実測は `dotnet-port\41-prerelease-wp-n4-log.md`。
+(`<cloneRoot>\.boot-build-tree`)でビルドする。再現の一致水準(41 log §7.8.1 の実測):
+
+- **版・構成・provenance の同一性フィールドは完全一致**。
+- **Nemerle 製アセンブリ(ncc.exe / Nemerle*.dll / Nemerle.Linq.dll)と静的コンテンツは
+  バイト一致**(同一マシン・同一絶対パスの clone が条件 — WP-N5 §5.1 のチェックアウト
+  パス埋め込みのため。他環境では版・内容一致のみ)。
+- nupkg / VSIX の**ファイル全体のハッシュは一致しない**: NuGet psmdcp(GUID+時刻)、
+  provenance の `packedAtUtc`、C# 製補助アセンブリの PE メタデータ(タイムスタンプ/MVID)が
+  ビルドごとに変わるため。照合は「版 + zip 内エントリー単位の内容ハッシュ」で行うこと。
+
+詳細な設計と実測は `dotnet-port\41-prerelease-wp-n4-log.md`。

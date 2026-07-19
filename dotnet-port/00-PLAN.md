@@ -139,7 +139,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
 | WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | **WP-M1〜M6 完了(2026-07-15)= WP-M 完了** | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md / 34-devenv2-wp-m5-log.md / 35-devenv2-wp-m6-log.md |
-| WP-N | 公開前の品質固めと既知制約の解消(ビルド再現性・engine 品質・Nemerle.Linq/testsuite・Linux 実地・版タグ契約 + GitHub Release・最小 CI) | —(計画後) | 進行中 | 36-prerelease-quality-plan.md / 37-prerelease-wp-n1-log.md / 38-prerelease-wp-n2-log.md / 39-prerelease-wp-n2-log.md / 40-prerelease-wp-n3-log.md / 42-prerelease-wp-n5-log.md / 43-boot-net10-log.md |
+| WP-N | 公開前の品質固めと既知制約の解消(ビルド再現性・engine 品質・Nemerle.Linq/testsuite・Linux 実地・版タグ契約 + GitHub Release・最小 CI) | —(計画後) | 進行中(N1/N2/N3/N5/N4 完了。残り N7 評価 → N6) | 36-prerelease-quality-plan.md / 37-prerelease-wp-n1-log.md / 38-prerelease-wp-n2-log.md / 39-prerelease-wp-n2-log.md / 40-prerelease-wp-n3-log.md / 41-prerelease-wp-n4-log.md / 42-prerelease-wp-n5-log.md / 43-boot-net10-log.md |
 
 ## 作業ログ
 
@@ -724,3 +724,15 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   (provenance / package layout / targets byte 同一性 / SDK 評価構造)、`npm test` 22/22、
   Extension Host trusted 4 + untrusted 1 + **sdk 1(新規 `test:sdk`)** + vsix 1、audit 0 件、
   `dotnet list package --vulnerable` 全 7 project clean。詳細は `35-devenv2-wp-m6-log.md`。
+- 2026-07-19: **WP-N4 完了**(版タグ契約 + GitHub Release 初回発行)。describe レシピに
+  `--match "v[0-9]*"` を全 8 箇所(macro / A2 replay / MSBuild task / 世代比較 2 / provenance 3)へ
+  同期し、`release/1.2.<rev>-preview.<N>`(実ソースコミット)・`seed/1.2.<rev>`(orphan seed)の
+  v 非開始 lightweight タグ契約を確立。publish-boot が seed タグを付与、pack-release が
+  release-info.json に seed 対応(orphan hash / タグ / 世代)を記録、build-from-boot に
+  `-Seed` / `-ReleaseTag` / `-PackageVersionSuffix`(発行済みリリースの再現経路、常時 pinned
+  worktree)。世代 635(0cab66afe)で Stage1 リビルド → §5-2 回帰ゲート全 green
+  (stage2×2 / stage3==stage4 バイト一致、testsuite 614/636 = baseline、CLR4 スモーク)→
+  seed refresh(seed/1.2.635)→ **release/1.2.635-preview.1 を GitHub Release(prerelease)
+  として発行**。GitHub asset のみからの install→new→build→run、GitHub からの新規 clone +
+  `-ReleaseTag` による再現まで検証。発見: boot-4.0 の旧レシピ焼き込み(release タグ可視だと
+  Stage1 リビルド不可 — 一時退避運用、根治は WP-N7)ほか。詳細は `41-prerelease-wp-n4-log.md`。
