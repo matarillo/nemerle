@@ -57,7 +57,10 @@ function Read-ArchiveEntry {
 Push-Location $RepoRoot
 try {
     $commit   = (& git rev-parse HEAD).Trim()
-    $describe = (& git describe --long --always --dirty).Trim()
+    # WP-N4 tag contract: annotated-only describe (no --tags), so release/seed lightweight tags
+    # are already invisible here -- --match 'v[0-9]*' is defense in depth, so an accidentally
+    # annotated release/seed tag still can't shift this provenance string.
+    $describe = (& git describe --long --always --dirty --match 'v[0-9]*').Trim()
 }
 finally {
     Pop-Location
@@ -154,6 +157,50 @@ history, even though its recorded commit matched. Rebuild the toolchain from HEA
 }
 
 # ---------------------------------------------------------------------------
+# 3c. WP-N4: record the release <-> seed-commit correspondence, machine-readably, so a
+#     published release can be reproduced later from its seed (dotnet-port/build-from-boot.ps1's
+#     -ReleaseTag / -Seed read this back). Best-effort only: an environment that built Stage1
+#     directly on Windows has no boot-net10 seed at all, which is a legitimate throwaway path --
+#     so a missing or mismatched seed just warns, it must never block the release.
+# ---------------------------------------------------------------------------
+$seedInfo = $null
+$seedRef = $null
+foreach ($candidate in @("boot-net10", "origin/boot-net10")) {
+    & git -C $RepoRoot rev-parse --verify --quiet $candidate | Out-Null
+    if ($LASTEXITCODE -eq 0) { $seedRef = $candidate; break }
+}
+
+if ($null -eq $seedRef) {
+    Write-Warning "No 'boot-net10' or 'origin/boot-net10' ref found -- release-info.json will record seed = null."
+}
+else {
+    $seedBootInfoText = & git -C $RepoRoot show "${seedRef}:boot-info.json" 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($seedBootInfoText)) {
+        Write-Warning "Could not read boot-info.json from '$seedRef' -- release-info.json will record seed = null."
+    }
+    else {
+        $seedBootInfo = $seedBootInfoText | ConvertFrom-Json
+        $seedCommit = (& git -C $RepoRoot rev-parse "${seedRef}^{commit}").Trim()
+        if ($seedBootInfo.generation.commit -ne $commit) {
+            Write-Warning "'$seedRef' (orphan commit $seedCommit) was seeded from $($seedBootInfo.generation.commit), not this release's commit ($commit) -- release-info.json will record seed = null."
+        }
+        else {
+            $seedTag = (& git -C $RepoRoot tag --points-at $seedCommit -l 'seed/*') | Select-Object -First 1
+            if (-not $seedTag) { $seedTag = $null }
+            $seedInfo = [ordered]@{
+                commit     = $seedCommit
+                tag        = $seedTag
+                generation = [ordered]@{
+                    commit                 = $seedBootInfo.generation.commit
+                    describe               = $seedBootInfo.generation.describe
+                    nemerleAssemblyVersion = $seedBootInfo.generation.nemerleAssemblyVersion
+                }
+            }
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # 4. Record it.
 # ---------------------------------------------------------------------------
 $releaseInfo = [ordered]@{
@@ -163,6 +210,9 @@ $releaseInfo = [ordered]@{
     # The identity the two halves must share at run time; the server warns if a project's
     # toolchain disagrees with it (29-devenv2-plan.md section 6.8).
     nemerleAssemblyVersion = $toolchainInfo.nemerleAssemblyVersion
+    # WP-N4: which boot-net10 seed commit (if any) this release's toolchain was ultimately
+    # built from -- null when there is none (see the 3c comment above).
+    seed                   = $seedInfo
     extension              = [ordered]@{
         file    = $vsixName
         version = $extensionVersion

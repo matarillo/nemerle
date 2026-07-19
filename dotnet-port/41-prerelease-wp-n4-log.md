@@ -136,6 +136,110 @@ CLR4 不要・Linux で再現が回る。
 独立に価値を持つ。seed 番地付けも、WP-N7 が seed 機構を作り替えても「orphan 時代に発行済みの
 リリースを永続的に再現する」保証として残る。詳細は `44-prerelease-wp-n7-log.md`。
 
-## 6. 実装結果
+## 6. 仮実装計画(2026-07-19 着手時。以降の節が実装結果)
 
-(着手時に追記)
+### 6.1 着手時実測で確定した前提
+
+- HEAD `c200bef6c` = `v1.2-634-gc200bef6c`(世代 634)。実装コミット後の世代は 635 見込み。
+- 既存タグ `v0.0` / `v1.0` / `v1.1b` / `v1.2` は **4 本とも lightweight**(`git cat-file -t` = commit)。
+- `git describe --tags --long --match 'v[0-9]*'` = `v1.2-634-gc200bef6c`(この環境の git で
+  no-op を再実証。§2 の 633 時点の実測と同じ)。
+- pack 系 provenance の `git describe --long --always --dirty`(`--tags` 無し = annotated 限定)は
+  annotated タグが 1 本も無いため**常に `--always` fallback = bare commit hash**(実測 `c200bef6c`)。
+- `git describe` 呼び出し箇所の全数調査(grep)の結果、レシピは 3 系統 8 箇所:
+  1. **版計算**: `macros\GeneratedAssemblyVersion.n`(configCommon / configCmd)、
+     `dotnet-port\assembly-version-check.ps1`(replay)、`tools\msbuild-task\GetGitTagRevision.cs`
+     (同一レシピの C# 複製。利用者は `misc\packages\wix\nemerle.wixproj` と
+     `snippets\VS2010\Nemerle.VisualStudio.csproj` のみ = 本ポートでは死んでいるが同期する)。
+  2. **世代比較**: `publish-boot.ps1`(boot-info.json の generation.describe)、
+     `build-from-boot.ps1`(in-place / worktree 判定)。macro と同じ `--tags --long` レシピ。
+  3. **provenance 記録**: `pack-tool.ps1`(ncc-info.json)、`vscode-nemerle\pack-server.ps1`
+     (bundle-info.json)、`pack-release.ps1`(release-info.json + dirty 検査)。
+  - 対象外: `tools\TCSetBuildNumber.cmd`(TeamCity 遺物、死んでいる。無改修)。
+
+### 6.2 設計判断(着手時に追加・確定したもの)
+
+**(a) `--match` は 3 系統 8 箇所すべてに同期する。** 版計算・世代比較は契約の本体。
+provenance 記録(annotated 限定)は現状 no-op だが、release タグをうっかり annotated で
+作った場合に ncc-info / bundle-info の describe 文字列が変わり nupkg / VSIX の**バイトが
+変わる**(= 受け入れ基準 5 の再現を壊す)ため、防御として同期する。
+
+**(b) release/・seed/ タグは lightweight で作る**(タグ契約に追加)。annotated 限定 describe
+への不可視性を二重に保証する。GitHub Release は lightweight タグで問題なく機能する。
+
+**(c) 発見: boot-4.0 の旧 macro バイナリは契約の外に残る(→ §発見事項)。**
+`--match` はソース修正であり、Stage1 を生成する boot-4.0(凍結済みバイナリ)の
+`GeneratedAssemblyVersion` は旧レシピのまま。release タグが祖先に付いたコミットで
+boot-4.0 → Stage1 のフルリビルドを行うと、旧レシピが release タグを拾い、タグ名の
+数字抜き出し(`1.2.635..1` のような不正版)で**ビルドが大声で失敗する**。
+seed/ タグは orphan コミット上で main の祖先に乗らないため旧レシピにも不可視(無害)。
+対処: 運用回避(Stage1 リビルド前にローカル release タグを一時削除)を文書化。根治は
+WP-N7 の版ピン留め。本 WP 自身の手順は「Stage1 リビルド → 最後にタグ」なので影響しない。
+
+**(d) 初回発行物は「再現と同一の経路・同一の絶対パス」で生成する。**
+WP-N5 §5.1 のチェックアウトパス埋め込みにより、バイト一致はビルドパスが一致する場合に
+しか成立しない。そこで初回発行 asset 自体を、canonical path に置いた使い捨て clone 上の
+`build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>` で生成する。再現(受け入れ 5)は
+後日、同じ path への新規 clone + 同じコマンドで、初回と同一条件になる。
+`-ReleaseTag` 指定時は tip の世代が一致していても**常に pinned worktree 経路**
+(`<cloneRoot>\.boot-build-tree`)を使う — in-place だと clone root 直下ビルドになり、
+後日の再現(tip が進んで worktree 経路)とパスがずれてバイト一致が壊れるため。
+バイト一致の保証は「同一マシン・同一 canonical path」に限る(他環境では版・内容一致のみ)。
+
+**(e) preview.N の転送。** `build-from-boot.ps1` に `-PackageVersionSuffix` を追加し
+`pack-tool.ps1` へ転送する。`-ReleaseTag` はタグ名から base(`1.2.<rev>`)と suffix
+(`preview.<N>`)を導出し、seed 既定を `seed/<base>` に、suffix を pack-tool へ渡す。
+整合検証: release タグの指すコミット == seed の generation.commit、および base ==
+seed の nemerleAssemblyVersion(`1.2.0.<rev>` → `1.2.<rev>`)。
+
+**(f) release-info.json の seed 記録。** `pack-release.ps1` が `boot-net10` →
+`origin/boot-net10` の順で seed ref を解決し、その boot-info.json の generation.commit が
+リリースコミットと一致する場合に `seed = { commit(orphan コミット hash), tag(指している
+seed/ タグ名、あれば), generation }` を記録する。一致しない・解決できない場合は警告して
+null 記録(Windows Stage1 直ビルドの throwaway 封緘を塞がない)。
+
+### 6.3 変更ファイル(仮)
+
+| ファイル | 変更 |
+|---|---|
+| `macros\GeneratedAssemblyVersion.n` | describe 2 経路に `--match v[0-9]*` |
+| `dotnet-port\assembly-version-check.ps1` | replay に `--match` 同期 |
+| `tools\msbuild-task\GetGitTagRevision.cs` | 同上(C# 複製の同期) |
+| `dotnet-port\publish-boot.ps1` | `--match` + seed コミットへ `seed/1.2.<rev>` lightweight タグ付与 |
+| `dotnet-port\build-from-boot.ps1` | `--match` + `-Seed` / `-ReleaseTag` / `-PackageVersionSuffix` |
+| `dotnet-port\pack-tool.ps1` | provenance describe に `--match` |
+| `dotnet-port\vscode-nemerle\pack-server.ps1` | 同上 |
+| `dotnet-port\pack-release.ps1` | 同上 + release-info.json へ seed 記録 |
+| `dotnet-port\DISTRIBUTION.md` | タグ契約の節を追加 |
+| `dotnet-port\packaging\README.md` | For maintainers にタグ付け・GitHub Release 手順 |
+
+### 6.4 手順(実行順)
+
+1. コード変更一式を 1 コミット(= リリース対象の実ソースコミット、世代 G)。
+2. fixture 1a: 使い捨て clone で修正前後の describe 不変(git レベル no-op 証明)。
+3. Stage1 フルリビルド(CLR4 msbuild)+ `refresh-stage1-core.ps1`。
+4. §5-2 回帰ゲート: stage2 ×2 独立ビルド + stage3 のマスク無しバイト一致、
+   `build-libs-core.ps1`、testsuite 全数、CLR4 hello/hello2 スモーク。
+   §5-5: VsIntegration / VS2010 grep の影響確認を記録。
+5. `publish-boot.ps1` で seed refresh + `seed/1.2.<G>` タグ。
+6. fixture 1b: 使い捨て clone(bundle 経由、新 seed 入り)で `release/` タグを HEAD に打ち、
+   AssemblyVersion / A2 期待値 / `build-from-boot.ps1` 全チェーンの不変性を確認。
+7. 実ソースコミットに `release/1.2.<G>-preview.1`(lightweight)を打ち、canonical path の
+   clone で `build-from-boot -ReleaseTag` により初回発行 asset を生成。
+8. push(オーナー確認)→ `gh release create --prerelease` で asset 発行。
+9. 受け入れ 4: 別環境相当(clean な一時ディレクトリー + asset のみ)で
+   install → `dotnet new` → build → run。
+10. 受け入れ 5: 同 canonical path への新規 clone(GitHub から)+
+    `build-from-boot -ReleaseTag` で再現し、初回発行物とバイト比較。
+11. DISTRIBUTION.md / packaging README / 本 log の文書化。
+
+### 6.5 リスクと逃げ道(仮計画時点)
+
+- **git バージョン**: `--tags` と `--match` の併用が lightweight タグに正しく効くのは
+  git 2.7 以降(単一 `--match` 自体は太古から)。実行環境(Windows / Ubuntu 26.04)は
+  いずれも遥かに新しく、実測でも確認済み。2.13 未満向けの後処理フォールバック(§3.1)は
+  実装しない(必要になった時点でバックログ)。
+- **`-ReleaseTag` の worktree 強制**が既存の in-place 利用(引数なし)に影響しないこと —
+  引数なしの挙動は完全に従来どおり残す。
+- Stage リビルドで世代が 627/630 から進むため、Windows 側 bin の stage2 / libs / dist の
+  再構築と provenance 整合が必要(WP-N1 の A2 検査が混在を機械検出する)。

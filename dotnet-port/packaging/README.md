@@ -371,4 +371,26 @@ matches the seed's. The output lands at `dotnet-port/dist/release` (in-place cas
 #### Refreshing the boot seed
 
 After rebuilding Stage1 on Windows from the commit you want to seed, run
-`pwsh dotnet-port/publish-boot.ps1` and then `git push origin boot-net10` to publish it.
+`pwsh dotnet-port/publish-boot.ps1` and then push what it tells you to — the branch plus the
+`seed/1.2.<rev>` tag it creates on the new seed commit (e.g.
+`git push origin boot-net10 seed/1.2.635`). The tag pins the seed generation permanently, so a
+published release can name it later even after the branch tip moves on.
+
+#### Tagging and publishing a release (GitHub Releases)
+
+Tag names must NOT start with `v` and must be lightweight — `v*` tags feed the assembly-version
+computation (`git describe --match "v[0-9]*"`), so a release tag that matched it would corrupt
+the version of every later commit. See the tag-contract section in `dotnet-port/DISTRIBUTION.md`.
+
+1. Refresh the boot seed from the release's source commit (previous section) and push it.
+2. Tag the source commit: `git tag release/1.2.<rev>-preview.<N> <commit>` (lightweight), where
+   `1.2.<rev>` is the packaged compiler's base version and `N` is chosen by the operator
+   (see `pack-tool.ps1`'s suffix policy). Push the tag.
+3. Build the assets from a throwaway clone at a stable path (byte-reproduction depends on the
+   absolute build path, so use the same path every time on a given machine):
+   `pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>`
+4. Publish `dist/release-from-boot`'s files as the assets of a GitHub prerelease on that tag:
+   `gh release create release/1.2.<rev>-preview.<N> --prerelease <files...>`
+
+Reproducing a published release later is step 3 again, in a fresh clone at the same path; the
+result byte-matches the published assets there (and matches by version/content anywhere else).

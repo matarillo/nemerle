@@ -42,15 +42,17 @@ namespace Nemerle.Tools.MSBuildTask
     private static void commonStartInfoConfigurator(ProcessStartInfo startInfo)
     {
       // mono git or msysgit with git.exe in PATH
+      // --match "v[0-9]*": same recipe as macros\GeneratedAssemblyVersion.n -- release/seed
+      // tags (not v-prefixed) must stay invisible to the version computation.
       startInfo.FileName = Environment.GetEnvironmentVariable("GIT_PATH") ?? "git";
-      startInfo.Arguments = "describe --tags --long";
+      startInfo.Arguments = "describe --tags --long --match v[0-9]*";
     }
 
     private static void cmdStartInfoConfigurator(ProcessStartInfo startInfo)
     {
       // PATH conatains git.cmd only workaround
       startInfo.FileName = "cmd";
-      startInfo.Arguments = "/C git describe --tags --long";
+      startInfo.Arguments = "/C git describe --tags --long --match v[0-9]*";
     }
 
     private bool executeGit(Action<ProcessStartInfo> startInfoConfigurator, bool reportErrors)

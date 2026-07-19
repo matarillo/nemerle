@@ -29,7 +29,9 @@ function Get-ExpectedNemerleAssemblyVersion {
         [string]$RepoRoot
     )
 
-    $describeOutput = & git -C $RepoRoot describe --tags --long 2>$null
+    # WP-N4 tag contract: --match "v[0-9]*" mirrors the macro exactly -- release/seed tags
+    # (deliberately not v-prefixed) must stay invisible to the version computation.
+    $describeOutput = & git -C $RepoRoot describe --tags --long --match 'v[0-9]*' 2>$null
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($describeOutput)) { return $null }
     $describeOutput = $describeOutput.Trim()
 

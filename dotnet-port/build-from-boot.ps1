@@ -30,31 +30,84 @@
 #   pwsh dotnet-port/build-from-boot.ps1 -Branch other-seed-branch
 #   pwsh dotnet-port/build-from-boot.ps1 -KeepWorktree     # leave .boot-build-tree in place
 #                                                           # for inspection/debugging
+#   pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.635-preview.1   # reproduce a published release
+#   pwsh dotnet-port/build-from-boot.ps1 -Seed seed/1.2.635                     # name a seed directly
 
 param(
     [string]$Branch = "boot-net10",
-    [switch]$KeepWorktree
+    [switch]$KeepWorktree,
+
+    # WP-N4: name the seed directly -- a `seed/1.2.<rev>` tag, a commit sha, or any other
+    # committish -- instead of resolving $Branch's tip. Takes priority over $Branch when set.
+    [string]$Seed = "",
+
+    # WP-N4: reproduce a published release, e.g. release/1.2.635-preview.1. Derives the seed
+    # (seed/<base>) and the pack-tool.ps1 version suffix from the tag name, cross-checks both
+    # against the named seed's own recorded generation, and forces the pinned-worktree build
+    # path (see step 4 below for why).
+    [string]$ReleaseTag = "",
+
+    # Forwarded to pack-tool.ps1 -Pack as -PackageVersionSuffix. Normally derived automatically
+    # from -ReleaseTag; only pass this directly when NOT using -ReleaseTag.
+    [string]$PackageVersionSuffix = ""
 )
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 # ---------------------------------------------------------------------------
-# 1. Resolve the seed ref: prefer a local branch, fall back to the remote-tracking one (the
-#    shape a plain `git clone` of this repo leaves behind), and give an actionable error if
-#    neither exists -- most commonly because this is a --single-branch clone or a source
-#    ZIP/tarball, neither of which fetches any branch other than the default one.
+# 0. WP-N4: -ReleaseTag reproduces a published release. Parse `release/<base>-<suffix>`,
+#    default -Seed to seed/<base> when not given explicitly, and resolve the tag's own commit
+#    here so step 2 below can cross-check it against the named seed's recorded generation.
 # ---------------------------------------------------------------------------
-& git -C $RepoRoot rev-parse --verify --quiet $Branch | Out-Null
-$ref = if ($LASTEXITCODE -eq 0) { $Branch } else { $null }
+$releaseTagCommit = $null
+$releaseTagBase = $null
+if ($ReleaseTag -ne "") {
+    if ($ReleaseTag -notmatch '^release/(?<base>\d+\.\d+\.\d+)-(?<suffix>.+)$') {
+        throw "-ReleaseTag '$ReleaseTag' does not match the expected 'release/<base>-<suffix>' shape (e.g. release/1.2.635-preview.1)."
+    }
+    $releaseTagBase = $Matches['base']
+    $derivedSuffix = $Matches['suffix']
 
-if ($null -eq $ref) {
-    & git -C $RepoRoot rev-parse --verify --quiet "origin/$Branch" | Out-Null
-    if ($LASTEXITCODE -eq 0) { $ref = "origin/$Branch" }
+    if ($PackageVersionSuffix -ne "" -and $PackageVersionSuffix -ne $derivedSuffix) {
+        throw "-PackageVersionSuffix '$PackageVersionSuffix' disagrees with the suffix derived from -ReleaseTag '$ReleaseTag' ('$derivedSuffix'). Pass just -ReleaseTag, or drop -PackageVersionSuffix."
+    }
+    $PackageVersionSuffix = $derivedSuffix
+
+    if ($Seed -eq "") { $Seed = "seed/$releaseTagBase" }
+
+    $releaseTagCommit = & git -C $RepoRoot rev-parse --verify --quiet "refs/tags/$ReleaseTag^{commit}"
+    if ($LASTEXITCODE -ne 0) { throw "Could not resolve tag '$ReleaseTag' in this checkout. If it was published on GitHub but not fetched here, run:`n  git fetch --tags`nand re-run this script." }
+    $releaseTagCommit = $releaseTagCommit.Trim()
+    Write-Host "Reproducing $ReleaseTag (commit $releaseTagCommit, package suffix $PackageVersionSuffix)"
 }
 
-if ($null -eq $ref) {
-    throw "Could not resolve '$Branch' or 'origin/$Branch' in this checkout. If this is a --single-branch clone (or a source archive/ZIP), the boot seed branch was never fetched. Run:`n  git fetch origin ${Branch}:${Branch}`nand re-run this script."
+# ---------------------------------------------------------------------------
+# 1. Resolve the seed ref. -Seed (set directly, or defaulted from -ReleaseTag above) names it
+#    exactly -- a `seed/1.2.<rev>` tag, a commit sha, or any other committish -- and is used
+#    as-is below (git show/archive accept a tag/sha/ref interchangeably). Otherwise fall back to
+#    $Branch: prefer a local branch, then the remote-tracking one (the shape a plain `git clone`
+#    of this repo leaves behind), and give an actionable error if neither exists -- most commonly
+#    because this is a --single-branch clone or a source ZIP/tarball, neither of which fetches
+#    any branch other than the default one.
+# ---------------------------------------------------------------------------
+if ($Seed -ne "") {
+    & git -C $RepoRoot rev-parse --verify --quiet "$Seed^{commit}" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not resolve -Seed '$Seed' in this checkout. If it is a 'seed/*' tag published on GitHub but not fetched here, run:`n  git fetch --tags`nand re-run this script." }
+    $ref = $Seed
+}
+else {
+    & git -C $RepoRoot rev-parse --verify --quiet $Branch | Out-Null
+    $ref = if ($LASTEXITCODE -eq 0) { $Branch } else { $null }
+
+    if ($null -eq $ref) {
+        & git -C $RepoRoot rev-parse --verify --quiet "origin/$Branch" | Out-Null
+        if ($LASTEXITCODE -eq 0) { $ref = "origin/$Branch" }
+    }
+
+    if ($null -eq $ref) {
+        throw "Could not resolve '$Branch' or 'origin/$Branch' in this checkout. If this is a --single-branch clone (or a source archive/ZIP), the boot seed branch was never fetched. Run:`n  git fetch origin ${Branch}:${Branch}`nand re-run this script."
+    }
 }
 Write-Host "Using seed ref: $ref"
 
@@ -72,6 +125,24 @@ if ($bootInfo.schema -ne 1) {
 }
 $G = $bootInfo.generation
 Write-Host "Seed generation: commit $($G.commit) ($($G.describe)), Nemerle assembly version $($G.nemerleAssemblyVersion)"
+
+# ---------------------------------------------------------------------------
+# 2b. WP-N4: with -ReleaseTag, cross-check that the named seed is actually the one the release
+#     was built from -- catches "-Seed points at the wrong generation" before it silently
+#     produces a release set that merely LOOKS like a reproduction.
+# ---------------------------------------------------------------------------
+if ($null -ne $releaseTagCommit) {
+    if ($G.commit -ne $releaseTagCommit) {
+        throw "-ReleaseTag '$ReleaseTag' points at commit $releaseTagCommit, but the seed at '$ref' was built from generation commit $($G.commit) -- this seed does not match the release. Pass the matching -Seed (or omit -Seed to use the default seed/$releaseTagBase)."
+    }
+    if ($G.nemerleAssemblyVersion -notmatch '^(\d+)\.(\d+)\.0\.(\d+)$') {
+        throw "Seed generation's Nemerle assembly version '$($G.nemerleAssemblyVersion)' does not match the expected 'X.Y.0.Z' shape -- cannot cross-check it against -ReleaseTag '$ReleaseTag'."
+    }
+    $seedGenerationBase = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+    if ($seedGenerationBase -ne $releaseTagBase) {
+        throw "-ReleaseTag '$ReleaseTag' base version is $releaseTagBase, but the seed at '$ref' is generation $seedGenerationBase -- this seed does not match the release."
+    }
+}
 
 # ---------------------------------------------------------------------------
 # 3. Expand the seed into bin/boot-net10/ and verify every file's SHA256 against boot-info.json
@@ -107,11 +178,20 @@ Write-Host "Verified $($fileNames.Count) seed files against boot-info.json -> $B
 # 4. Decide the build path: in place if this checkout's generation already matches the seed's,
 #    otherwise a pinned worktree checked out at the seed's own commit. See header for why.
 # ---------------------------------------------------------------------------
-$describeDirty = (& git -C $RepoRoot describe --tags --long --dirty).Trim()
-if ($LASTEXITCODE -ne 0) { throw "'git describe --tags --long --dirty' failed in $RepoRoot (exit $LASTEXITCODE) -- is this a git checkout with at least one tag reachable from HEAD?" }
+# Same recipe as the macro / seed generation (dotnet-port/assembly-version-check.ps1) --
+# --match 'v[0-9]*' keeps release/seed tags invisible to this comparison too.
+$describeDirty = (& git -C $RepoRoot describe --tags --long --dirty --match 'v[0-9]*').Trim()
+if ($LASTEXITCODE -ne 0) { throw "'git describe --tags --long --dirty --match ''v[0-9]*''' failed in $RepoRoot (exit $LASTEXITCODE) -- is this a git checkout with at least one tag reachable from HEAD?" }
 $describeNow = $describeDirty -replace '-dirty$', ''
 
-if ($describeNow -eq $G.describe) {
+# WP-N4: -ReleaseTag always takes the pinned-worktree path below, even when this checkout's own
+# generation already matches the seed's. Byte-identical reproduction depends on an absolute
+# build path (WP-N5): in place builds directly under the clone root, while the worktree path is
+# <clone root>\.boot-build-tree -- if which one runs were allowed to depend on where HEAD
+# happens to be, the first publish and a later reproduction could silently take different paths
+# and never byte-match. -ReleaseTag forces the same path every time. Without -ReleaseTag this
+# decision, and the in-place path in particular, is completely unchanged from before.
+if ($ReleaseTag -eq "" -and $describeNow -eq $G.describe) {
     if ($describeDirty -match '-dirty$') {
         throw "This checkout's generation matches the seed ($describeNow), but the working tree is dirty. pack-release.ps1 requires a clean tree to seal a release. Commit or stash your changes and re-run -- or, if you have not made any changes of your own, simply re-run this script once 'git status' is clean."
     }
@@ -130,7 +210,12 @@ else {
         & git -C $RepoRoot worktree prune 2>$null
         if (Test-Path $WorktreeDir) { Remove-Item -Recurse -Force $WorktreeDir -ErrorAction SilentlyContinue }
     }
-    Write-Host "Generation differs (this checkout is $describeNow, seed is $($G.describe)) -- building in a pinned worktree at commit $($G.commit)."
+    if ($ReleaseTag -ne "") {
+        Write-Host "-ReleaseTag '$ReleaseTag' forces the pinned worktree path (at commit $($G.commit)), regardless of this checkout's own generation ($describeNow)."
+    }
+    else {
+        Write-Host "Generation differs (this checkout is $describeNow, seed is $($G.describe)) -- building in a pinned worktree at commit $($G.commit)."
+    }
     & git -C $RepoRoot worktree add $WorktreeDir $G.commit
     if ($LASTEXITCODE -ne 0) { throw "'git worktree add $WorktreeDir $($G.commit)' failed (exit $LASTEXITCODE) -- is commit $($G.commit) reachable in this clone? (a shallow clone may need 'git fetch --unshallow'.)" }
     $BuildTree = $WorktreeDir
@@ -160,7 +245,10 @@ $SeedCompiler = Join-Path $BootDir "ncc.exe"
 
 Invoke-BootStep -ScriptPath (Join-Path $DotnetPortDir "build-stage2-core.ps1") -ScriptArgs @("-Compiler", $SeedCompiler)
 Invoke-BootStep -ScriptPath (Join-Path $DotnetPortDir "build-libs-core.ps1")
-Invoke-BootStep -ScriptPath (Join-Path $DotnetPortDir "pack-tool.ps1") -ScriptArgs @("-Pack")
+# WP-N4: forward -PackageVersionSuffix (explicit, or derived from -ReleaseTag in step 0) so a
+# reproduction lands on the same package version pack-tool.ps1 would otherwise default to preview.1.
+$packToolArgs = if ($PackageVersionSuffix -ne "") { @("-Pack", "-PackageVersionSuffix", $PackageVersionSuffix) } else { @("-Pack") }
+Invoke-BootStep -ScriptPath (Join-Path $DotnetPortDir "pack-tool.ps1") -ScriptArgs $packToolArgs
 Invoke-BootStep -ScriptPath (Join-Path $DotnetPortDir "vscode-nemerle/pack-server.ps1")
 
 $VscodeDir = Join-Path $DotnetPortDir "vscode-nemerle"

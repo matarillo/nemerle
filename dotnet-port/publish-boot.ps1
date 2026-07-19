@@ -50,8 +50,10 @@ if ($Stage1Dir -eq "") { $Stage1Dir = Join-Path $RepoRoot "bin/Release/net-4.0/S
 # ---------------------------------------------------------------------------
 # 1. main must be clean -- see header for why.
 # ---------------------------------------------------------------------------
-$describe = (& git -C $RepoRoot describe --tags --long --dirty).Trim()
-if ($LASTEXITCODE -ne 0) { throw "'git describe --tags --long --dirty' failed in $RepoRoot (exit $LASTEXITCODE) -- is this a git checkout with at least one tag reachable from HEAD?" }
+# Same recipe as the macro (macros\GeneratedAssemblyVersion.n) / assembly-version-check.ps1 --
+# --match 'v[0-9]*' keeps this seed's own release/seed tags (if any are reachable) invisible.
+$describe = (& git -C $RepoRoot describe --tags --long --dirty --match 'v[0-9]*').Trim()
+if ($LASTEXITCODE -ne 0) { throw "'git describe --tags --long --dirty --match ''v[0-9]*''' failed in $RepoRoot (exit $LASTEXITCODE) -- is this a git checkout with at least one tag reachable from HEAD?" }
 if ($describe -match '-dirty$' -and -not $AllowDirty) {
     throw "Working tree is dirty ($describe). The seed's boot-info.json would then record a commit nobody else can reproduce. Commit or stash your changes first, or pass -AllowDirty for a throwaway seed."
 }
@@ -182,6 +184,7 @@ try {
         $commitMessage = "boot-net10 seed $nemerleAssemblyVersion from $shortCommit"
         & git -C $WorktreeDir commit -m $commitMessage
         if ($LASTEXITCODE -ne 0) { throw "'git commit' failed in $WorktreeDir (exit $LASTEXITCODE)" }
+        $seedCommitSha = (& git -C $WorktreeDir rev-parse HEAD).Trim()
 
         Write-Host ""
         Write-Host "Committed to '$Branch': $commitMessage"
@@ -196,6 +199,46 @@ finally {
     Remove-Item -Recurse -Force $StageDir -ErrorAction SilentlyContinue
 }
 
+# ---------------------------------------------------------------------------
+# 7. WP-N4: tag the new seed commit `seed/<base>` so build-from-boot.ps1's -Seed/-ReleaseTag and
+#    pack-release.ps1's release<->seed record can name this generation directly instead of only
+#    "whatever boot-net10's tip happens to be". Lightweight (no -a/-m) is part of the tag
+#    contract: an annotated tag here could otherwise be picked up by the annotated-only
+#    `git describe` provenance calls in pack-tool.ps1/pack-server.ps1/pack-release.ps1.
+# ---------------------------------------------------------------------------
+$seedTagName = $null
+if ($nemerleAssemblyVersion -match '^(\d+)\.(\d+)\.0\.(\d+)$') {
+    $seedBase = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+    $candidateTagName = "seed/$seedBase"
+    $seedTagRef = "refs/tags/$candidateTagName"
+
+    $existingSeedTagCommit = & git -C $RepoRoot rev-parse --verify --quiet $seedTagRef 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $existingSeedTagCommit = $existingSeedTagCommit.Trim()
+        if ($existingSeedTagCommit -eq $seedCommitSha) {
+            Write-Host "'$candidateTagName' already tagged at $seedCommitSha."
+            $seedTagName = $candidateTagName
+        }
+        else {
+            throw "'$candidateTagName' already exists but points at $existingSeedTagCommit, not the new seed commit $seedCommitSha. This looks like a re-publish of generation $seedBase with a different seed commit. Remove the stale tag by hand first if that is really what you want, then re-run: git tag -d $candidateTagName"
+        }
+    }
+    else {
+        & git -C $RepoRoot tag $candidateTagName $seedCommitSha
+        if ($LASTEXITCODE -ne 0) { throw "'git tag $candidateTagName $seedCommitSha' failed (exit $LASTEXITCODE)" }
+        Write-Host "Tagged '$candidateTagName' -> $seedCommitSha"
+        $seedTagName = $candidateTagName
+    }
+}
+else {
+    Write-Warning "Could not parse a base version ('X.Y.0.Z') out of Nemerle assembly version '$nemerleAssemblyVersion' -- skipping the seed/<base> tag."
+}
+
 Write-Host ""
 Write-Host "Not pushed. Review the new commit on '$Branch', then:"
-Write-Host "  git push origin $Branch"
+if ($seedTagName) {
+    Write-Host "  git push origin $Branch $seedTagName"
+}
+else {
+    Write-Host "  git push origin $Branch"
+}

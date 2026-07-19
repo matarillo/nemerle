@@ -217,7 +217,10 @@ Write-Host "Wrote $(Join-Path $TaskDestDir 'Nemerle.MSBuild.Tasks.dll')"
 Push-Location $RepoRoot
 try {
     $commit   = (& git rev-parse HEAD).Trim()
-    $describe = (& git describe --long --always --dirty).Trim()
+    # WP-N4 tag contract: annotated-only describe (no --tags), so release/seed lightweight tags
+    # are already invisible here -- --match 'v[0-9]*' is defense in depth, so an accidentally
+    # annotated release/seed tag still can't shift this provenance string (= the nupkg's bytes).
+    $describe = (& git describe --long --always --dirty --match 'v[0-9]*').Trim()
 }
 finally {
     Pop-Location

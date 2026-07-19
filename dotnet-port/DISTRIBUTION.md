@@ -461,3 +461,49 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
    整備と CI での `pack-tool.ps1` → `dotnet pack` 自動化。加えて **Linux 用 ncc レイアウト
    生成スクリプト**(`pack-tool.ps1` の Linux 版: `ncc.exe` 除外・`ncc.default.rsp` 不要・
    `msbuild/ncc/` 配置)も未整備。
+
+## 版タグ契約(WP-N4、2026-07-19)
+
+アセンブリ版は `GeneratedAssemblyVersion` マクロ(`macros\GeneratedAssemblyVersion.n`)が
+コンパイル時に実行する `git describe --tags --long --match "v[0-9]*"` から焼き込まれる。
+`--match` により **v 開始タグだけ**が版計算に入る。したがって:
+
+- **リリースタグは `release/1.2.<rev>-preview.<N>`**(実ソースコミットに打つ)、
+  **seed タグは `seed/1.2.<rev>`**(orphan `boot-net10` の seed コミットに打つ)。
+  ともに **v 非開始が必須**(`v*` は upstream rsdn/nemerle の名前空間 = 版計算の予約領域)。
+- **ともに lightweight タグで作る**(`git tag <name> <sha>`、`-a`/`-m` を付けない)。
+  pack 系スクリプト(`pack-tool.ps1` / `pack-server.ps1` / `pack-release.ps1`)の provenance
+  describe は annotated 限定 + `--match` で防御済みだが、lightweight 運用が第一の契約。
+- 同一レシピの複製 3 箇所(`dotnet-port\assembly-version-check.ps1` /
+  `tools\msbuild-task\GetGitTagRevision.cs`)と世代比較 2 箇所(`publish-boot.ps1` /
+  `build-from-boot.ps1`)は macro と**乖離させない**こと。
+- git 2.7 以上が必要(`--tags` + `--match` の lightweight タグへの適用)。
+
+**契約修正前の世代(1.2.630 以前)にはタグを打てない**: macro はコンパイル時にレシピを
+読むため、旧世代のコンパイラー/seed は release タグを版計算から除外できない。
+
+**boot-4.0 制約(重要)**: Stage1 を生成する `boot\` の凍結バイナリ(boot-4.0)の macro は
+旧レシピのままなので、release タグが祖先に付いたコミットで boot-4.0 → Stage1 のフル
+リビルドを行うと、旧レシピが release タグを拾って版が壊れる(タグ名の数字抜き出しで
+不正版になり、ビルドが大きな音を立てて失敗するか A2 検査が止める)。回避:
+
+```powershell
+git tag -l 'release/*' | ForEach-Object { git tag -d $_ }   # ローカルの release タグを一時削除
+# ... boot-4.0 → Stage1 フルリビルド + refresh-stage1-core.ps1 ...
+git fetch --tags                                            # 後で取り戻す
+```
+
+seed/ タグは orphan コミット上にあり main の祖先に乗らないため、旧レシピにも常に不可視
+(この回避の対象外)。根治は版ピン留め(WP-N7、`44-prerelease-wp-n7-log.md`)。
+
+**発行済みリリースの再現**: `release-info.json` の `seed` フィールド(orphan seed コミット
+hash・`seed/` タグ・世代)がリリース ↔ seed の対応を機械可読に保持する。再現は
+
+```powershell
+pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>
+```
+
+がタグ名から seed(`seed/1.2.<rev>`)と版 suffix を導出し、常に pinned worktree
+(`<cloneRoot>\.boot-build-tree`)でビルドする。**バイト一致は同一マシン・同一絶対パスの
+clone でのみ成立**(WP-N5 §5.1 のチェックアウトパス埋め込みのため)。他環境では版・内容の
+一致のみが保証範囲。詳細な設計と実測は `dotnet-port\41-prerelease-wp-n4-log.md`。
