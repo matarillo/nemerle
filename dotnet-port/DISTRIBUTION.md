@@ -482,19 +482,21 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 **契約修正前の世代(1.2.630 以前)にはタグを打てない**: macro はコンパイル時にレシピを
 読むため、旧世代のコンパイラー/seed は release タグを版計算から除外できない。
 
-**boot-4.0 制約(重要)**: Stage1 を生成する `boot\` の凍結バイナリ(boot-4.0)の macro は
-旧レシピのままなので、release タグが祖先に付いたコミットで boot-4.0 → Stage1 のフル
-リビルドを行うと、旧レシピが release タグを拾って版が壊れる(タグ名の数字抜き出しで
-不正版になり、ビルドが大きな音を立てて失敗するか A2 検査が止める)。回避:
+**boot-4.0 は世代 636(コミット `78c7024b0` 相当のセルフホスト成果物)へ更新済み**
+(2026-07-20、`45-boot-4.0-refresh-log.md`)。`--match` 契約を知る世代の macro が
+boot-4.0 自身に焼き込まれたため、release タグが祖先に付いたコミットで boot-4.0 → Stage1
+のフルリビルドを行っても正しく `v1.2-<rev>-g<sha>` を計算する(旧世代(538)で必要だった
+「release タグの一時退避」運用は不要になった)。boot-4.0 は今後も同様の手順(Stage1→Stage2→
+Stage3 の 2 世代セルフホストで fixpoint を確認してから採用)で随時更新してよい
+(45-log 参照。定期更新の義務はない — 問題が顕在化した時のスポット更新で足りる)。
 
-```powershell
-git tag -l 'release/*' | ForEach-Object { git tag -d $_ }   # ローカルの release タグを一時削除
-# ... boot-4.0 → Stage1 フルリビルド + refresh-stage1-core.ps1 ...
-git fetch --tags                                            # 後で取り戻す
-```
+なお、この更新は**発行済みリリースの再現性に影響しない**: `build-from-boot.ps1` /
+`publish-boot.ps1` が消費するのは orphan ブランチ `boot-net10` の seed のみで、
+boot-4.0 には一切依存しない(43-boot-net10-log.md §2)。boot-4.0 の更新だけを理由に
+再リリースする必要はない。
 
-seed/ タグは orphan コミット上にあり main の祖先に乗らないため、旧レシピにも常に不可視
-(この回避の対象外)。根治は版ピン留め(WP-N7、`44-prerelease-wp-n7-log.md`)。
+根治(describe 依存そのものを断つ版ピン留め)は別課題として WP-N7 が引き続き評価する
+(`44-prerelease-wp-n7-log.md`)。
 
 **発行済みリリースの再現**: `release-info.json` の `seed` フィールド(orphan seed コミット
 hash・`seed/` タグ・世代)がリリース ↔ seed の対応を機械可読に保持する。再現は

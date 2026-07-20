@@ -535,9 +535,10 @@ gh release create release/1.2.<rev>-preview.<N> --prerelease --title "..." --not
    **v 非開始 + lightweight が必須**。`v*` は upstream の名前空間 = 版計算の予約領域。
 2. **契約修正前の世代(1.2.630 以前)にはリリースタグを打てない**(旧 macro バイナリが
    除外規則を知らないため)。タグ付きリリースは 1.2.635 が最初。
-3. **boot-4.0 → Stage1 フルリビルドは release タグの一時退避が必要**(発見 1)。
-   `git tag -l 'release/*' | ForEach-Object { git tag -d $_ }` → リビルド → `git fetch --tags`。
-   失敗しても A2 / ビルドエラーで機械検出される(静かな破損はしない)。WP-N7 が根治。
+3. ~~**boot-4.0 → Stage1 フルリビルドは release タグの一時退避が必要**(発見 1)。~~
+   **2026-07-20 解消**: boot-4.0 を世代 636 へ更新(`45-boot-4.0-refresh-log.md`)。
+   `--match` 契約を知る macro が boot-4.0 自身に焼き込まれたため、この回避運用は不要。
+   describe 依存そのものを断つ根治(版ピン留め)は引き続き WP-N7 の課題(§5)。
 4. **バイト再現の成立条件**: 同一マシン・同一絶対パス(canonical path、本機では
    `C:\Users\kenta\nemerle-release`)・`-ReleaseTag`(常時 pinned worktree)経路。
    他環境では版・内容一致のみ(WP-N5 §5.1 の assert パス埋め込みが原因。恒久対処は

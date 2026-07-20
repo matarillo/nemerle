@@ -736,3 +736,10 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   として発行**。GitHub asset のみからの install→new→build→run、GitHub からの新規 clone +
   `-ReleaseTag` による再現まで検証。発見: boot-4.0 の旧レシピ焼き込み(release タグ可視だと
   Stage1 リビルド不可 — 一時退避運用、根治は WP-N7)ほか。詳細は `41-prerelease-wp-n4-log.md`。
+- 2026-07-20: **boot-4.0 を世代 538→636 へ更新**(WP 番号なし、PO 依頼の単発保守。
+  WP-N7 とは独立)。既存の Stage1→Stage2→Stage3 セルフホスト連鎖(`NemerleAll.nproj`)+
+  ildasm ベースの IL fixpoint 検証(Stage2==Stage3、6/6 一致)+ CLR4 ネイティブスモーク +
+  PEVerify で候補バイナリを検証し採用。WP-N4 発見 1(release タグ祖先下での boot-4.0→Stage1
+  リビルド不可)を実地で解消したことを実証(release タグを残したままフルリビルドが
+  0 エラーで完走)。発行済みリリースの再現性は boot-net10 seed のみに依存するため無影響、
+  再リリース不要と判断。詳細は `45-boot-4.0-refresh-log.md`。
