@@ -130,8 +130,14 @@ seed は `dotnet-port/seed/` にチェックインされ、`build-from-boot.ps1`
   `build-from-boot.ps1` は clean tree を要求する(pack-release の前提)ため、
   CI で丸ごと呼ぶと PR の性質と噛み合わない場面がある。
 
-残り(log 44 §8.3): A2 の commit 照合化 / バンプ手順のスクリプト整備。
-前者は N6 の「seed 鮮度警告」の中身なので Step 1 と近接して実施する。
+**第 3 スライス(A2 の commit 照合化)= 達成**(2026-07-22、log 44 §8.5)。
+36 §6 が N6 スコープに入れている「seed がソースツリーに対して古い場合の警告」の
+中身がこれで揃った。`Test-NemerleProvenanceCommit` が `-WarnOnly` 付きで
+`build-from-boot.ps1` から呼ばれ、「seed が HEAD より古い」ことは正常として情報行、
+「seed が HEAD の履歴に無いコミット由来」を警告として報告する。
+
+**Step 0 は N6 に必要な範囲で完了**。log 44 §8.6 の残り(バンプ手順のスクリプト整備)は
+Windows/CLR4 限定の儀式で、N6 をブロックしない。
 
 ### Step 1(CI workflow)
 

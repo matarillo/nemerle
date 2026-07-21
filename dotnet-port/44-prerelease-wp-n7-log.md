@@ -246,9 +246,9 @@ compiler ソース（`lib` `ncc` `macros` `Linq`）は**無変更**（`git diff 
 
 ### 8.3 残り（第 1 スライス時点）
 
-1. **A2 の commit 照合化**（§7.3）。
+1. **A2 の commit 照合化**（§7.3）→ **§8.5 で実施**。
 2. **in-tree seed 化と orphan / pinned worktree の廃止**（§7.3）→ **§8.4 で実施**。
-3. **バンプ手順のスクリプト整備**（§7.4）。
+3. **バンプ手順のスクリプト整備**（§7.4）→ **未実施**（§8.6）。
 4. 素の `msbuild` / `dotnet build` は describe に戻る（§7.3 で受容済み、PO Q1）。
    `tools/msbuild-task/GetGitTagRevision.cs` は未変更。
 
@@ -289,3 +289,56 @@ project discovery がそれらを除外する）ことと、移植固有の成�
 - **残す**: orphan ブランチ `boot-net10` そのものと既存の `seed/1.2.630` / `seed/1.2.635`
   タグは**削除しない**。発行済み 1.2.635-preview.1 の再現手段として履歴に必要で、
   消しても得るものが無い。新規の seed 発行はもう orphan に対して行わない。
+
+### 8.4.4 end-to-end 受け入れ（`build-from-boot.ps1` フルチェーン、Windows）
+
+clean tree で `pwsh dotnet-port/build-from-boot.ps1` を完走 → **release set 生成 PASS**
+（Sdk / Templates / Linq 1.2.635-preview.1 + vscode-nemerle-0.9.0.vsix + README +
+release-info.json）。
+
+重要なのは封緘されたコミット: **`a4cdc5d67`（HEAD）**であり、seed の世代コミットではない。
+旧機構では pinned worktree に退避して seed 世代（0cab66afe）を封緘するしかなかったので、
+**「HEAD からリリースセットを作る」こと自体が新しく可能になった**。
+
+`release-info.json` の `seed` フィールドは 3 つの異なるコミットを正しく書き分けている:
+
+| フィールド | 値 | 意味 |
+|---|---|---|
+| `commit`（トップレベル） | a4cdc5d67 | リリースのソースコミット（= HEAD） |
+| `seed.commit` | a4cdc5d67 | seed ディレクトリを最後に変更したコミット |
+| `seed.generation.commit` | 0cab66afe | seed バイナリが**実際に建てられた**コミット |
+
+## 8.5 case 1 実装（第 3 スライス: A2 の commit 照合化）
+
+§4-1 で受容した「門番の格下げ」の埋め合わせ。ピンにより同一スパン内は全て同版になるため、
+`Test-NemerleAssemblyVersionFreshness` は「HEAD で建てたか」と「10 コミット前に建てたか」を
+区別できない。その検出を provenance の commit へ移す。
+
+`assembly-version-check.ps1` に `Test-NemerleProvenanceCommit` を追加。問うのは
+**「記録された commit は HEAD の祖先か」**の 1 点:
+
+| 状況 | 挙動 | 理由 |
+|---|---|---|
+| 祖先で、HEAD より前 | **情報行**（何コミット前かを表示）。失敗ではない | seed が HEAD より古いのは正常。それを可能にするのがピン |
+| 祖先で、HEAD と同一 | 情報行 | |
+| **祖先でない** | **失敗**（`-WarnOnly` で警告に降格） | 別ブランチ / 書き換えられた履歴 / 到達しないコミット由来。ビルド対象のソースと無関係な成果物 |
+| リポジトリに存在しない | 警告してスキップ | shallow clone・source archive は正当に履歴を持たない。環境を罰しない |
+
+`build-from-boot.ps1` の seed 検証直後から `-WarnOnly` で呼ぶ（N6 が要求する
+「報告はするが止めない」形）。
+
+実測（4 分岐すべて）: 実 seed（0cab66afe、HEAD の 5 コミット前）→ 情報行 /
+orphan root（7f3c854e8、非祖先）→ 警告 / 未知コミット → スキップ警告 /
+HEAD 自身 → 「built from HEAD」。
+
+## 8.6 case 1 の残り
+
+**バンプ手順のスクリプト整備（§7.4）のみ未実施**。version.txt を上げる時だけ必要な
+Windows/CLR4 限定の儀式で、**日常のビルド・リリース・CI のどれもブロックしない**
+（WP-N6 の前提としても不要）。手順自体は `publish-seed.ps1` のヘッダと
+`packaging/README.md` に文章として記載済み — 要点は「CLR4 msbuild は version.txt を
+読まないので、Stage1 を建てる前に `Set-NemerleVersionPin` で env にピンを流すこと」。
+
+実際に版を上げる時（= マクロ ABI 互換を壊す変更の区切り）に、実バンプと同時に
+スクリプト化するのが妥当。未検証のまま儀式スクリプトだけ先に置いても価値が薄いため、
+本 log では意図的に未実施として残す。

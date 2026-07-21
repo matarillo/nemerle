@@ -103,6 +103,12 @@ if ($seedInfo.pinnedVersion -ne $pin.Base) {
 $G = $seedInfo.generation
 Write-Host "Seed: pinned $($seedInfo.pinnedVersion), built from commit $($G.commit) ($($G.describe)), Nemerle assembly version $($G.nemerleAssemblyVersion)"
 
+# The seed being older than HEAD is normal and is what pinning is for; the seed coming from a
+# history this checkout does not contain is not. -WarnOnly so a reporting environment (CI) can
+# surface it without aborting -- see the function's header.
+. "$PSScriptRoot/assembly-version-check.ps1"
+Test-NemerleProvenanceCommit -RecordedCommit $G.commit -RepoRoot $RepoRoot -Label "Seed" -WarnOnly
+
 $fileNames = $seedInfo.files.PSObject.Properties.Name
 foreach ($name in $fileNames) {
     $filePath = Join-Path $SeedDir $name

@@ -83,3 +83,69 @@ Two ways this happens, with different fixes:
         throw $message
     }
 }
+
+# WP-N7 (case 1): the staleness half of the old A2 check, rebuilt on provenance commits.
+#
+# Pinning deliberately traded away the loader's enforcement: within one version.txt span every
+# binary has the same AssemblyVersion, so Test-NemerleAssemblyVersionFreshness above can no
+# longer tell "built from HEAD" from "built ten commits ago". That was accepted (44 section 4-1),
+# on the condition that the detection move to the provenance JSON files, which record the commit
+# each binary was actually built from. This is that check.
+#
+# What it asks: is $RecordedCommit an ancestor of HEAD? Two outcomes matter --
+#   - Not an ancestor: the binary comes from a commit that is not in this checkout's history at
+#     all (a different branch, a rewritten history, a dropped commit). Its sources are NOT the
+#     ones being built, which is worth stopping for.
+#   - An ancestor, but behind: normal and expected. A seed is usually older than HEAD; that is
+#     the entire point of pinning. Reported as an informational line with the distance, never a
+#     failure.
+# Unknown commits (shallow clone, unfetched history) warn and skip rather than fail: CI clones
+# and source archives legitimately lack the history, and refusing to build there would punish
+# the environment, not the mistake.
+function Test-NemerleProvenanceCommit {
+    param(
+        [string]$RecordedCommit,
+        [string]$RepoRoot,
+        [string]$Label = "Seed",
+        [switch]$WarnOnly
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RecordedCommit)) {
+        Write-Warning "$Label provenance check skipped: no commit recorded."
+        return
+    }
+
+    & git -C $RepoRoot cat-file -e "$RecordedCommit^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "$Label provenance check skipped: commit $RecordedCommit is not present in this checkout (a shallow clone or source archive will not have it). Run 'git fetch --unshallow' if you want this verified."
+        return
+    }
+
+    & git -C $RepoRoot merge-base --is-ancestor $RecordedCommit HEAD 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $behind = (& git -C $RepoRoot rev-list --count "$RecordedCommit..HEAD").Trim()
+        if ($behind -eq "0") {
+            Write-Host "$Label provenance OK: built from HEAD ($RecordedCommit)."
+        }
+        else {
+            Write-Host "$Label provenance OK: built from $RecordedCommit, $behind commit(s) behind HEAD (expected -- the version pin makes this buildable)."
+        }
+        return
+    }
+
+    $message = @"
+$Label was built from commit $RecordedCommit, which is NOT an ancestor of HEAD in this checkout.
+Its sources are not the ones being built here -- it comes from a different branch, a rewritten
+history, or a commit that never landed. The assembly-version check cannot catch this: version.txt
+pins every binary in a span to the same version, so provenance commits are what distinguish them
+(dotnet-port\44-prerelease-wp-n7-log.md section 8.3).
+Either check out a history that contains $RecordedCommit, or rebuild the artifact here.
+"@
+
+    if ($WarnOnly) {
+        Write-Warning $message
+    }
+    else {
+        throw $message
+    }
+}
