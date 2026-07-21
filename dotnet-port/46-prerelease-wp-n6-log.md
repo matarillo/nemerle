@@ -103,6 +103,9 @@ log に記録しスコープを再判断)。no-go の場合: 判断理由を本 
    `build-smoke-release`(続けて **GitHub Release へ発行**)。発行はスモーク通過を必須ゲートとし、
    `stage` でガードする。トリガーをタグ push でなくマニュアルにするのは、タグを push した勢いで
    意図せず発行されないようにするため。
+4. **Q4(CI トリガー)= `wip/dotnet-port` への push / PR で自動起動。ただし `**/*.md` のみの
+   変更は除外**(`paths-ignore`)。手動起動(`workflow_dispatch`)も可。ドキュメントだけの
+   コミットでツールチェーン全体を再ビルドしないため。
 
 ## 7. 実装結果
 
@@ -127,30 +130,39 @@ log に記録しスコープを再判断)。no-go の場合: 判断理由を本 
 | `.github/workflows/dotnet-port-release-build.yml`(新規) | Q3 の release workflow(build → smoke → publish) |
 | `.github/workflows/build.yml` | 削除(§6 Q2) |
 
-#### 7.2 CI workflow(`dotnet-port-ci.yml`)
+#### 7.2 CI workflow(`dotnet-port-ci.yml`)= as-built のパイプライン
 
-`ubuntu-24.04` / `wip/dotnet-port` への push・PR・`workflow_dispatch` / `concurrency` で
-同一 ref の先行 run をキャンセル / `permissions: contents: read`。
+**目的**: push/PR の HEAD をチェックイン seed からビルドし、消費者レベルまで検証する。
+版ピン(Step 0)により seed の世代へ退避せず HEAD そのものがビルド対象になる(§2 解消)。
 
-チェーン:
+**トリガー**(§6 Q4): `wip/dotnet-port` への push と、同ブランチ宛の pull_request。
+`paths-ignore: **/*.md`(ドキュメントのみの変更は起動しない)。加えて `workflow_dispatch`
+で手動起動可。`concurrency` で同一 ref の先行 run をキャンセル。`permissions: contents: read`。
 
-1. `actions/checkout@v4` **`fetch-depth: 0`**(version-pin の describe フォールバック・
-   provenance の祖先判定・`ncc-info.json` の describe 記録が全履歴とタグを要る)。
-2. `setup-dotnet@v4` 10.0.x / `setup-node@v4` 22(npm キャッシュ = `package-lock.json`)。
-3. `verify-seed.ps1 -WarnOnly`
-4. `build-stage2-core.ps1 -Compiler dotnet-port/seed/ncc.exe`
-5. `build-libs-core.ps1`
-6. `pack-tool.ps1 -Pack`
-7. `vscode-nemerle/pack-server.ps1`
-8. samples 全 `.nproj` の `dotnet restore`(42 §5.2。clean checkout では
-   `project.assets.json` 不在で raw LSP のプロジェクト系が NETSDK1004 で落ちる)。
-9. `npm ci` + `npm run test:unit`
-10. `LspServer.IntegrationTest` を `-t:Rebuild` → `dotnet exec`(raw LSP)
-11. `ProjectInfo.Test -- --integration`
-12. `smoke-release.ps1`(消費者スモーク。上の suite が MSBuild 評価で止まる穴を埋める)
+**ジョブ**: 単一ジョブ・`runs-on: ubuntu-24.04`・`timeout-minutes: 45`・
+`defaults.run.shell: pwsh`。ツールチェーン: .NET SDK 10.0.x(`setup-dotnet@v4`)/
+Node 22(`setup-node@v4`、npm キャッシュ)/ pwsh は runner 標準。
 
-CI 対象外: testsuite 全数 / boot-4.0 → stage1 再生成と CLR4 スモーク(以上 36 §6)/
-バイト決定性比較(フルビルド 2 回を要し実行時間が倍。決定性は seed refresh・リリース儀式が担保)。
+**ステップ(実行順)**:
+
+| # | 内容 | 要点 |
+|---|---|---|
+| 1 | `actions/checkout@v4`(`fetch-depth: 0`) | version-pin の describe フォールバック・provenance の祖先判定・`ncc-info.json` の describe 記録が全履歴とタグを要る |
+| 2 | `setup-dotnet@v4` 10.0.x / `setup-node@v4` 22 | node は npm キャッシュ(`package-lock.json` キー) |
+| 3 | `verify-seed.ps1 -WarnOnly` | seed の schema / 版スパン / SHA256 / provenance。古い seed は情報行、非祖先は警告(止めない) |
+| 4 | `build-stage2-core.ps1 -Compiler dotnet-port/seed/ncc.exe` | seed が **この HEAD** の stage2 をビルド |
+| 5 | `build-libs-core.ps1` | Nemerle.Linq |
+| 6 | `pack-tool.ps1 -Pack` | `dist/ncc` レイアウト + 3 nupkg(feed) |
+| 7 | `vscode-nemerle/pack-server.ps1` | LSP サーバをビルド・staging |
+| 8 | samples 全 `.nproj` の `dotnet restore` | 42 §5.2。clean checkout では `-getItem` が restore せず NETSDK1004 で落ちるため明示 restore |
+| 9 | `npm ci` + `npm run test:unit` | 拡張の unit |
+| 10 | `LspServer.IntegrationTest`(`-t:Rebuild` → `dotnet exec`) | raw LSP(実測の最大コスト) |
+| 11 | `ProjectInfo.Test -- --integration` | unit + Sdk パッケージ評価 |
+| 12 | `smoke-release.ps1` | 消費者スモーク。install → new → build → run。上の suite が MSBuild 評価で止まる穴を埋める唯一の検査 |
+
+**CI 対象外(意図的)**: testsuite 全数 / boot-4.0 → stage1 再生成と CLR4 スモーク(以上
+36 §6。CLR4 ハーネス・Windows 専用のため手動回帰ゲートとして維持)/ バイト決定性比較
+(フルビルド 2 回を要し実行時間が倍。決定性は seed refresh・リリース儀式が担保)。
 
 #### 7.3 release workflow(`dotnet-port-release-build.yml`)
 

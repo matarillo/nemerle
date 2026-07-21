@@ -19,10 +19,15 @@
 name: dotnet-port CI (Linux)
 
 on:
+  # paths-ignore skips a run only when EVERY changed file matches, so a docs-only push/PR does
+  # not rebuild the toolchain, while any commit that also touches code still runs. workflow_dispatch
+  # is always available to run it by hand regardless.
   push:
     branches: [wip/dotnet-port]
+    paths-ignore: ['**/*.md']
   pull_request:
     branches: [wip/dotnet-port]
+    paths-ignore: ['**/*.md']
   workflow_dispatch:
 
 permissions:
