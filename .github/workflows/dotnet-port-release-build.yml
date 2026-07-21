@@ -1,0 +1,140 @@
+# WP-N6 (stretch): the end-to-end release path, on Linux, from a plain clone at a release tag.
+# See dotnet-port/46-prerelease-wp-n6-log.md section 6 Q3.
+#
+# TWO STAGES, selected by the `stage` input:
+#   build-smoke          builds the full release set and smoke-tests it, then STOPS. A dry run:
+#                        exercises the release-specific path (build-from-boot.ps1 -ReleaseTag,
+#                        pack-release sealing, VSIX, release-info.json) with no side effects
+#                        beyond a workflow artifact. The default.
+#   build-smoke-release  the same, then publishes the assets to the tag's GitHub Release.
+#
+# MANUAL TRIGGER, NOT TAG PUSH. The release tag is pushed by hand; this workflow is then run by
+# hand against it. The required release_tag input keeps the commit <-> asset tie tight: the
+# workflow checks out that exact tag, and build-from-boot.ps1 -ReleaseTag refuses to run unless
+# HEAD is the tag's commit. A tag-push trigger is avoided so publishing is never an accident of
+# pushing a tag. The preview.<N> part of a release is the suffix of release_tag (the tag
+# release/1.2.635-preview.2 carries N=2) -- there is no separate input for it.
+#
+# SMOKE BEFORE PUBLISH. The build + test suites stop at MSBuild evaluation; smoke-release.ps1 is
+# the only step that installs the packed templates, builds a project with the packaged compiler,
+# and runs it. Publishing is gated on it so a package that resolves but does not actually run can
+# never reach the Release.
+
+name: dotnet-port release (Linux, manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (must already be pushed), e.g. release/1.2.635-preview.1'
+        required: true
+        type: string
+      stage:
+        description: 'build-smoke = dry run, no publish. build-smoke-release = also publish to the GitHub Release.'
+        required: true
+        type: choice
+        default: build-smoke
+        options:
+          - build-smoke
+          - build-smoke-release
+
+# contents: write so the build-smoke-release stage can create the Release and upload assets.
+# The build-smoke stage does not use the token.
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  release:
+    name: build -> smoke -> (publish)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      # The input goes through the environment, never through string interpolation into the
+      # script body -- an interpolated `run:` would let the dispatcher's input become code.
+      - name: Validate tag shape
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^release/\d+\.\d+\.\d+-.+$') {
+            throw "release_tag '$env:RELEASE_TAG' is not of the form release/<major>.<minor>.<patch>-<suffix> (e.g. release/1.2.635-preview.1)."
+          }
+          "Building $env:RELEASE_TAG"
+
+      - name: Checkout the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Record build identity
+        run: |
+          "checkout path : $PWD"
+          "commit        : $(git rev-parse HEAD)"
+          "dotnet        : $(dotnet --version)"
+          "node          : $(node --version)"
+
+      - name: Build the release set
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: pwsh -NoProfile -File dotnet-port/build-from-boot.ps1 -ReleaseTag $env:RELEASE_TAG
+
+      - name: Smoke-test the release set (install -> new -> build -> run)
+        run: pwsh -NoProfile -File dotnet-port/smoke-release.ps1
+
+      - name: SHA256 of every asset
+        run: |
+          Get-ChildItem dotnet-port/dist/release -File | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          }
+
+      # Keep the built set as an artifact regardless -- a record of exactly what was published.
+      - name: Upload the release set
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-set-${{ github.run_id }}
+          path: dotnet-port/dist/release/
+          if-no-files-found: error
+
+      # Only the build-smoke-release stage publishes; build-smoke stops after the artifact above.
+      # Creates the Release if the tag has none yet, otherwise refreshes its assets (--clobber).
+      # Always --prerelease: the tag shape mandates a -<suffix>, so every release here is a
+      # preview/prerelease, and --prerelease keeps it from being tagged "Latest".
+      - name: Publish to the GitHub Release
+        if: ${{ inputs.stage == 'build-smoke-release' }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $assets = Get-ChildItem dotnet-port/dist/release -File | ForEach-Object { $_.FullName }
+          if (-not $assets) { throw "No assets to publish under dotnet-port/dist/release." }
+
+          & gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Creating Release $tag"
+            & gh release create $tag --title $tag --prerelease --notes "Automated .NET 10 release build. Contents and provenance: release-info.json." @assets
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)" }
+          } else {
+            Write-Host "Release $tag exists; refreshing assets"
+            & gh release upload $tag @assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed (exit $LASTEXITCODE)" }
+          }

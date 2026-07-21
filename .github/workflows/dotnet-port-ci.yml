@@ -1,0 +1,128 @@
+# WP-N6: minimal Linux CI for the .NET 10 port (dotnet-port/36-prerelease-quality-plan.md section 6,
+# dotnet-port/46-prerelease-wp-n6-log.md).
+#
+# What makes this possible at all is WP-N7's version pin: the AssemblyVersion comes from
+# version.txt rather than `git describe`, so the checked-in stage1 seed (dotnet-port/seed/) can
+# build ANY commit in the same version.txt span.  Before that, a build from the seed had to
+# check out the seed's own commit, and CI would have been testing the seed's sources instead of
+# the push/PR under review (46 section 2).  Here the seed builds THIS commit.
+#
+# Deliberately NOT in scope (36 section 6):
+#   - the full testsuite: its harness (Nemerle.Compiler.Test.exe) is a CLR4 executable and does
+#     not run on Linux (42 section 8).  Porting it is backlog (36 section 10-1).
+#   - boot-4.0 -> stage1 regeneration and the CLR4 smoke: Windows-only, kept as the manual
+#     regression gate performed when the seed is refreshed.
+#   - byte-determinism comparison: a meaningful check needs two full builds (42 section 5.1
+#     -- determinism holds per checkout path), which would roughly double the run time.  It is
+#     covered by the seed-refresh and release rituals instead.
+
+name: dotnet-port CI (Linux)
+
+on:
+  push:
+    branches: [wip/dotnet-port]
+  pull_request:
+    branches: [wip/dotnet-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dotnet-port-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  build:
+    name: seed -> stage2 -> libs -> pack -> tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history and tags: version-pin.ps1 falls back to `git describe`, the provenance
+          # check asks whether the seed's commit is an ancestor of HEAD, and pack-tool.ps1
+          # records `git describe` in ncc-info.json.  A shallow clone answers all three wrongly.
+          fetch-depth: 0
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dotnet-port/vscode-nemerle/package-lock.json
+
+      - name: Record toolchain versions
+        run: |
+          "checkout path : $PWD"
+          "dotnet        : $(dotnet --version)"
+          "pwsh          : $($PSVersionTable.PSVersion)"
+          "node          : $(node --version)"
+          "version.txt   : $((Get-Content version.txt | Where-Object { $_ -notmatch '^\s*#' -and $_.Trim() } | Select-Object -First 1).Trim())"
+
+      # Schema, version.txt span, per-file SHA256, and provenance.  -WarnOnly: a seed older than
+      # HEAD is normal (that is what the pin buys); only a seed from a commit outside this
+      # history is suspect, and CI reports that rather than gating on it (44 section 8.5).
+      - name: Verify checked-in seed
+        run: pwsh -NoProfile -File dotnet-port/verify-seed.ps1 -WarnOnly
+
+      - name: Build stage2 (seed compiler builds this commit)
+        run: pwsh -NoProfile -File dotnet-port/build-stage2-core.ps1 -Compiler dotnet-port/seed/ncc.exe
+
+      - name: Build libraries (Nemerle.Linq)
+        run: pwsh -NoProfile -File dotnet-port/build-libs-core.ps1
+
+      - name: Pack toolchain (dist/ncc layout + nupkgs)
+        run: pwsh -NoProfile -File dotnet-port/pack-tool.ps1 -Pack
+
+      - name: Build and stage the language server
+        run: pwsh -NoProfile -File dotnet-port/vscode-nemerle/pack-server.ps1
+
+      # 42 section 5.2: the server answers project queries with MSBuild `-getItem`, which does not
+      # restore.  On a clean checkout the sample projects have no project.assets.json, and the raw
+      # LSP suite's project-backed scenarios fail with NETSDK1004.  On a developer machine stale
+      # obj/ directories hide this; a runner has none, so restore them explicitly.
+      - name: Restore sample projects (raw LSP suite prerequisite)
+        run: |
+          Get-ChildItem -Path dotnet-port/samples -Recurse -Filter *.nproj | ForEach-Object {
+            dotnet restore $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed for $($_.FullName)" }
+          }
+
+      - name: Extension unit tests (npm)
+        working-directory: dotnet-port/vscode-nemerle
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+          npm run test:unit
+          if ($LASTEXITCODE -ne 0) { throw "npm run test:unit failed" }
+
+      - name: Build LSP integration test harness
+        run: dotnet build dotnet-port/LspServer.IntegrationTest/Nemerle.LanguageServer.IntegrationTest.csproj -c Release -t:Rebuild
+
+      - name: LSP integration suite (raw LSP)
+        run: dotnet exec dotnet-port/LspServer.IntegrationTest/bin/Release/net10.0/Nemerle.LanguageServer.IntegrationTest.dll
+
+      - name: ProjectInfo tests (unit + Sdk package integration)
+        run: dotnet run -c Release --project dotnet-port/ProjectInfo.Test/Nemerle.ProjectInfo.Test.csproj -- --integration
+
+      # The only consumer-level gate: the suites above stop at MSBuild evaluation, so a nupkg that
+      # resolves but does not actually compile/run a project would pass them.  pack-tool -Pack
+      # above populated the feed with the Templates + Sdk packages this installs, builds, and runs.
+      - name: Smoke-test the packed toolchain (install -> new -> build -> run)
+        run: pwsh -NoProfile -File dotnet-port/smoke-release.ps1

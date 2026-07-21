@@ -81,45 +81,12 @@ if (-not [string]::IsNullOrWhiteSpace(($status -join ""))) {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Verify the checked-in seed: schema, that it belongs to this checkout's version.txt span,
-#    and every file's SHA256 (catches a corrupted checkout / bad LFS-less transfer before it
-#    turns into a confusing build failure).
+# 3. Verify the checked-in seed (schema / version.txt span / per-file SHA256 / provenance).
+#    The verification itself lives in verify-seed.ps1 so CI can run it without also running
+#    this script's release sealing -- see dotnet-port/46-prerelease-wp-n6-log.md.
 # ---------------------------------------------------------------------------
-$SeedInfoPath = Join-Path $SeedDir "seed-info.json"
-if (-not (Test-Path $SeedInfoPath)) {
-    throw "Seed metadata not found: $SeedInfoPath. The checked-in seed lives in dotnet-port/seed/ (WP-N7); if this is an old checkout that still used the boot-net10 orphan branch, use that commit's own build-from-boot.ps1."
-}
-$seedInfo = Get-Content -Raw -Path $SeedInfoPath | ConvertFrom-Json
-if ($seedInfo.schema -ne 2) {
-    throw "seed-info.json has schema $($seedInfo.schema), but this script only understands schema 2. Use a build-from-boot.ps1 that matches the seed's schema."
-}
-
-. "$PSScriptRoot/version-pin.ps1"
-$pin = Get-NemerleVersionPin -RepoRoot $RepoRoot
-if ($seedInfo.pinnedVersion -ne $pin.Base) {
-    throw "Seed is pinned to $($seedInfo.pinnedVersion) but this checkout's version.txt says $($pin.Base). They must match: a seed can only build sources in its own version.txt span (dotnet-port/44-prerelease-wp-n7-log.md section 7.1). If version.txt was just bumped, the seed has to be refreshed on Windows (section 7.4)."
-}
-
-$G = $seedInfo.generation
-Write-Host "Seed: pinned $($seedInfo.pinnedVersion), built from commit $($G.commit) ($($G.describe)), Nemerle assembly version $($G.nemerleAssemblyVersion)"
-
-# The seed being older than HEAD is normal and is what pinning is for; the seed coming from a
-# history this checkout does not contain is not. -WarnOnly so a reporting environment (CI) can
-# surface it without aborting -- see the function's header.
-. "$PSScriptRoot/assembly-version-check.ps1"
-Test-NemerleProvenanceCommit -RecordedCommit $G.commit -RepoRoot $RepoRoot -Label "Seed" -WarnOnly
-
-$fileNames = $seedInfo.files.PSObject.Properties.Name
-foreach ($name in $fileNames) {
-    $filePath = Join-Path $SeedDir $name
-    if (-not (Test-Path $filePath)) { throw "Seed is missing '$name' -- declared in seed-info.json but not present in $SeedDir." }
-    $actualHash = (Get-FileHash -Path $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $expectedHash = $seedInfo.files.$name
-    if ($actualHash -ne $expectedHash) {
-        throw "Seed file '$name' does not match the SHA256 recorded in seed-info.json (expected $expectedHash, got $actualHash). Restore it with 'git checkout -- dotnet-port/seed'."
-    }
-}
-Write-Host "Verified $($fileNames.Count) seed files against seed-info.json -> $SeedDir"
+& pwsh -NoProfile -File (Join-Path $PSScriptRoot "verify-seed.ps1") -WarnOnly
+if ($LASTEXITCODE -ne 0) { throw "Seed verification failed (exit $LASTEXITCODE)" }
 
 # ---------------------------------------------------------------------------
 # 4. Build chain, in this checkout. Each step is a child pwsh process (so a failure's own error

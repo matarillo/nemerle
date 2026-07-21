@@ -92,53 +92,97 @@ go の場合: push/PR で自動実行され green。実行時間の目安 15 分
 log に記録しスコープを再判断)。no-go の場合: 判断理由を本 log に記録しバックログ
 (§10-1)へ。stretch は未実施でも完了を妨げない。
 
-## 6. PO 判断
+## 6. 判断
 
-1. **Q1(構成)= 案 A で進める(2026-07-21 PO 合意)**。N7 case 1 実装を Step 0 として
-   先行させる。これは「WP-N7 の実装に着手する」判断を兼ねる。
-2. **Q2(既存 workflow)**: 死んでいる `build.yml`(windows-2016)の扱い(削除 / 新 workflow で
-   置換 / 温存)— **PO が別途検討**(2026-07-21)。結論が出るまで温存し、触らない。
-   Step 1 の workflow は既存 `build.yml` と独立した新規ファイルとして追加するため、
-   この判断は Step 1 の着手をブロックしない。
-3. **Q3(stretch)**: release workflow をスコープに含めるか — **PO が別途検討**(2026-07-21)。
-   36 §6 のとおり「余裕があれば」の扱いを既定とし、未実施でも本 WP の完了を妨げない。
+1. **Q1(構成)= 案 A**。N7 case 1 実装を Step 0 として先行させる。
+2. **Q2(既存 workflow)= `build.yml` 削除**。`windows-2016` runner は退役済みで動かず、
+   かつ `on: pull_request` により全 PR に必ず落ちるチェックが 1 本付くため。
+3. **Q3(stretch)= 含める。マニュアルトリガーで発行まで自動化する**。
+   `workflow_dispatch`(入力 `release_tag` + `stage`)。**2 段**を選べる:
+   `build-smoke`(ビルド + 消費者スモークで停止する dry run)と
+   `build-smoke-release`(続けて **GitHub Release へ発行**)。発行はスモーク通過を必須ゲートとし、
+   `stage` でガードする。トリガーをタグ push でなくマニュアルにするのは、タグを push した勢いで
+   意図せず発行されないようにするため。
 
 ## 7. 実装結果
 
-### Step 0(WP-N7 case 1)
+### Step 0(WP-N7 case 1)= N6 に必要な範囲で完了
 
-進行中。実装の詳細・実測は log 44 §8 に記録。本 log には N6 の前提として
-成立したかどうかだけを引く。
-
-**第 1 スライス(版ピンの成立)= 達成**(2026-07-21、log 44 §8.2)。
-seed 635 で HEAD(638)の stage2 をビルドでき、出力は全て 1.2.0.635 で刻まれた。
-自己ホスト・決定性(stage3 == stage3b の 4/4 バイト一致)も維持。
-**これで §2 の空振り問題は原理的に解消**した — CI は seed の世代へ退避せず
-push/PR の HEAD をそのままビルドできる。
-
-**第 2 スライス(in-tree seed 化と orphan 廃止)= 達成**(2026-07-22、log 44 §8.4)。
-seed は `dotnet-port/seed/` にチェックインされ、`build-from-boot.ps1` は常に
-このチェックアウトのソースをビルドする。**N6 の Step 1 が待っていたのはここ**で、
-これで workflow の中身が確定できる:
-
-- seed の入手 = 通常の clone(orphan ブランチの fetch も worktree も不要)。
-- CI のビルド経路 = `build-from-boot.ps1` そのもの。push/PR の HEAD が
-  そのままビルド対象になる。
-- ただし CI は release set の封緘まで必要ないので、Step 1 では
-  `build-from-boot.ps1` を丸ごと呼ぶのではなく、同じチェーンの前半
-  (stage2 → libs → pack-tool → pack-server)+ テストに絞る。
-  `build-from-boot.ps1` は clean tree を要求する(pack-release の前提)ため、
-  CI で丸ごと呼ぶと PR の性質と噛み合わない場面がある。
-
-**第 3 スライス(A2 の commit 照合化)= 達成**(2026-07-22、log 44 §8.5)。
-36 §6 が N6 スコープに入れている「seed がソースツリーに対して古い場合の警告」の
-中身がこれで揃った。`Test-NemerleProvenanceCommit` が `-WarnOnly` 付きで
-`build-from-boot.ps1` から呼ばれ、「seed が HEAD より古い」ことは正常として情報行、
-「seed が HEAD の履歴に無いコミット由来」を警告として報告する。
-
-**Step 0 は N6 に必要な範囲で完了**。log 44 §8.6 の残り(バンプ手順のスクリプト整備)は
-Windows/CLR4 限定の儀式で、N6 をブロックしない。
+版ピンの成立 → in-tree seed 化と orphan 廃止 → A2 の commit 照合化まで達成
+(log 44 §8.2 / §8.4 / §8.5)。これにより CI は seed の世代へ退避せず push/PR の HEAD を
+そのままビルドでき(§2 の空振り解消)、seed が古い場合の警告は
+`Test-NemerleProvenanceCommit -WarnOnly` が担う。残る「バンプ手順のスクリプト整備」
+(log 44 §8.6)は Windows/CLR4 限定で N6 をブロックしない。
 
 ### Step 1(CI workflow)
 
-(未着手)
+#### 7.1 変更ファイル
+
+| ファイル | 内容 |
+|---|---|
+| `dotnet-port/verify-seed.ps1`(新規) | seed の schema / version.txt スパン / 全ファイル SHA256 / provenance コミット照合。`-WarnOnly` で provenance 不一致を警告へ降格。CI は release 封緘を行わず `build-from-boot.ps1` を丸ごと呼べないため、seed 検証をここへ抽出 |
+| `dotnet-port/smoke-release.ps1`(新規) | 消費者スモーク。feed からテンプレートを install → `nemerle-console` を生成 → build → run し `Hello from Nemerle on .NET 10!` を確認。梱包物が実際に install/build/run できるかを見る唯一の検査(他の suite は MSBuild 評価で止まる)。CI・release workflow・手元で共用 |
+| `dotnet-port/build-from-boot.ps1` | §3 のインライン seed 検証を `verify-seed.ps1` の子プロセス呼び出しへ置換(振る舞いは同一) |
+| `.github/workflows/dotnet-port-ci.yml`(新規) | push/PR CI 本体 |
+| `.github/workflows/dotnet-port-release-build.yml`(新規) | Q3 の release workflow(build → smoke → publish) |
+| `.github/workflows/build.yml` | 削除(§6 Q2) |
+
+#### 7.2 CI workflow(`dotnet-port-ci.yml`)
+
+`ubuntu-24.04` / `wip/dotnet-port` への push・PR・`workflow_dispatch` / `concurrency` で
+同一 ref の先行 run をキャンセル / `permissions: contents: read`。
+
+チェーン:
+
+1. `actions/checkout@v4` **`fetch-depth: 0`**(version-pin の describe フォールバック・
+   provenance の祖先判定・`ncc-info.json` の describe 記録が全履歴とタグを要る)。
+2. `setup-dotnet@v4` 10.0.x / `setup-node@v4` 22(npm キャッシュ = `package-lock.json`)。
+3. `verify-seed.ps1 -WarnOnly`
+4. `build-stage2-core.ps1 -Compiler dotnet-port/seed/ncc.exe`
+5. `build-libs-core.ps1`
+6. `pack-tool.ps1 -Pack`
+7. `vscode-nemerle/pack-server.ps1`
+8. samples 全 `.nproj` の `dotnet restore`(42 §5.2。clean checkout では
+   `project.assets.json` 不在で raw LSP のプロジェクト系が NETSDK1004 で落ちる)。
+9. `npm ci` + `npm run test:unit`
+10. `LspServer.IntegrationTest` を `-t:Rebuild` → `dotnet exec`(raw LSP)
+11. `ProjectInfo.Test -- --integration`
+12. `smoke-release.ps1`(消費者スモーク。上の suite が MSBuild 評価で止まる穴を埋める)
+
+CI 対象外: testsuite 全数 / boot-4.0 → stage1 再生成と CLR4 スモーク(以上 36 §6)/
+バイト決定性比較(フルビルド 2 回を要し実行時間が倍。決定性は seed refresh・リリース儀式が担保)。
+
+#### 7.3 release workflow(`dotnet-port-release-build.yml`)
+
+`workflow_dispatch` のみ。入力は `release_tag`(push 済みタグ。正規表現で検証、`env:` 経由で
+渡す)と `stage`(choice)。`preview.<N>` の `<N>` は `release_tag` の suffix
+(`release/1.2.635-preview.2` → N=2)であり、専用入力は設けない。
+
+- **`stage = build-smoke`(既定)**: tag を checkout → `build-from-boot.ps1 -ReleaseTag` →
+  `smoke-release.ps1` → `dist/release/` を artifact 保存で**停止**。リリース固有経路
+  (pack-release 封緘・VSIX・release-info.json)を副作用なしで空試験する dry run。
+- **`stage = build-smoke-release`**: 上に続けて **GitHub Release へ発行**。タグに Release が
+  無ければ `gh release create`、有れば `gh release upload --clobber`。タグ形が `-<suffix>` 必須
+  ゆえ常に `--prerelease`(= Latest に付かない)。
+
+発行ステップは `if: stage == build-smoke-release` でガードし、スモーク通過後にのみ到達する。
+`permissions: contents: write`(build-smoke ではトークンを使わない)。
+
+#### 7.4 検証状況(受け入れ基準は未充足)
+
+ローカルで確認済み(Windows): `verify-seed.ps1` 正常系(seed 1.2.635 / provenance「HEAD の
+6 コミット前」/ 6 ファイル照合)と異常系(1 バイト改変 → SHA256 不一致で exit 1)、
+`smoke-release.ps1`(既存 `dist/release` に対し install → new → build → run が PASS、
+`Hello from Nemerle on .NET 10!`)、workflow 2 本の YAML パース。
+
+初回 push が返す実測で埋める(= 受け入れ基準そのもの):
+
+- push/PR で green になること。
+- 実行時間 15 分以内(未測定。超過時の第一手は NuGet キャッシュ、npm は導入済み)。
+- `ProjectInfo.Test --integration` と `smoke-release.ps1` の Linux 初実測(§4)。
+- release workflow の発行経路(`gh release create/upload`)の初実測。
+
+#### 7.5 申し送り
+
+- release workflow が発行を担うようになったため、`DISTRIBUTION.md` / `packaging/README.md` の
+  リリース手順を「タグ push 後にこの workflow を起動して発行する」形へ更新すること。**未実施**。
