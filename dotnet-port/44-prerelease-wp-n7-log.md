@@ -112,4 +112,93 @@
 
 ## 7. go/no-go 判断・実装結果
 
-(評価完了時に追記)
+**結論（2026-07-21、PO 合意）: 部分 GO。**「case 1 = 版ピン留め + orphan/pinned-worktree
+廃止 + 同一 version.txt スパン内の Linux/CoreCLR ビルド」を採用する。ただし**版バンプ
+（新世代生成 = 工程 X）は Windows/.NET Framework 4.x 限定**とし、リリース経路から Windows を
+**完全**排除するゴールは今回は追わない。§4 のトレードオフは受容する。
+
+本節は評価スパイクの実測に基づく。スパイクは全て使い捨て（tracked ソース無改造・実施後クリーン）。
+
+### 7.1 決め手になった実測（版跨ぎ自己ホスト = 旧版コンパイラで新版出力を作れるか）
+
+版ピン留めの核心は「旧 seed(版 A) で新 HEAD を build し、必要なら版 B にバンプする」こと。
+版 A ≠ B のとき、自己ホストは途中で「直前に build した版 B の Nemerle.dll を、版 A で走る
+seed プロセスに参照ロードする」。このロードが成立するかをランタイム別に実測した:
+
+| ランタイム | 版跨ぎ自己ホスト | 実測 |
+|---|---|---|
+| **Windows CLR4（.NET FW 4.x）** | **可** | boot ncc v636 → Stage1 を env ピンで v700 生成、フルリビルド完走・0 error（`Framework\v4.0.30319\msbuild.exe`）。CLR4 は 1.2 系を寛容に束ねる（`lib/policy.1.2.*.config` の binding-redirect 相当） |
+| **CoreCLR（dotnet）** | **不可** | v636 seed が `build-stage2-core` で Nemerle.dll(v700) を生成後、`Nemerle.Compiler.dll` build 時にその v700 を `LibraryReferenceManager.assemblyLoadFrom`→`LoadFromAssemblyPath` でロードして **FileLoadException "manifest definition does not match" (0x80131040)**。厳格ローダーが版一致を強制 |
+| **Mono 6.x（Linux）** | **判定以前に不可** | ncc が SRE(AssemblyBuilder) で emit する設計だが、**Mono の Reflection.Emit が Nemerle の emit でアサーション死（SIGABRT）**。VM Mono 6.14 = `custom-attrs.c:718 'ctor_method'`、WSL Mono 6.12 = `sre-encode.c:290 'count>0'`。hello.n(`module H{Main():void{}}`) すら emit 不可 |
+
+**版ピン留め機構そのものは成立**（実証）: `macros/ExpandEnv.n` の `evaluateVar` は
+`getEnvironment() ?? getSpecial()[git describe] ?? getDefault()` の順で解決するため、
+**環境変数 `GitTag`/`GitRevision` が git describe を上書きする**。CoreCLR 上の Stage1 ncc で
+リポジトリ内（describe=637）に env `GitRevision=700` を与えて版属性付き 1 ファイルを compile
+→ 出力 AssemblyVersion=1.2.0.700 を確認（`GitRevision=640` のみだと GitTag は git から 1.2）。
+**共有ソース `GeneratedAssemblyVersion.n` は無改造で版固定できる**。
+
+### 7.2 Mono に関する重要な切り分け（dotnet-port の回帰ではない）
+
+上の Mono クラッシュが dotnet-port 固有かを確認するため、**dotnet-port 開始前の upstream
+Nemerle（commit b5f3b410cce…、2026-06-20「docs: fix typo」）の旧 boot ncc**（`boot/` と
+`boot-4.0/` 両方）を Mono 6.12 で走らせた → **旧 boot ncc も同じく SIGABRT（`sre-encode.c:290`）で
+hello を emit 不可**。よって **Mono 6.x の SRE と Nemerle の ncc(新旧問わず) が非互換**であり、
+dotnet-port が持ち込んだ回帰ではない（歴史的に Nemerle が動いた Mono 2.x〜4.x 世代から、
+Mono 6 で SRE 互換が壊れた）。Mono による Linux バンプは「より古い Mono」か「Mono SRE 側の
+修正」を要し、dotnet-port 範囲外の深いバックログ。
+
+Mono 経路で先に踏んだ 2 つの手前の壁（参考、いずれもローダー判定より手前）: (1) `xbuild`
+（`UseMSBuild` 空の既定 = `Nemerle.XBuild.Tasks.csproj`）は Ncc タスクを**コンパイル不可**
+（旧 `Microsoft.Build.*, Version=2.0.0.0` 参照が modern Mono に無い）。(2) `msbuild`
+（`/p:UseMSBuild=1` = `Nemerle.MSBuild.Tasks.csproj`）はタスクを build できるが**ロード不可**
+（基底 `ManagedCompiler` が Roslyn の `Microsoft.Build.Tasks.CodeAnalysis` に移動、Mono の
+タスクロードパスで解決不可）。根本は Ncc タスクが `ManagedCompiler` を継承していること。
+ただしこれらは SRE クラッシュ（本命の壁）より手前で、直接 ncc を叩く隔離実験（7.1 Mono 行）で
+バイパスした結果が上記 SRE 死。
+
+### 7.3 採用する設計（case 1 = 部分 GO の中身）
+
+- **版ピン**: チェックイン `version.txt`（例 `1.2.640`）から、リリース経路スクリプト
+  （`build-stage2-core.ps1` / `build-libs-core.ps1` 等）が `$env:GitTag`/`$env:GitRevision` を
+  設定して ncc を呼ぶ。**共有ソース無改造 → Stage フルリビルド不要 → 実装中の版ハザード無し
+  → §5-2 の CLR4 回帰ゲート・§5-5 の VsIntegration grep は原則不要**。素の `msbuild`/`dotnet build`
+  はスクリプト非経由なので describe に戻るが、ゴールは「リリース経路スクリプト内でのみピン」で
+  十分（PO Q1 合意）。
+- **§4-1 の A2 門番の格下げ（受容）**: 版が固定されるとロード時 FileLoadException による世代ズレ
+  強制検出が消える。検出は既存 provenance JSON（`boot-info.json`/`ncc-info.json`、既に commit を
+  記録）を使い、`assembly-version-check.ps1` を「AssemblyVersion == git describe」→「JSON 記録の
+  commit == HEAD（同一 version.txt 世代内の祖先）」の**commit 照合**へ再設計する（新規管理ファイルは
+  増やさない）。
+- **orphan + pinned-worktree の廃止**: +1 パラドックスが消えるので seed を in-tree に置ける。
+  同一 version.txt スパン内は seed(commit で古くても版は同じ)で任意 HEAD を Linux/CoreCLR で
+  ビルド可能（`build-from-boot.ps1` の `.boot-build-tree` 世代固定 worktree が不要になる）。
+- **バンプ = Windows/.NET FW 限定**: 版跨ぎは CLR4 のみ許容（7.1）。version.txt を上げる時だけ
+  Windows で新 seed を作る。日常の release-set 生成（工程 Y）は既に Linux/CoreCLR で完結（WP-N5）。
+
+### 7.4 version.txt 運用と バンプ手順
+
+- **cadence（PO 了承）= (c)+ABI ルール**: 毎コミットでは上げない。version.txt を上げるのは
+  **マクロ ABI 互換を壊す変更の区切りのみ**。コミット単位の同一性は provenance JSON の commit で
+  持ち、ズレは検査スクリプトで検出（7.3）。「同じ AssemblyVersion で中身違い」を混ぜてよいのは
+  同一 ABI 世代内、という規約を明文化する（§4-2）。NuGet base(rev) が自動で動かなくなるので
+  同一 base 再配布の `preview.<N+1>` 手動運用の比重が増える（§4-3 受容）。
+- **バンプ手順は 2 コミット**（seed はソースでなくバイナリ = ソース commit の後でしか作れない）:
+  `commit N` で ABI 変更 + `version.txt` 更新（seed はまだ旧版）→ Windows CLR4 でクリーン・
+  フルセルフホストして新版 seed 生成 → `commit N+1` で in-tree seed 差し替え。**ピンにより
+  commit N+1 は版を動かさない**ので後追いコミットでも seed は無効化されない（+1 パラドックス解消）。
+
+### 7.5 非ゴール / バックログ
+
+- **Mono による Linux バンプ**: 不成立（7.1/7.2）。Mono 6 SRE 非互換で、dotnet-port の回帰では
+  ない。深いバックログ（古い Mono or Mono SRE 修正）。
+- **案2（CoreCLR に CLR4 の binding-redirect を移植 = ncc `LibraryReferenceManager` 改修）**:
+  Linux 完全自足の唯一の残路だが、**PO 判断で優先度を上げない**（当面は部分的 Windows 依存を
+  維持）。ncc 共有ソース改修 = Stage リビルド + CLR4 回帰ゲートの重い WP。バックログ据え置き。
+
+### 7.6 実装状態
+
+本節は**評価の go/no-go 結論のみ**。case 1 の実装（version.txt 導入、env ピンのスクリプト配線、
+A2 の commit 照合化、orphan/worktree 廃止と in-tree seed 化、バンプ手順のスクリプト整備）は
+未着手で、別途実装ステップとする。7.3–7.4 の細部（seed の in-tree 配置場所、検査スクリプトの
+具体形）は実装時に確定する。
