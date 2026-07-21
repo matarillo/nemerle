@@ -198,7 +198,59 @@ Mono 経路で先に踏んだ 2 つの手前の壁（参考、いずれもロー
 
 ### 7.6 実装状態
 
-本節は**評価の go/no-go 結論のみ**。case 1 の実装（version.txt 導入、env ピンのスクリプト配線、
-A2 の commit 照合化、orphan/worktree 廃止と in-tree seed 化、バンプ手順のスクリプト整備）は
-未着手で、別途実装ステップとする。7.3–7.4 の細部（seed の in-tree 配置場所、検査スクリプトの
-具体形）は実装時に確定する。
+§7 までは評価の go/no-go 結論。case 1 の実装は 2026-07-21 に着手した（WP-N6 の前提工程
+= 46 §6 Q1 の PO 合意による。N6 は N7 の**判断**ではなく**実装**を前提とする — 36 §8 の
+順序記述はこの誤りを含んでいたため修正済み）。
+
+## 8. case 1 実装（第 1 スライス: 版ピンの成立）
+
+### 8.1 変更点
+
+| ファイル | 内容 |
+|---|---|
+| `version.txt`（リポジトリルート、新規） | ピン値 `1.2.635`。`<GitTag>.<GitRevision>` 形式。バンプ規約（ABI 区切りのみ・2 コミット儀式）をヘッダコメントに明記 |
+| `dotnet-port/version-pin.ps1`（新規） | dot-source 専用ライブラリ。`Get-NemerleVersionPin`（読み取り・検証・`AssemblyVersion` 算出）/ `Set-NemerleVersionPin`（`$env:GitTag`/`$env:GitRevision` を export） |
+| `dotnet-port/assembly-version-check.ps1` | 期待版の出所を `git describe` の再現から version.txt へ変更。検査の意味が「HEAD の commit で建てられたか」から「同じ version.txt スパンで建てられたか」（= CoreCLR ローダーが実際に強制する条件）へ変わる。エラーメッセージも 2 つの原因（バンプ後の未再建 / version.txt の手編集）に沿って書き直し |
+| `dotnet-port/build-stage2-core.ps1`、`build-libs-core.ps1` | ncc 起動前に `Set-NemerleVersionPin` を呼ぶ |
+
+`pack-tool.ps1` / `pack-release.ps1` / `publish-boot.ps1` は**無改造で追随**した
+（いずれも `Test-NemerleAssemblyVersionFreshness` / `Get-ExpectedNemerleAssemblyVersion`
+経由で期待版を得ているため、出所の差し替えがそのまま伝播する）。共有ソース
+（`macros/`）は §7.3 の想定どおり**無改造** — よって Stage フルリビルド不要、
+§5-2 の CLR4 回帰ゲート・§5-5 の VsIntegration grep は発生しなかった。
+
+ピン初期値に `1.2.635` を選んだ理由: 公開済み seed（`boot-net10` / `seed/1.2.635`、
+generation 635 = commit 0cab66afe）の版そのもの。HEAD（describe 638）との間で
+compiler ソース（`lib` `ncc` `macros` `Linq`）は**無変更**（`git diff --name-only`
+で確認: 差分は `boot-4.0/` バイナリと docs のみ）であり、§7.4 の ABI 区切り規約に照らして
+同一スパン。この選び方により**版ピン導入自体に Windows での seed 再生成が不要**になった。
+
+### 8.2 実測（Windows、seed 635 で HEAD 638 をビルド）
+
+版ピンの核心の主張 —「旧 seed で新 HEAD をビルドできる」— の直接検証。
+§7.1 の CoreCLR 行で **FileLoadException で不可**と記録された経路が、ピンにより成立するか。
+
+| 検証 | 結果 |
+|---|---|
+| seed 635（`bin/boot-net10` へ展開）で HEAD（638）の stage2 をビルド | **PASS**。4 アセンブリ 0 error。§7.1 で版跨ぎが落ちていた `Nemerle.Compiler.dll` 段を通過 |
+| stage2 出力の刻印版 | **1.2.0.635**（`Nemerle.dll` / `Nemerle.Compiler.dll` / `Nemerle.Macros.dll` / `ncc.exe` の 4 つとも）。describe が 638 でもピン値で刻まれる |
+| ピン付き stage2 の自己ホスト（stage3 生成） | **PASS**（0 error）。ピンで建てたコンパイラ自身がコンパイラとして機能する |
+| stage3 vs stage3b（同一 stage2 から 2 回） | **4/4 完全バイト一致** — 決定性は維持 |
+| stage2 vs stage3 | 3/4 不一致・`ncc.exe` 一致 → **37 §4.2 の baseline と同一**（net4 フレーバー ⇄ core フレーバーの gensym シフトによる既知の世代差）。ピン由来の回帰ではない |
+| `build-libs-core.ps1`（ピン経由） | **PASS**。`Nemerle.Linq.dll` = **1.2.0.635** |
+
+**結論: 版ピン機構は成立**。§7.1 が「CoreCLR では版跨ぎ自己ホスト不可」と記録した壁は、
+版を跨がせない（両側を version.txt に固定する）ことで回避できることを実測で確認した。
+これで seed は自分の世代のソースに縛られず、同一スパン内の任意 HEAD をビルドできる
+= **pinned worktree の存在理由が消えた**。
+
+### 8.3 残り（case 1 の未実装分）
+
+1. **A2 の commit 照合化**（§7.3）: provenance JSON（`boot-info.json` / `ncc-info.json`）の
+   記録 commit と HEAD の祖先関係を照合する検査。現状の検査は版一致のみで、同一スパン内の
+   世代ズレは検出しない（ピンの代償 = §4-1 で受容済みの門番格下げ）。
+2. **in-tree seed 化と orphan / pinned worktree の廃止**（§7.3）: `build-from-boot.ps1` の
+   世代判定・worktree 経路の撤去、`publish-boot.ps1` の発行先変更、seed の配置場所確定。
+3. **バンプ手順のスクリプト整備**（§7.4）。
+4. 素の `msbuild` / `dotnet build` は describe に戻る（§7.3 で受容済み、PO Q1）。
+   `tools/msbuild-task/GetGitTagRevision.cs` は未変更。

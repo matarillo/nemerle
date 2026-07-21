@@ -76,11 +76,17 @@ if ($RspDir   -eq "") { $RspDir   = Join-Path $PSScriptRoot "rsp/stage2" }
 
 if (-not (Test-Path $Compiler)) { throw "Compiler not found: $Compiler" }
 
-# WP-N1 (A2): make sure -Compiler's own Nemerle.dll was built from the same commit as HEAD
-# before using it to build Stage2 -- without this check, a stale -Compiler fails partway
-# through the build with an unexplained ref-def mismatch FileLoadException (see the design
-# notes above and dotnet-port\assembly-version-check.ps1) instead of stopping here with the
-# recovery steps.
+# WP-N7 (case 1): stamp the assemblies built below with the version pinned in version.txt
+# rather than whatever `git describe` says at this commit, by exporting GitTag/GitRevision for
+# the ncc child processes (dotnet-port\version-pin.ps1). This is what lets a seed compiler build
+# a commit other than its own -- see that script's header.
+. "$PSScriptRoot/version-pin.ps1"
+Set-NemerleVersionPin -RepoRoot $RepoRoot | Out-Null
+
+# WP-N1 (A2): make sure -Compiler's own Nemerle.dll is from the same version.txt span this build
+# will stamp -- without this check, a mismatched -Compiler fails partway through the build with
+# an unexplained ref-def mismatch FileLoadException (see the design notes above and
+# dotnet-port\assembly-version-check.ps1) instead of stopping here with the recovery steps.
 . "$PSScriptRoot/assembly-version-check.ps1"
 Test-NemerleAssemblyVersionFreshness -NemerleDllPath (Join-Path (Split-Path $Compiler) "Nemerle.dll") -RepoRoot $RepoRoot -Label "Compiler ($Compiler)"
 

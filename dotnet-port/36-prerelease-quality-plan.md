@@ -499,10 +499,17 @@ CLR4/Windows を外す**(残る CLR4 依存は凍結済みの創世 boot-4.0 の
 5. **WP-N4**(版タグ契約 + seed 番地付け + 初回 GitHub Release)— 完了(log 41。
    release/1.2.635-preview.1 を GitHub Release(prerelease)として発行、受け入れ 6 項目充足)。
    以降の前提 — タグ契約は CI の版整合検査と release workflow の前提。
-6. **WP-N7**(版ピン留め + orphan 廃止)の**評価 log 先行 → go/no-go**。この結論が
-   WP-N6 の seed 機構(orphan 継続か、版ピン留め後の新機構か)を決めるため、N6 より先に判断する。
-7. **WP-N6**(最小 CI)。N7 が go なら版ピン留め後の seed 機構上に、no-go なら orphan ベースで
-   構築する。go/no-go は N7 判断後に確定。
+6. **WP-N7**(版ピン留め + orphan 廃止)— **評価 log 先行 → go/no-go: 部分 GO**
+   (2026-07-21 PO 合意、log 44 §7)。case 1(版ピン留め + orphan/pinned-worktree 廃止)を採用、
+   版バンプは Windows/CLR4 限定。**実装は 44 §7.6 時点で未着手**。
+7. **WP-N6**(最小 CI)。**N7 は判断だけでなく実装が N6 の前提**である
+   — go の場合に N6 の workflow が乗る seed 機構は N7 の実装が作るものだから。
+   当初 §8 は依存を「判断」で切っていたが、これは誤りで、着手不能な順序を生んでいた
+   (2026-07-21 N6 着手時に判明、log 46 §2)。正しい順序は
+   **N7 case 1 の実装 → N6 の workflow 化**。N7 実装前に orphan ベースで CI を組むと、
+   push/PR ごとに pinned worktree 経路へ落ちて **HEAD ではなく seed 世代のソースを
+   ビルドしてしまい、CI が変更内容を検証できない**(log 46 §2)。
+   案 A(N7 case 1 を Step 0 として先行)で進める(2026-07-21 PO 合意)。
 
 ## 9. リスクと対策
 

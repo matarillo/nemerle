@@ -1,0 +1,20 @@
+# The pinned Nemerle assembly version base, as <GitTag>.<GitRevision>.
+#
+# The release-path scripts under dotnet-port/ read this file and export it as the GitTag /
+# GitRevision environment variables before invoking ncc, which the ExpandEnv macro prefers over
+# `git describe` (macros/ExpandEnv.n evaluateVar: environment -> git describe -> default). So
+# every assembly they build is stamped AssemblyVersion <GitTag>.0.<GitRevision> -- 1.2.0.635 for
+# the value below -- no matter which commit is being built.
+#
+# Why pinned: AssemblyVersion is what the CoreCLR loader uses for type identity, and it refuses
+# to load an assembly whose version differs from the reference. With the old `git describe`
+# recipe the version advanced on every commit, so a compiler binary could only ever build the
+# exact commit it was itself built from. Pinning it lets one checked-in seed compiler build any
+# commit in the same span. See dotnet-port/44-prerelease-wp-n7-log.md.
+#
+# When to bump: only at a change that breaks macro ABI compatibility -- NOT every commit.
+# Per-commit identity is carried by the provenance JSON files (boot-info.json / ncc-info.json),
+# which record the commit a binary was built from. Bumping is a two-commit ritual and currently
+# requires Windows/.NET Framework 4.x; see 44 §7.4.
+
+1.2.635

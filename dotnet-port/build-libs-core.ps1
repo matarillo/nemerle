@@ -53,7 +53,12 @@ if ($RspDir   -eq "") { $RspDir   = Join-Path $PSScriptRoot "rsp/libs" }
 
 if (-not (Test-Path $Compiler)) { throw "Compiler not found: $Compiler (build it first: dotnet-port/build-stage2-core.ps1)" }
 
-# WP-N1 (A2): the compiler must match HEAD's generation, both so it can load the
+# WP-N7 (case 1): same version pin as build-stage2-core.ps1, so Nemerle.Linq.dll is stamped
+# with version.txt's version rather than a describe-derived one (dotnet-port\version-pin.ps1).
+. "$PSScriptRoot/version-pin.ps1"
+Set-NemerleVersionPin -RepoRoot $RepoRoot | Out-Null
+
+# WP-N1 (A2): the compiler must be from the same version.txt span, both so it can load the
 # freshly-built lib during later use and so the GeneratedAssemblyVersion the Linq dll
 # gets stamped with agrees with the compiler's own.
 . "$PSScriptRoot/assembly-version-check.ps1"
