@@ -508,8 +508,8 @@ CLR4/Windows を外す**(残る CLR4 依存は凍結済みの創世 boot-4.0 の
    依存を「判断」で切っていたが誤りで着手不能な順序を生んでいた、log 46 §2)、
    **N7 case 1 の実装 → N6 の workflow 化**の順で実施。成果: push/PR CI(`dotnet-port-ci.yml`、
    Linux、green・3 分 54 秒)と手動 release workflow(`dotnet-port-release-build.yml`、
-   build-smoke / build-smoke-release の 2 段、発行まで自動化)。stretch(発行自動化)も達成。
-   release workflow の end-to-end 初回起動のみ未実施(log 46 §7.4/§7.5)。
+   build-smoke / build-smoke-release の 2 段、発行まで自動化)。stretch(発行自動化)も達成し、
+   使い捨てタグで end-to-end(発行 → 確認 → 削除)まで実証済み(log 46 §7.4)。
    案 A(N7 case 1 を Step 0 として先行)で進める(2026-07-21 PO 合意)。
 
 ## 9. リスクと対策

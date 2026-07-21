@@ -125,7 +125,7 @@ log に記録しスコープを再判断)。no-go の場合: 判断理由を本 
 |---|---|
 | `dotnet-port/verify-seed.ps1`(新規) | seed の schema / version.txt スパン / 全ファイル SHA256 / provenance コミット照合。`-WarnOnly` で provenance 不一致を警告へ降格。CI は release 封緘を行わず `build-from-boot.ps1` を丸ごと呼べないため、seed 検証をここへ抽出 |
 | `dotnet-port/smoke-release.ps1`(新規) | 消費者スモーク。feed からテンプレートを install → `nemerle-console` を生成 → build → run し `Hello from Nemerle on .NET 10!` を確認。梱包物が実際に install/build/run できるかを見る唯一の検査(他の suite は MSBuild 評価で止まる)。CI・release workflow・手元で共用 |
-| `dotnet-port/build-from-boot.ps1` | §3 のインライン seed 検証を `verify-seed.ps1` の子プロセス呼び出しへ置換(振る舞いは同一) |
+| `dotnet-port/build-from-boot.ps1` | §3 のインライン seed 検証を `verify-seed.ps1` の子プロセス呼び出しへ置換(振る舞いは同一)。加えて `-ReleaseTag` の base 版が version.txt のピンと一致することを検査(不一致なら停止)— tag が別版を主張してもパッケージはピン値で刻まれる「沈黙の嘘」を防ぐ。新版は Windows バンプ経路(44 §8.6)へ誘導 |
 | `.github/workflows/dotnet-port-ci.yml`(新規) | push/PR CI 本体 |
 | `.github/workflows/dotnet-port-release-build.yml`(新規) | Q3 の release workflow(build → smoke → publish) |
 | `.github/workflows/build.yml` | 削除(§6 Q2) |
@@ -194,16 +194,25 @@ Node 22(`setup-node@v4`、npm キャッシュ)/ pwsh は runner 標準。
 なので、正しい数は Linux で 2。プラットフォーム対応の期待値へ修正
 (`PathNormalizerTests` と同じ分岐方針)。
 
-ローカル(Windows)で確認済み: `verify-seed.ps1` 正常系/異常系、`smoke-release.ps1` フル走行、
-`ProjectInfo.Test`(unit)、workflow 2 本の YAML パース。
+**release workflow(`dotnet-port-release-build.yml`)= 両段とも green・実発行まで確認**
+(使い捨てタグ `release/1.2.635-citest.1` で検証、事後に Release・タグとも削除):
 
-**未実測**: release workflow の発行経路(`gh release create/upload`)。build-smoke 段は
-副作用が無いが、いずれも現行 HEAD にタグを付けて起動する必要があり、実発行は
-publish 操作を伴うため PO 主導で行う。
+- **build-smoke**(dry run): 2 分 26 秒。`build-from-boot -ReleaseTag`(base ガード通過)→
+  smoke → artifact。**publish ステップは skip**(`stage` ガードが効いている)。
+- **build-smoke-release**: 2 分 39 秒。上に続けて `gh release create` が **prerelease** を作成、
+  asset 6 点(Sdk/Templates/Linq nupkg = `1.2.635-citest.1`・VSIX・README・release-info.json)。
+  `isPrerelease: true` / `releases/latest` は 404(= **Latest に付かない**)/ `isImmutable: false`
+  (削除可)を確認。`gh release delete --cleanup-tag` で Release・git タグとも消え、副作用なし。
+
+ローカル(Windows)で確認済み: `verify-seed.ps1` 正常系/異常系、`smoke-release.ps1` フル走行、
+`ProjectInfo.Test`(unit)、base ガードの不一致停止、workflow 2 本の YAML パース。
 
 #### 7.5 申し送り
 
-- release workflow が発行を担うようになったため、`DISTRIBUTION.md` / `packaging/README.md` の
-  リリース手順を「タグ push 後にこの workflow を起動して発行する」形へ更新すること。**未実施**。
-- release workflow の end-to-end 初回起動(build-smoke → build-smoke-release)を PO が実施し、
-  結果をここへ追記する。
+- `DISTRIBUTION.md`(CI 節・追加ファイル一覧)/ `packaging/README.md`(発行手順を workflow ベースへ +
+  取り消し手順)/ `36 §8`(N6=完了)を更新済み。
+- **版バンプ(新 base 版)の検証は N6 スコープ外**(批判的判断): 新版は version.txt 更新 +
+  Windows/CLR4 での seed refresh(44 §8.6)を要し、Linux CI では原理的に実行不可。boot-4.0 →
+  Stage1 再生成と同じ Windows 手動ゲートに属する。seed ビルド(= 通常の preview.N リリース)は
+  それ自体がフルビルドで、CI・release workflow の両方で実証済み。tag base ガードで新版経路への
+  誤進入も塞いだ。
