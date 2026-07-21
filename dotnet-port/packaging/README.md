@@ -353,28 +353,35 @@ nuget.org would render); this page is the install guide, and `pack-tool.ps1 -Pac
 #### Building the release set from a clone (Linux or Windows, no .NET Framework required)
 
 Only building Stage1 itself needs Windows; everything after that already runs on `pwsh` on
-either OS (see above). The `boot-net10` orphan branch closes that last gap: it carries a
-Windows-built Stage1 compiler, kept off main's history so committing it never moves `git
-describe` (and therefore never disturbs the assembly versions baked into every build). On a
-clone that fetched it — a plain `git clone` does, a `--single-branch` clone or a source archive
-does not, in which case run `git fetch origin boot-net10:boot-net10` first — just run:
+either OS (see above). The checked-in seed at `dotnet-port/seed/` closes that last gap: it is a
+Windows-built Stage1 compiler committed to the tree, so any clone has it. Run:
 
 ```powershell
 pwsh dotnet-port/build-from-boot.ps1
 ```
 
-It fetches the seed, verifies it, and drives the same build chain as above from it, building
-either in place or in a pinned worktree depending on whether this checkout's generation already
-matches the seed's. The output lands at `dotnet-port/dist/release` (in-place case) or
-`dotnet-port/dist/release-from-boot` (worktree case); either way the script prints the final path.
+It verifies the seed against `seed-info.json` (schema, pinned version, per-file SHA256) and
+drives the same build chain as above from it, building **this checkout's sources**. The output
+lands at `dotnet-port/dist/release`.
 
-#### Refreshing the boot seed
+That the seed can build a commit other than the one it was built from is what `version.txt`
+buys: the pinned assembly version means every commit in the same span loads against the same
+compiler identity. Bumping `version.txt` is the only thing that invalidates a seed.
 
-After rebuilding Stage1 on Windows from the commit you want to seed, run
-`pwsh dotnet-port/publish-boot.ps1` and then push what it tells you to — the branch plus the
-`seed/1.2.<rev>` tag it creates on the new seed commit (e.g.
-`git push origin boot-net10 seed/1.2.635`). The tag pins the seed generation permanently, so a
-published release can name it later even after the branch tip moves on.
+#### Refreshing the seed
+
+Needed only after a `version.txt` bump (or when the seed should otherwise be advanced) — not for
+ordinary commits. On Windows, export the pin, rebuild Stage1 with the CLR4 msbuild, then:
+
+```powershell
+. dotnet-port/version-pin.ps1 ; Set-NemerleVersionPin -RepoRoot .
+# ... msbuild Stage1 target, then refresh-stage1-core.ps1 ...
+pwsh dotnet-port/publish-seed.ps1
+```
+
+`publish-seed.ps1` verifies the rebuilt Stage1 (version, smoke test), rewrites `dotnet-port/seed/`
+and stages it for review; you make the commit. Because the version is pinned, that commit does
+not move the assembly version, so the seed is still valid for the commit that contains it.
 
 #### Tagging and publishing a release (GitHub Releases)
 
@@ -382,15 +389,19 @@ Tag names must NOT start with `v` and must be lightweight — `v*` tags feed the
 computation (`git describe --match "v[0-9]*"`), so a release tag that matched it would corrupt
 the version of every later commit. See the tag-contract section in `dotnet-port/DISTRIBUTION.md`.
 
-1. Refresh the boot seed from the release's source commit (previous section) and push it.
-2. Tag the source commit: `git tag release/1.2.<rev>-preview.<N> <commit>` (lightweight), where
+1. Tag the source commit: `git tag release/1.2.<rev>-preview.<N> <commit>` (lightweight), where
    `1.2.<rev>` is the packaged compiler's base version and `N` is chosen by the operator
    (see `pack-tool.ps1`'s suffix policy). Push the tag.
-3. Build the assets from a throwaway clone at a stable path (byte-reproduction depends on the
-   absolute build path, so use the same path every time on a given machine):
+2. Build the assets from a throwaway clone at a stable path (byte-reproduction depends on the
+   absolute build path, so use the same path every time on a given machine), with the release
+   tag checked out:
+   `git checkout release/1.2.<rev>-preview.<N>` then
    `pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>`
-4. Publish `dist/release-from-boot`'s files as the assets of a GitHub prerelease on that tag:
+3. Publish `dist/release`'s files as the assets of a GitHub prerelease on that tag:
    `gh release create release/1.2.<rev>-preview.<N> --prerelease <files...>`
+
+A separate seed refresh is no longer part of this ritual: the seed is checked in, so the release
+tag's own commit already carries the seed the release was built from.
 
 Reproducing a published release later is step 3 again, in a fresh clone at the same path. The
 result matches the published assets by version and content; the Nemerle-built binaries inside

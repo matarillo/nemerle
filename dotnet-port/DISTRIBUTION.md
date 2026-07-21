@@ -465,18 +465,27 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 ## 版タグ契約(WP-N4、2026-07-19)
 
 アセンブリ版は `GeneratedAssemblyVersion` マクロ(`macros\GeneratedAssemblyVersion.n`)が
-コンパイル時に実行する `git describe --tags --long --match "v[0-9]*"` から焼き込まれる。
+コンパイル時に決める。**WP-N7(case 1)以降、リリース経路のスクリプトはリポジトリルートの
+`version.txt` の固定値を `$env:GitTag`/`$env:GitRevision` として渡す**
+(`dotnet-port\version-pin.ps1`)。ExpandEnv は環境変数を describe より優先するため、
+スクリプト経由のビルドは**コミットに関係なく version.txt の版**で刻まれる。
+スクリプトを経由しない素の `msbuild` / `dotnet build` は従来どおり
+`git describe --tags --long --match "v[0-9]*"` に戻る(受容済みの境界)。
 `--match` により **v 開始タグだけ**が版計算に入る。したがって:
 
-- **リリースタグは `release/1.2.<rev>-preview.<N>`**(実ソースコミットに打つ)、
-  **seed タグは `seed/1.2.<rev>`**(orphan `boot-net10` の seed コミットに打つ)。
-  ともに **v 非開始が必須**(`v*` は upstream rsdn/nemerle の名前空間 = 版計算の予約領域)。
-- **ともに lightweight タグで作る**(`git tag <name> <sha>`、`-a`/`-m` を付けない)。
+- **リリースタグは `release/1.2.<rev>-preview.<N>`**(実ソースコミットに打つ)。
+  **v 非開始が必須**(`v*` は upstream rsdn/nemerle の名前空間 = 版計算の予約領域)。
+- **seed タグ `seed/1.2.<rev>` は WP-N7 以降は作らない**: seed は `dotnet-port\seed\` に
+  チェックインされ、リリースタグのコミット自身がその seed を含むため、seed を別途
+  番地付けする必要がない。既存の `seed/1.2.630` / `seed/1.2.635` は orphan 時代の
+  履歴として残す(タグ契約の v 非開始規則は引き続き適用)。
+- **lightweight タグで作る**(`git tag <name> <sha>`、`-a`/`-m` を付けない)。
   pack 系スクリプト(`pack-tool.ps1` / `pack-server.ps1` / `pack-release.ps1`)の provenance
   describe は annotated 限定 + `--match` で防御済みだが、lightweight 運用が第一の契約。
-- 同一レシピの複製 3 箇所(`dotnet-port\assembly-version-check.ps1` /
-  `tools\msbuild-task\GetGitTagRevision.cs`)と世代比較 2 箇所(`publish-boot.ps1` /
-  `build-from-boot.ps1`)は macro と**乖離させない**こと。
+- 同一レシピの複製(`dotnet-port\assembly-version-check.ps1` /
+  `tools\msbuild-task\GetGitTagRevision.cs`)は macro と**乖離させない**こと。
+  ただし `assembly-version-check.ps1` は WP-N7 で describe 再現をやめ version.txt を読む
+  ようになった(検査の意味も「HEAD の commit か」→「同じ version.txt スパンか」へ変更)。
 - git 2.7 以上が必要(`--tags` + `--match` の lightweight タグへの適用)。
 
 **契約修正前の世代(1.2.630 以前)にはタグを打てない**: macro はコンパイル時にレシピを
@@ -491,22 +500,26 @@ Stage3 の 2 世代セルフホストで fixpoint を確認してから採用)�
 (45-log 参照。定期更新の義務はない — 問題が顕在化した時のスポット更新で足りる)。
 
 なお、この更新は**発行済みリリースの再現性に影響しない**: `build-from-boot.ps1` /
-`publish-boot.ps1` が消費するのは orphan ブランチ `boot-net10` の seed のみで、
-boot-4.0 には一切依存しない(43-boot-net10-log.md §2)。boot-4.0 の更新だけを理由に
-再リリースする必要はない。
+`publish-seed.ps1` が消費するのはチェックイン済み seed(`dotnet-port\seed\`、WP-N7 以前は
+orphan ブランチ `boot-net10`)のみで、boot-4.0 には一切依存しない(43-boot-net10-log.md §2)。
+boot-4.0 の更新だけを理由に再リリースする必要はない。
 
-根治(describe 依存そのものを断つ版ピン留め)は別課題として WP-N7 が引き続き評価する
-(`44-prerelease-wp-n7-log.md`)。
+根治(describe 依存そのものを断つ版ピン留め)は WP-N7 で**部分 GO・実装済み**
+(`44-prerelease-wp-n7-log.md` §7–§8)。version.txt によるピンで seed は自分の世代に
+縛られなくなり、orphan ブランチと pinned worktree は廃止された。
 
-**発行済みリリースの再現**: `release-info.json` の `seed` フィールド(orphan seed コミット
-hash・`seed/` タグ・世代)がリリース ↔ seed の対応を機械可読に保持する。再現は
+**発行済みリリースの再現**: `release-info.json` の `seed` フィールド(seed ディレクトリを
+最後に変更したコミット・pinnedVersion・seed の世代)がリリース ↔ seed の対応を機械可読に
+保持する。再現はリリースタグを**チェックアウトしてから**:
 
 ```powershell
+git checkout release/1.2.<rev>-preview.<N>
 pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>
 ```
 
-がタグ名から seed(`seed/1.2.<rev>`)と版 suffix を導出し、常に pinned worktree
-(`<cloneRoot>\.boot-build-tree`)でビルドする。再現の一致水準(41 log §7.8.1 の実測):
+`-ReleaseTag` はタグ名から版 suffix を導出し、**このチェックアウトが本当にそのタグの
+コミットか**を検証する(不一致なら停止)。seed はそのコミットに含まれているので、
+worktree もブランチ解決も不要になった。再現の一致水準(41 log §7.8.1 の実測):
 
 - **版・構成・provenance の同一性フィールドは完全一致**。
 - **Nemerle 製アセンブリ(ncc.exe / Nemerle*.dll / Nemerle.Linq.dll)と静的コンテンツは

@@ -244,13 +244,48 @@ compiler ソース（`lib` `ncc` `macros` `Linq`）は**無変更**（`git diff 
 これで seed は自分の世代のソースに縛られず、同一スパン内の任意 HEAD をビルドできる
 = **pinned worktree の存在理由が消えた**。
 
-### 8.3 残り（case 1 の未実装分）
+### 8.3 残り（第 1 スライス時点）
 
-1. **A2 の commit 照合化**（§7.3）: provenance JSON（`boot-info.json` / `ncc-info.json`）の
-   記録 commit と HEAD の祖先関係を照合する検査。現状の検査は版一致のみで、同一スパン内の
-   世代ズレは検出しない（ピンの代償 = §4-1 で受容済みの門番格下げ）。
-2. **in-tree seed 化と orphan / pinned worktree の廃止**（§7.3）: `build-from-boot.ps1` の
-   世代判定・worktree 経路の撤去、`publish-boot.ps1` の発行先変更、seed の配置場所確定。
+1. **A2 の commit 照合化**（§7.3）。
+2. **in-tree seed 化と orphan / pinned worktree の廃止**（§7.3）→ **§8.4 で実施**。
 3. **バンプ手順のスクリプト整備**（§7.4）。
 4. 素の `msbuild` / `dotnet build` は describe に戻る（§7.3 で受容済み、PO Q1）。
    `tools/msbuild-task/GetGitTagRevision.cs` は未変更。
+
+## 8.4 case 1 実装（第 2 スライス: in-tree seed 化と orphan 廃止）
+
+**seed の配置場所 = `dotnet-port/seed/`**（2026-07-22 PO 決定）。`bin`/`obj`/`dist`
+セグメントを避ける必要がある（log 43 の worktree 失敗と同根: VS Code 拡張の
+project discovery がそれらを除外する）ことと、移植固有の成果物を `dotnet-port/` 配下へ
+集約する一貫性から。
+
+### 8.4.1 変更点
+
+| ファイル | 内容 |
+|---|---|
+| `dotnet-port/seed/`（新規、7 ファイル） | 635 seed のバイナリ 6 個 + `seed-info.json`。バイナリは orphan `boot-net10` からハッシュ完全一致で移送 |
+| `seed-info.json`（schema 2） | `boot-info.json`（schema 1）から改名・改版。`pinnedVersion` を追加。provenance（`generation.commit` = 0cab66afe）は**実際に建てられたコミットのまま維持**し、移送であることを `migratedFrom` に明記 |
+| `dotnet-port/publish-seed.ps1`（`publish-boot.ps1` を置換） | orphan ブランチ・throwaway worktree・`seed/<base>` タグ付けを撤去。`dotnet-port/seed/` を書き換えて `git add` するのみ（コミットは人間が行う）。Stage1 を CLR4 msbuild で建てる際に env ピンが要ることを前提条件のヒントに明記 |
+| `dotnet-port/build-from-boot.ps1` | seed ref 解決（`-Branch`/`-Seed`）・`git archive` 展開・世代判定・pinned worktree・`dist/release-from-boot` への回収を**全撤去**。in-tree seed を検証して**常にこのチェックアウトのソースを**ビルドする。`-ReleaseTag` は「このチェックアウトがそのタグのコミットであることを検証 + suffix 導出」へ再定義 |
+| `dotnet-port/pack-release.ps1` | seed 記録を in-tree seed から読む。**「seed の世代 commit == リリース commit」検査を撤去**（ピンが不要にした制約そのもの）し、代わりに pinnedVersion == version.txt を検査 |
+| `DISTRIBUTION.md` / `packaging/README.md` | タグ契約（seed タグは今後作らない）、seed refresh 手順、リリース再現手順を実態へ更新 |
+
+`build-from-boot.ps1` は**名前を変えていない**（発行済みリリースのドキュメントが
+この名前を参照しているため）。行数は 304 → 165 行。
+
+### 8.4.2 実測
+
+| 検証 | 結果 |
+|---|---|
+| in-tree seed で HEAD の stage2 をビルド | **PASS**（0 error） |
+| その出力 vs orphan seed から建てた stage2 | **4/4 完全バイト一致** — 移送でバイナリが変質していないことの証明 |
+| dirty tree での `build-from-boot.ps1` | **期待どおり停止**（clean tree 要求のガードが先に効く） |
+
+### 8.4.3 廃止したものと残したもの
+
+- **廃止**: orphan ブランチ `boot-net10` の消費経路、`.boot-build-tree` worktree、
+  `build-from-boot.ps1` の `-Branch`/`-Seed`/`-KeepWorktree`、`dist/release-from-boot`、
+  publish 時の `seed/<base>` タグ自動付与。
+- **残す**: orphan ブランチ `boot-net10` そのものと既存の `seed/1.2.630` / `seed/1.2.635`
+  タグは**削除しない**。発行済み 1.2.635-preview.1 の再現手段として履歴に必要で、
+  消しても得るものが無い。新規の seed 発行はもう orphan に対して行わない。

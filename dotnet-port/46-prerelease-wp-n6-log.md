@@ -116,9 +116,22 @@ seed 635 で HEAD(638)の stage2 をビルドでき、出力は全て 1.2.0.635 
 **これで §2 の空振り問題は原理的に解消**した — CI は seed の世代へ退避せず
 push/PR の HEAD をそのままビルドできる。
 
-残り(log 44 §8.3): A2 の commit 照合化 / in-tree seed 化と orphan・pinned worktree の
-廃止 / バンプ手順のスクリプト整備。**N6 の Step 1 が実際に必要とするのは 2 番目**
-(workflow が seed をどう入手し、どの経路でビルドするかが決まるため)。
+**第 2 スライス(in-tree seed 化と orphan 廃止)= 達成**(2026-07-22、log 44 §8.4)。
+seed は `dotnet-port/seed/` にチェックインされ、`build-from-boot.ps1` は常に
+このチェックアウトのソースをビルドする。**N6 の Step 1 が待っていたのはここ**で、
+これで workflow の中身が確定できる:
+
+- seed の入手 = 通常の clone(orphan ブランチの fetch も worktree も不要)。
+- CI のビルド経路 = `build-from-boot.ps1` そのもの。push/PR の HEAD が
+  そのままビルド対象になる。
+- ただし CI は release set の封緘まで必要ないので、Step 1 では
+  `build-from-boot.ps1` を丸ごと呼ぶのではなく、同じチェーンの前半
+  (stage2 → libs → pack-tool → pack-server)+ テストに絞る。
+  `build-from-boot.ps1` は clean tree を要求する(pack-release の前提)ため、
+  CI で丸ごと呼ぶと PR の性質と噛み合わない場面がある。
+
+残り(log 44 §8.3): A2 の commit 照合化 / バンプ手順のスクリプト整備。
+前者は N6 の「seed 鮮度警告」の中身なので Step 1 と近接して実施する。
 
 ### Step 1(CI workflow)
 

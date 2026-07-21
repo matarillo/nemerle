@@ -14,12 +14,12 @@
 # every stage binary. The version is now pinned by the repo-root version.txt
 # (dotnet-port\version-pin.ps1), so the question becomes "was this compiler built within the
 # current version.txt span?" -- which is the condition the CoreCLR loader actually enforces.
-# Per-commit identity moved to the provenance JSON files (boot-info.json / ncc-info.json), which
-# record the commit each binary was built from.
+# Per-commit identity moved to the provenance JSON files (seed/seed-info.json / ncc-info.json),
+# which record the commit each binary was built from.
 #
 # This file is NOT meant to be executed directly -- it is a dot-source-only library of two
 # functions, consumed by build-stage2-core.ps1 / build-libs-core.ps1 / pack-tool.ps1 /
-# pack-release.ps1 / publish-boot.ps1. Dot-source it like:
+# pack-release.ps1 / publish-seed.ps1. Dot-source it like:
 #   . "$PSScriptRoot\assembly-version-check.ps1"
 #   Test-NemerleAssemblyVersionFreshness -NemerleDllPath <path> -RepoRoot $RepoRoot -Label "Stage1"
 

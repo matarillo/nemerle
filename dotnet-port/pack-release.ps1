@@ -141,60 +141,56 @@ if ($bundleInfo.commit -ne $commit) {
 # ---------------------------------------------------------------------------
 . "$PSScriptRoot/assembly-version-check.ps1"
 $expectedNemerleAssemblyVersion = Get-ExpectedNemerleAssemblyVersion -RepoRoot $RepoRoot
-if ($null -eq $expectedNemerleAssemblyVersion) {
-    Write-Warning "Could not determine an expected Nemerle assembly version from 'git describe --tags --long' at $RepoRoot -- skipping the packaged-toolchain freshness check."
-}
-elseif ($toolchainInfo.nemerleAssemblyVersion -ne $expectedNemerleAssemblyVersion) {
+if ($toolchainInfo.nemerleAssemblyVersion -ne $expectedNemerleAssemblyVersion) {
     throw @"
-Release halted: the packaged toolchain's Nemerle assembly version does not match what HEAD ($commit) expects.
+Release halted: the packaged toolchain's Nemerle assembly version does not match this checkout's pinned version.
   packages         nemerleAssemblyVersion $($toolchainInfo.nemerleAssemblyVersion) (from ncc-info.json, commit $($toolchainInfo.commit))
-  HEAD expects     $expectedNemerleAssemblyVersion (from 'git describe --tags --long')
-This means the packaged compiler was built before the current commit's assembly-version-affecting
-history, even though its recorded commit matched. Rebuild the toolchain from HEAD and re-pack:
+  version.txt pins $expectedNemerleAssemblyVersion
+This means the packaged compiler was built in a different version.txt span than the one being
+released, even though its recorded commit matched. Rebuild the toolchain and re-pack:
   pwsh dotnet-port/build-stage2-core.ps1
   pwsh dotnet-port/pack-tool.ps1 -Pack
 "@
 }
 
 # ---------------------------------------------------------------------------
-# 3c. WP-N4: record the release <-> seed-commit correspondence, machine-readably, so a
-#     published release can be reproduced later from its seed (dotnet-port/build-from-boot.ps1's
-#     -ReleaseTag / -Seed read this back). Best-effort only: an environment that built Stage1
-#     directly on Windows has no boot-net10 seed at all, which is a legitimate throwaway path --
-#     so a missing or mismatched seed just warns, it must never block the release.
+# 3c. WP-N4: record which stage1 seed this release's toolchain was ultimately built from, so a
+#     published release can be reproduced later. Since WP-N7 the seed is checked in at
+#     dotnet-port/seed/, so it is simply read from this checkout -- reproduction no longer needs
+#     to resolve an orphan branch, it just checks the release tag out (build-from-boot.ps1
+#     -ReleaseTag). Best-effort only: an environment that built Stage1 directly on Windows may
+#     have no seed at all, which is a legitimate throwaway path -- so a missing or mismatched
+#     seed just warns, it must never block the release.
+#
+#     Note what is NOT checked here any more: the seed's generation commit no longer has to equal
+#     the release commit. That constraint existed because a describe-derived version made a seed
+#     usable only for its own commit; with version.txt pinning, any commit in the same span is
+#     fair game, and the span is what gets verified instead.
 # ---------------------------------------------------------------------------
 $seedInfo = $null
-$seedRef = $null
-foreach ($candidate in @("boot-net10", "origin/boot-net10")) {
-    & git -C $RepoRoot rev-parse --verify --quiet $candidate | Out-Null
-    if ($LASTEXITCODE -eq 0) { $seedRef = $candidate; break }
-}
+$seedInfoPath = Join-Path $PSScriptRoot "seed/seed-info.json"
 
-if ($null -eq $seedRef) {
-    Write-Warning "No 'boot-net10' or 'origin/boot-net10' ref found -- release-info.json will record seed = null."
+if (-not (Test-Path $seedInfoPath)) {
+    Write-Warning "No checked-in seed at $seedInfoPath -- release-info.json will record seed = null."
 }
 else {
-    $seedBootInfoText = & git -C $RepoRoot show "${seedRef}:boot-info.json" 2>$null
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($seedBootInfoText)) {
-        Write-Warning "Could not read boot-info.json from '$seedRef' -- release-info.json will record seed = null."
+    $seedSeedInfo = Get-Content -Raw -Path $seedInfoPath | ConvertFrom-Json
+    $pinnedBase = (Get-NemerleVersionPin -RepoRoot $RepoRoot).Base
+    if ($seedSeedInfo.pinnedVersion -ne $pinnedBase) {
+        Write-Warning "The checked-in seed is pinned to $($seedSeedInfo.pinnedVersion) but version.txt says $pinnedBase -- release-info.json will record seed = null."
     }
     else {
-        $seedBootInfo = $seedBootInfoText | ConvertFrom-Json
-        $seedCommit = (& git -C $RepoRoot rev-parse "${seedRef}^{commit}").Trim()
-        if ($seedBootInfo.generation.commit -ne $commit) {
-            Write-Warning "'$seedRef' (orphan commit $seedCommit) was seeded from $($seedBootInfo.generation.commit), not this release's commit ($commit) -- release-info.json will record seed = null."
-        }
-        else {
-            $seedTag = (& git -C $RepoRoot tag --points-at $seedCommit -l 'seed/*') | Select-Object -First 1
-            if (-not $seedTag) { $seedTag = $null }
-            $seedInfo = [ordered]@{
-                commit     = $seedCommit
-                tag        = $seedTag
-                generation = [ordered]@{
-                    commit                 = $seedBootInfo.generation.commit
-                    describe               = $seedBootInfo.generation.describe
-                    nemerleAssemblyVersion = $seedBootInfo.generation.nemerleAssemblyVersion
-                }
+        # The commit that last changed the seed directory: the seed's own address in this
+        # history, now that it lives on the branch rather than on a disconnected orphan root.
+        $seedCommit = (& git -C $RepoRoot log -1 --format=%H -- (Join-Path $PSScriptRoot "seed"))
+        $seedCommit = if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($seedCommit)) { $seedCommit.Trim() } else { $null }
+        $seedInfo = [ordered]@{
+            commit        = $seedCommit
+            pinnedVersion = $seedSeedInfo.pinnedVersion
+            generation    = [ordered]@{
+                commit                 = $seedSeedInfo.generation.commit
+                describe               = $seedSeedInfo.generation.describe
+                nemerleAssemblyVersion = $seedSeedInfo.generation.nemerleAssemblyVersion
             }
         }
     }
@@ -210,7 +206,7 @@ $releaseInfo = [ordered]@{
     # The identity the two halves must share at run time; the server warns if a project's
     # toolchain disagrees with it (29-devenv2-plan.md section 6.8).
     nemerleAssemblyVersion = $toolchainInfo.nemerleAssemblyVersion
-    # WP-N4: which boot-net10 seed commit (if any) this release's toolchain was ultimately
+    # WP-N4: which checked-in stage1 seed (if any) this release's toolchain was ultimately
     # built from -- null when there is none (see the 3c comment above).
     seed                   = $seedInfo
     extension              = [ordered]@{
