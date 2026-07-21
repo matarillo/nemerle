@@ -39,7 +39,11 @@ internal static class Program
         var fixture = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Fixtures", "msbuild-mixed.json"));
         var key = ProjectQueryKey.Create("dotnet", @"C:\repo\App\App.nproj");
         var snapshot = MsBuildJsonParser.Parse(key, fixture);
-        Equal(1, snapshot.SourceFiles.Count, "case-insensitive duplicate source normalization");
+        // The fixture lists one source twice, differing only in case (Program.n / program.n on
+        // C:\ / c:\). Whether that is one file or two is a filesystem property, and ProjectPath-
+        // Normalizer mirrors it: case-insensitive on Windows (deduped to 1), case-sensitive on
+        // Linux/macOS (kept as 2). This is the same platform split PathNormalizerTests documents.
+        Equal(OperatingSystem.IsWindows() ? 1 : 2, snapshot.SourceFiles.Count, "case-folded duplicate source normalization matches the platform filesystem");
         Equal(2, snapshot.AssemblyReferences.Count, "framework facade exclusion");
         True(snapshot.AssemblyReferences.Any(path => path.EndsWith("MathLib.dll", StringComparison.OrdinalIgnoreCase)), "project reference retained");
         True(snapshot.AssemblyReferences.Any(path => path.EndsWith("Newtonsoft.Json.dll", StringComparison.OrdinalIgnoreCase)), "package reference retained");
