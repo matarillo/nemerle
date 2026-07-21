@@ -424,6 +424,12 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 - 新規: `dotnet-port\samples\HelloCore\HelloCore.nproj`, `hello.n`
 - 新規: `dotnet-port\samples\RefDemo\`(MathLib ライブラリ → App exe の ProjectReference 例)
 - 新規: `dotnet-port\DISTRIBUTION.md`(本ドキュメント)
+- 新規(WP-N6): `dotnet-port\verify-seed.ps1`(seed 検証を `build-from-boot.ps1` から抽出。
+  schema / version.txt スパン / 全ファイル SHA256 / provenance コミット照合。`-WarnOnly` あり)、
+  `dotnet-port\smoke-release.ps1`(消費者スモーク: feed から install → `nemerle-console`
+  生成 → build → run)、`.github\workflows\dotnet-port-ci.yml`(push/PR CI)、
+  `.github\workflows\dotnet-port-release-build.yml`(手動 release workflow)。
+  削除: `.github\workflows\build.yml`(upstream 由来・`windows-2016` 退役で死亡)
 - コンパイラー側: `ncc\passes.n`(CoreCLR デフォルト参照の自動解決 `LoadCoreStdlibReferences`, 56964d879)。
   **WP-A3 ではコンパイラー側は無変更**。
 - 既存改変(最小限): `.gitignore`(`dotnet-port/dist/` と `*.nupkg` を追加、
@@ -458,9 +464,10 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
    するため copy/clean は共通ターゲットが自動処理)。HelloCore/RefDemo で `dotnet clean` 後の
    bin 空・.pdb 生成コピーを実測。
 4. 実配布を見据えるなら、`Nemerle.Tool` の nupkg メタデータ(README・ライセンス・アイコン)
-   整備と CI での `pack-tool.ps1` → `dotnet pack` 自動化。加えて **Linux 用 ncc レイアウト
-   生成スクリプト**(`pack-tool.ps1` の Linux 版: `ncc.exe` 除外・`ncc.default.rsp` 不要・
-   `msbuild/ncc/` 配置)も未整備。
+   整備。**CI 化は WP-N6 で完了**(下記「CI」節。push/PR で `pack-tool.ps1 -Pack` まで含む
+   フルチェーンが Linux で自動実行され、release workflow が発行まで担う)。**Linux 用 ncc
+   レイアウト生成スクリプト**(`pack-tool.ps1` の Linux 版: `ncc.exe` 除外・`ncc.default.rsp`
+   不要・`msbuild/ncc/` 配置)は未整備のまま。
 
 ## 版タグ契約(WP-N4、2026-07-19)
 
@@ -530,3 +537,33 @@ worktree もブランチ解決も不要になった。再現の一致水準(41 l
   ビルドごとに変わるため。照合は「版 + zip 内エントリー単位の内容ハッシュ」で行うこと。
 
 詳細な設計と実測は `dotnet-port\41-prerelease-wp-n4-log.md`。
+
+## CI(WP-N6、Linux)
+
+GitHub Actions ワークフロー 2 本。設計と実測は `dotnet-port\46-prerelease-wp-n6-log.md`。
+
+**`.github\workflows\dotnet-port-ci.yml`(push/PR CI)**: `wip/dotnet-port` への push と
+同ブランチ宛 PR で自動実行(`**/*.md` のみの変更は除外。`workflow_dispatch` で手動起動も可)。
+`ubuntu-24.04` 単一ジョブで、チェックイン seed から **その HEAD** をビルドして検証する:
+`verify-seed.ps1` → `build-stage2-core.ps1`(seed の ncc で stage2)→ `build-libs-core.ps1`
+→ `pack-tool.ps1 -Pack` → `pack-server.ps1` → samples restore → npm unit → raw LSP
+integration → `ProjectInfo.Test --integration` → `smoke-release.ps1`(消費者スモーク)。
+初回実測 3 分 54 秒(受け入れ目安 15 分内)。
+
+**`.github\workflows\dotnet-port-release-build.yml`(手動 release workflow)**:
+`workflow_dispatch` のみ。入力 `release_tag`(push 済みタグ)+ `stage`。
+`stage=build-smoke` はビルド + `smoke-release.ps1` で停止する dry run、
+`stage=build-smoke-release` は続けて GitHub Release へ発行(スモーク通過が必須ゲート、
+常に `--prerelease`)。手順は `packaging\README.md` の「Tagging and publishing a release」。
+
+**CI が担保しない範囲(手動ゲートとして残す)**:
+
+- **testsuite 全数**(636): ハーネス `Nemerle.Compiler.Test.exe` が CLR4 実行ファイルで
+  Linux 不可。seed refresh 時に Windows で回す(バックログ: core 移植)。
+- **boot-4.0 → Stage1 再生成と CLR4 スモーク**: Windows/CLR4 専用。boot-4.0 更新や
+  seed refresh 時の手動回帰ゲート(`45-boot-4.0-refresh-log.md`)。
+- **バイト決定性比較**: 意味のある検査はフルビルド 2 回を要し実行時間が倍。決定性は
+  seed refresh 儀式とリリース再現(上節)が担保する。
+
+これらは CI の穴ではなく**意図的な線引き**(36 §6)。CI は push/PR の HEAD が Linux で
+ビルド・自己ホスト・消費できることを保証し、CLR4 世代管理は Windows 側の儀式に残す。

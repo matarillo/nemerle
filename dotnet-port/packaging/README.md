@@ -385,23 +385,46 @@ not move the assembly version, so the seed is still valid for the commit that co
 
 #### Tagging and publishing a release (GitHub Releases)
 
+Publishing is done by the **dotnet-port release** workflow (`.github/workflows/
+dotnet-port-release-build.yml`), which builds the set from a clone at the tag, smoke-tests it,
+and creates the GitHub prerelease. It is manual (never a tag-push trigger), so pushing a tag
+never publishes by itself.
+
 Tag names must NOT start with `v` and must be lightweight — `v*` tags feed the assembly-version
 computation (`git describe --match "v[0-9]*"`), so a release tag that matched it would corrupt
 the version of every later commit. See the tag-contract section in `dotnet-port/DISTRIBUTION.md`.
 
-1. Tag the source commit: `git tag release/1.2.<rev>-preview.<N> <commit>` (lightweight), where
-   `1.2.<rev>` is the packaged compiler's base version and `N` is chosen by the operator
-   (see `pack-tool.ps1`'s suffix policy). Push the tag.
-2. Build the assets from a throwaway clone at a stable path (byte-reproduction depends on the
-   absolute build path, so use the same path every time on a given machine), with the release
-   tag checked out:
-   `git checkout release/1.2.<rev>-preview.<N>` then
-   `pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>`
-3. Publish `dist/release`'s files as the assets of a GitHub prerelease on that tag:
-   `gh release create release/1.2.<rev>-preview.<N> --prerelease <files...>`
+1. **Tag and push.** `git tag release/1.2.<rev>-preview.<N> <commit>` (lightweight), where
+   `1.2.<rev>` is the packaged compiler's base version and `N` is chosen by the operator, then
+   `git push origin release/1.2.<rev>-preview.<N>`. The `preview.<N>` suffix is the whole handle
+   the release uses — there is no separate version input anywhere. The tagged commit must contain
+   the checked-in seed and these scripts (any commit from the WP-N7 in-tree-seed migration on).
+2. **Dry run.** On GitHub → Actions → *dotnet-port release* → Run workflow, set `release_tag` to
+   the tag and `stage` to `build-smoke`. This builds the full set and runs the consumer smoke
+   test with no side effects (its only output is a workflow artifact). Confirm it is green.
+3. **Publish.** Run the workflow again with the same `release_tag` and `stage` =
+   `build-smoke-release`. It repeats the build + smoke and then creates the prerelease and uploads
+   the assets (create if the tag has no Release yet, otherwise refresh with `--clobber`).
 
 A separate seed refresh is no longer part of this ritual: the seed is checked in, so the release
 tag's own commit already carries the seed the release was built from.
+
+**Undoing a test/mistaken release.** Deleting the GitHub Release removes it and its assets;
+nothing is ever pushed to nuget.org, so there is no public package registry to clean up:
+
+```console
+gh release delete release/1.2.<rev>-preview.<N> --cleanup-tag --yes   # also deletes the git tag
+```
+
+Two side effects do NOT reverse: watchers may already have been notified, and if the org enabled
+*immutable releases* a published Release cannot be deleted at all (default is deletable). Every
+release here is a `--prerelease`, so it is never marked "Latest". To rehearse the whole path
+safely, use a throwaway suffix (e.g. `release/1.2.<rev>-citest.1`) and delete it with the command
+above afterward.
+
+Building the set locally with `pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag <tag>` (see the
+previous section) remains available for local verification and for reproducing a published
+release; the workflow runs that same script.
 
 Reproducing a published release later is step 3 again, in a fresh clone at the same path. The
 result matches the published assets by version and content; the Nemerle-built binaries inside
