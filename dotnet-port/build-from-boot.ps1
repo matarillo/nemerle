@@ -52,6 +52,18 @@ if ($ReleaseTag -ne "") {
         throw "-ReleaseTag '$ReleaseTag' does not match the expected 'release/<base>-<suffix>' shape (e.g. release/1.2.635-preview.1)."
     }
     $derivedSuffix = $Matches['suffix']
+    $releaseTagBase = $Matches['base']
+
+    # The base version comes from version.txt (the seed pin), NOT from the tag: everything this
+    # script builds is stamped with the pinned version. A tag whose base differs would produce
+    # packages stamped with the pin while the tag/Release claims another number -- a silent lie.
+    # Releasing a NEW base version is a version.txt bump + seed refresh on Windows (44 section 8.6),
+    # a different (CLR4) path than this seed-based build; fail here rather than mislabel a set.
+    . "$PSScriptRoot/version-pin.ps1"
+    $pinBase = (Get-NemerleVersionPin -RepoRoot $RepoRoot).Base
+    if ($releaseTagBase -ne $pinBase) {
+        throw "-ReleaseTag '$ReleaseTag' has base version $releaseTagBase, but version.txt pins $pinBase, so this build would stamp every package $pinBase -- not $releaseTagBase. Tag the release release/$pinBase-<suffix>. To release base $releaseTagBase you must first bump version.txt to $releaseTagBase and refresh the seed on Windows (dotnet-port/44-prerelease-wp-n7-log.md section 8.6)."
+    }
 
     if ($PackageVersionSuffix -ne "" -and $PackageVersionSuffix -ne $derivedSuffix) {
         throw "-PackageVersionSuffix '$PackageVersionSuffix' disagrees with the suffix derived from -ReleaseTag '$ReleaseTag' ('$derivedSuffix'). Pass just -ReleaseTag, or drop -PackageVersionSuffix."
