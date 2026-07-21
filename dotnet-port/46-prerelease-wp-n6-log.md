@@ -168,21 +168,30 @@ CI 対象外: testsuite 全数 / boot-4.0 → stage1 再生成と CLR4 スモー
 発行ステップは `if: stage == build-smoke-release` でガードし、スモーク通過後にのみ到達する。
 `permissions: contents: write`(build-smoke ではトークンを使わない)。
 
-#### 7.4 検証状況(受け入れ基準は未充足)
+#### 7.4 検証結果
 
-ローカルで確認済み(Windows): `verify-seed.ps1` 正常系(seed 1.2.635 / provenance「HEAD の
-6 コミット前」/ 6 ファイル照合)と異常系(1 バイト改変 → SHA256 不一致で exit 1)、
-`smoke-release.ps1`(既存 `dist/release` に対し install → new → build → run が PASS、
-`Hello from Nemerle on .NET 10!`)、workflow 2 本の YAML パース。
+**push CI(`dotnet-port-ci.yml`)= green**。`wip/dotnet-port` への push で自動実行され、
+全ステップ成功(run 29876764811、`ubuntu-24.04`)。**総実行時間 3 分 54 秒**(受け入れ目安
+15 分に対し十分内。キャッシュ導入は不要)。ステップ別(主要):stage2 38s / raw LSP 104s
+(最大)/ その他は各 4–11s。`ProjectInfo.Test --integration` = 5s PASS、
+`smoke-release.ps1` = 7s PASS — §4 で未実測だった 2 点はいずれも Linux で成立。
 
-初回 push が返す実測で埋める(= 受け入れ基準そのもの):
+初回 Linux 実行で 1 件の移植性欠陥が露呈し修正済み: `ProjectInfo.Test` の `ParserTests` が
+ケース違い重複ソースの dedup を「常に 1」と決め打ちしていた(Windows 前提)。
+`ProjectPathNormalizer` は設計どおり Windows のみ case-fold・Linux/macOS は case-sensitive
+なので、正しい数は Linux で 2。プラットフォーム対応の期待値へ修正
+(`PathNormalizerTests` と同じ分岐方針)。
 
-- push/PR で green になること。
-- 実行時間 15 分以内(未測定。超過時の第一手は NuGet キャッシュ、npm は導入済み)。
-- `ProjectInfo.Test --integration` と `smoke-release.ps1` の Linux 初実測(§4)。
-- release workflow の発行経路(`gh release create/upload`)の初実測。
+ローカル(Windows)で確認済み: `verify-seed.ps1` 正常系/異常系、`smoke-release.ps1` フル走行、
+`ProjectInfo.Test`(unit)、workflow 2 本の YAML パース。
+
+**未実測**: release workflow の発行経路(`gh release create/upload`)。build-smoke 段は
+副作用が無いが、いずれも現行 HEAD にタグを付けて起動する必要があり、実発行は
+publish 操作を伴うため PO 主導で行う。
 
 #### 7.5 申し送り
 
 - release workflow が発行を担うようになったため、`DISTRIBUTION.md` / `packaging/README.md` の
   リリース手順を「タグ push 後にこの workflow を起動して発行する」形へ更新すること。**未実施**。
+- release workflow の end-to-end 初回起動(build-smoke → build-smoke-release)を PO が実施し、
+  結果をここへ追記する。
