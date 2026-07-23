@@ -315,15 +315,23 @@ if ($Pack) {
     if (Test-Path $TemplateStageDir) { Remove-Item -Recurse -Force $TemplateStageDir }
     New-Item -ItemType Directory -Force -Path $TemplateStageDir | Out-Null
     Copy-Item -Path (Join-Path $TemplateSrcDir "*") -Destination $TemplateStageDir -Recurse -Force
+    # -Force: on Linux, pwsh treats dot-named entries (.template.config/) as hidden and a plain
+    # Get-ChildItem skips them, so template.json kept its literal placeholder in Linux-packed
+    # sets -- generated projects still worked (the .nproj is substituted) but --sdkVersion
+    # silently became a no-op because its "replaces" token never got pinned (WP-O2 finding,
+    # docs/49-preservation-wp-o2-log.md; the substituted-count gate below now catches a relapse).
     $substituted = 0
-    foreach ($file in (Get-ChildItem $TemplateStageDir -Recurse -File)) {
+    foreach ($file in (Get-ChildItem $TemplateStageDir -Recurse -File -Force)) {
         $text = Get-Content -Raw -Path $file.FullName
         if ($text -match '__NEMERLE_SDK_VERSION__') {
             Set-Content -Path $file.FullName -Value $text.Replace('__NEMERLE_SDK_VERSION__', $PackageVersion) -NoNewline -Encoding utf8
             $substituted++
         }
     }
-    if ($substituted -eq 0) { throw "No __NEMERLE_SDK_VERSION__ placeholder found under $TemplateSrcDir -- the template sources and this script have drifted apart." }
+    # 4 = 2 template.json (sdkVersion default + replaces) + 2 .nproj (Sdk attribute). An exact
+    # count, not just -gt 0: the Linux hidden-dotdir miss left 2 of the 4 unsubstituted while
+    # still passing a nonzero check.
+    if ($substituted -ne 4) { throw "Expected exactly 4 files with the __NEMERLE_SDK_VERSION__ placeholder under $TemplateSrcDir, substituted $substituted -- the template sources and this script have drifted apart." }
     Write-Host "Staged templates -> $TemplateStageDir ($substituted files pinned to $PackageVersion)"
 
     $TemplateStageWithSlash = (Resolve-Path $TemplateStageDir).Path.TrimEnd('\','/') + '/'

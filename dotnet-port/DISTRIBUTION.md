@@ -2,8 +2,12 @@
 
 対象: ncc.exe(.NET 10 でセルフホスト済み、`bin\Release\core\Stage2`/`Stage3`)を
 「現代的で配布可能な形」にどこまで近づけられるか。深いランタイム移植ではなく、
-パッケージング/ツールチェーン整備が主眼。前提ドキュメント: `00-PLAN.md`(全体計画)、
-`02-build-flow.md`(MSBuild 統合の仕組み)、`13-stage2-log.md`(stage2 の参照戦略)。
+パッケージング/ツールチェーン整備が主眼。前提ドキュメント: `docs/00-PLAN.md`(全体計画)、
+`docs/02-build-flow.md`(MSBuild 統合の仕組み)、`docs/13-stage2-log.md`(stage2 の参照戦略)。
+
+> **文書の場所(WP-O1)**: 計画・作業ログ・分析の番号付き文書(`00-PLAN.md`、`NN-*.md`)は
+> すべて `dotnet-port/docs/` にある。本文中で `13-stage2-log.md` のように番号付き文書名だけを
+> 挙げている箇所は、この `docs/` ディレクトリ内の文書を指す。
 
 本ドキュメントは3つの成果物の到達点・再現手順・既知の制約をまとめる。
 
@@ -525,18 +529,37 @@ pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>
 ```
 
 `-ReleaseTag` はタグ名から版 suffix を導出し、**このチェックアウトが本当にそのタグの
-コミットか**を検証する(不一致なら停止)。seed はそのコミットに含まれているので、
-worktree もブランチ解決も不要になった。再現の一致水準(41 log §7.8.1 の実測):
+コミットか**を検証する(不一致なら停止)。
 
-- **版・構成・provenance の同一性フィールドは完全一致**。
+**再現はタグ時点のスクリプトで走る**(WP-O2 で明文化): checkout したタグに含まれる
+`build-from-boot.ps1` が、そのタグの世代の seed 機構を使う。WP-N7 以降のタグでは seed は
+コミットに含まれ(`dotnet-port/seed/`)、worktree もブランチ解決も不要。それ以前の
+`release/1.2.635-preview.1` は orphan seed 世代のタグで、同じコマンドがタグ時点の機構
+(`seed/1.2.635` タグ + pinned worktree)で再現する — seed タグ・orphan ブランチ
+`boot-net10` は履歴として GitHub に残置されているため、**新規 clone だけで完結する**
+(2026-07-23、Linux の使い捨て clone で再実証。`docs/49-preservation-wp-o2-log.md`)。
+WP-N6 以降のタグは release workflow の `build-smoke`(dry run)でも同じ再現ができるが、
+`smoke-release.ps1` を含まない旧タグ(preview.1)には workflow は適用できない —
+上記のローカル再現コマンドが正。
+
+再現の一致水準(41 log §7.8.1 / 49 log の実測):
+
+- **版・構成・provenance の同一性フィールドは完全一致**(パッケージ版、アセンブリ版、
+  release-info / ncc-info / bundle-info の commit)。
 - **Nemerle 製アセンブリ(ncc.exe / Nemerle*.dll / Nemerle.Linq.dll)と静的コンテンツは
   バイト一致**(同一マシン・同一絶対パスの clone が条件 — WP-N5 §5.1 のチェックアウト
-  パス埋め込みのため。他環境では版・内容一致のみ)。
+  パス埋め込みのため。他環境では版・エントリー構成・静的コンテンツの一致 +
+  消費スモーク成立で照合する)。
 - nupkg / VSIX の**ファイル全体のハッシュは一致しない**: NuGet psmdcp(GUID+時刻)、
   provenance の `packedAtUtc`、C# 製補助アセンブリの PE メタデータ(タイムスタンプ/MVID)が
   ビルドごとに変わるため。照合は「版 + zip 内エントリー単位の内容ハッシュ」で行うこと。
 
-詳細な設計と実測は `dotnet-port\docs\41-prerelease-wp-n4-log.md`。
+**数年後に取り出すために必要なもの**(WP-O2 の確認結果): (1) この git リポジトリ
+(リリースタグ・seed タグ・orphan ブランチ・チェックイン seed を含む全履歴)、
+(2) GitHub Release の公開 asset(照合対象。利用だけなら asset のみで足りる —
+`packaging/README.md`)、(3) .NET 10 SDK・pwsh・Node 22(ビルド環境)。Windows も
+.NET Framework も不要。詳細な設計と実測は `dotnet-port\docs\41-prerelease-wp-n4-log.md` /
+`dotnet-port\docs\49-preservation-wp-o2-log.md`。
 
 ## CI(WP-N6、Linux)
 

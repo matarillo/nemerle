@@ -99,7 +99,7 @@ Undo it later with `dotnet nuget remove source nemerle-local`.
 ### 1.3 Install the templates (optional)
 
 ```console
-dotnet new install Nemerle.Templates.Unofficial::__NEMERLE_SDK_VERSION__ --add-source C:\nemerle-packages
+dotnet new install Nemerle.Templates.Unofficial@__NEMERLE_SDK_VERSION__ --add-source C:\nemerle-packages
 ```
 
 (On Linux: `--add-source ~/nemerle-packages` — here the shell does expand `~`.)
@@ -426,9 +426,27 @@ Building the set locally with `pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag 
 previous section) remains available for local verification and for reproducing a published
 release; the workflow runs that same script.
 
-Reproducing a published release later is step 3 again, in a fresh clone at the same path. The
-result matches the published assets by version and content; the Nemerle-built binaries inside
-byte-match when built from the same absolute path. Whole-file hashes of the .nupkg/.vsix
-containers do NOT match — NuGet's package metadata (psmdcp), the provenance pack timestamps,
-and the C#-built helper assemblies' PE headers change per build — so verify a reproduction by
-version plus per-entry content hashes, not by hashing the container files.
+#### Reproducing a published release
+
+A published release reproduces from a fresh clone and the tag alone — no other state:
+
+```console
+git clone https://github.com/matarillo/nemerle.git && cd nemerle
+git checkout release/1.2.<rev>-preview.<N>
+pwsh dotnet-port/build-from-boot.ps1 -ReleaseTag release/1.2.<rev>-preview.<N>
+```
+
+The scripts that run are the ones **inside the tag's checkout**, so each release rebuilds with
+the seed machinery of its own era (tags before the in-tree-seed migration resolve their
+`seed/1.2.<rev>` tag, which stays published; later tags use the checked-in `dotnet-port/seed/`).
+For tags that contain `dotnet-port/smoke-release.ps1`, the *dotnet-port release* workflow's
+`build-smoke` stage performs the same reproduction plus the consumer smoke test as a dry run.
+
+What matches: package versions, assembly versions, provenance commits, and the archive entry
+inventory match the published assets exactly; the Nemerle-built binaries inside additionally
+byte-match when rebuilt from a clone at the same absolute path as the original build.
+Whole-file hashes of the .nupkg/.vsix containers do NOT match — NuGet's package metadata
+(psmdcp), the provenance pack timestamps, and the C#-built helper assemblies' PE headers change
+per build — so verify a reproduction by version plus per-entry content hashes, not by hashing
+the container files. Verified end-to-end on a throwaway Linux clone:
+`dotnet-port/docs/49-preservation-wp-o2-log.md`.
