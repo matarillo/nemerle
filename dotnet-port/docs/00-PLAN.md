@@ -139,7 +139,8 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-K | LSP feasibility(headless IDE engine + 最小 stdio LSP server) | —(計画後) | 完了(2026-07-13) | 21-lsp-feasibility.md / 22-lsp-step1-log.md / 23-lsp-step2-log.md |
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
 | WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | **WP-M1〜M6 完了(2026-07-15)= WP-M 完了** | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md / 34-devenv2-wp-m5-log.md / 35-devenv2-wp-m6-log.md |
-| WP-N | 公開前の品質固めと既知制約の解消(ビルド再現性・engine 品質・Nemerle.Linq/testsuite・Linux 実地・版タグ契約 + GitHub Release・最小 CI) | —(計画後) | 進行中(N1/N2/N3/N5/N4 完了。残り N7 評価 → N6) | 36-prerelease-quality-plan.md / 37-prerelease-wp-n1-log.md / 38-prerelease-wp-n2-log.md / 39-prerelease-wp-n2-log.md / 40-prerelease-wp-n3-log.md / 41-prerelease-wp-n4-log.md / 42-prerelease-wp-n5-log.md / 43-boot-net10-log.md |
+| WP-N | 公開前の品質固めと既知制約の解消(ビルド再現性・engine 品質・Nemerle.Linq/testsuite・Linux 実地・版タグ契約 + GitHub Release・版ピン留め・最小 CI) | —(計画後) | **完了(2026-07-22)**(N1〜N5 完了、N7 = 部分 GO で case 1 実装済み、N6 = CI/release workflow 稼働) | 36-prerelease-quality-plan.md / 37-prerelease-wp-n1-log.md / 38-prerelease-wp-n2-log.md / 39-prerelease-wp-n2-log.md / 40-prerelease-wp-n3-log.md / 41-prerelease-wp-n4-log.md / 42-prerelease-wp-n5-log.md / 43-boot-net10-log.md / 44-prerelease-wp-n7-log.md / 45-boot-4.0-refresh-log.md / 46-prerelease-wp-n6-log.md |
+| WP-O | 保存・配布フェーズ(入口の現代化・保存/再現性の確定・runtime package 根治・配布の器の判断・任意 showcase) | —(計画後) | 進行中(O1/O2 完了 2026-07-23。O3〜O5 は未合意ドラフト) | 47-wp-o-plan.md / 48-preservation-wp-o1-log.md / 49-preservation-wp-o2-log.md |
 
 ## 作業ログ
 
@@ -743,3 +744,29 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   リビルド不可)を実地で解消したことを実証(release タグを残したままフルリビルドが
   0 エラーで完走)。発行済みリリースの再現性は boot-net10 seed のみに依存するため無影響、
   再リリース不要と判断。詳細は `45-boot-4.0-refresh-log.md`。
+- 2026-07-21: **WP-N7 評価完了(部分 GO、PO 合意)**。版跨ぎ自己ホストの実測により
+  「case 1 = version.txt による版ピン留め + orphan/pinned-worktree 廃止」を採用、ただし
+  版バンプ(新世代生成)は Windows/.NET FW 4.x 限定のまま(Mono は SRE 非互換で不可、
+  CoreCLR は厳格ローダーで版跨ぎ不可)。詳細は `44-prerelease-wp-n7-log.md` §7。
+- 2026-07-22: **WP-N7 case 1 実装 + WP-N6(最小 Linux CI)完了 = WP-N 全完了**。
+  ルート `version.txt` の版ピンで seed が任意 HEAD をビルド可能になり、seed を
+  `dotnet-port/seed/` にチェックイン(orphan 消費経路廃止)。push/PR CI
+  (`.github/workflows/dotnet-port-ci.yml`、Linux、3 分 54 秒 green)と手動 release workflow
+  (`dotnet-port-release-build.yml`、build-smoke dry run / build-smoke-release 発行、
+  使い捨てタグで end-to-end 実証)を追加。新規 `verify-seed.ps1` / `smoke-release.ps1`。
+  詳細は `44-prerelease-wp-n7-log.md` §8 / `46-prerelease-wp-n6-log.md`。
+- 2026-07-22: 次フェーズ **WP-O(保存・配布)** を計画(`47-wp-o-plan.md`)。位置づけは
+  保存・再現・文書化を第一に「少し試せる」間口を用意する。O1(入口)/ O2(保存・再現)/
+  O3(runtime package 根治)/ O4(配布の器の go/no-go)/ O5(任意 showcase)。
+- 2026-07-23: **WP-O1(入口の現代化)完了**。ルート `README.md` に .NET 10 ポートの
+  入口節(概要・quickstart・既知の制約・文書への案内)を追加し、公開済み GitHub Release
+  アセットのみで quickstart を Windows / Linux(WSL)実機コピペ検証。あわせて PO 指示の
+  スコープ追加として、`dotnet-port/` 直下の計画・作業ログ文書(本書含む 44 本)を
+  `dotnet-port/docs/` へ移設し、リポジトリ内のパス参照を全て追随(共有ソースは
+  コメントのみの変更)。詳細は `48-preservation-wp-o1-log.md`。
+- 2026-07-23: **WP-O2(保存・再現性の確定)完了**。公開済み `release/1.2.635-preview.1` の
+  provenance 連鎖(release-info / ncc-info / bundle-info / seed boot-info → 同一コミット)を
+  検証し、GitHub からの使い捨て clone(Linux、CLR4 不要)でリリースタグから release set を
+  再ビルドして初回発行物との一致(版・構成・provenance)を再実証。再現・保存手順を
+  `DISTRIBUTION.md` / `packaging/README.md` に保存目線で整理。詳細は
+  `49-preservation-wp-o2-log.md`。
