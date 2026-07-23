@@ -14,3 +14,7 @@ VsIntegration/** whitespace=cr-at-eol
 ncc/** whitespace=cr-at-eol
 Linq/** whitespace=cr-at-eol
 testsuite/** whitespace=cr-at-eol
+
+# The root README is an upstream CRLF file; the WP-O1 port section keeps its
+# line endings, so exempt the CR there too.
+/README.md whitespace=cr-at-eol
