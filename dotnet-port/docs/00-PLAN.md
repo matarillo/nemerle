@@ -786,3 +786,11 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   `Nemerle.Runtime.Unofficial`(利用者不可視・機能的実害なし・GitHub Release では ID 可逆)を維持。
   本判断は恒久ではなく状況が変われば再判断(PO 指示でバックログには積まない)。公開ワークフロー・
   packaging・msbuild・共有ソースへの変更なし = Stage リビルド不要。詳細は `51-wp-o4-log.md`。
+- 2026-07-23: **リリース `release/1.2.635-preview.2` 発行**。WP-O3 の完全セット
+  (`Nemerle.Runtime.Unofficial` を初めて含む 4 nupkg + VSIX 0.9.0 + README + release-info.json)を
+  GitHub prerelease として発行(commit `019a749de`、provenance 一致)。preview.1 の D1(deps.json が
+  runtime 閉包を列挙しない)を解消した版。手作業でアセットを触らず release workflow の
+  `build-smoke`(dry-run)→ `build-smoke-release` で発行し、いずれも green。preview.1 は再現可能な
+  履歴として残置(両者 prerelease、"Latest" にはならない。番号 preview.1 は再利用しない)。
+  併せて発行前に CI 赤を解消: `ProjectInfo.Test` の `SdkPackageTests` が `GenerateDependencyFile` の
+  旧挙動(false)をアサートしていた陳腐化を SDK 既定(true)へ修正(commit `019a749de`、テスト専用)。
