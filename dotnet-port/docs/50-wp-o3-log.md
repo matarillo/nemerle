@@ -87,7 +87,10 @@ console テンプレートの `Main` は `Console.WriteLine` のみで Nemerle.d
   `pack-tool.ps1`(runtime package を pack 対象・cache eviction・README staging へ追加、Sdk.props staging)、
   `smoke-release.ps1`(D1 ガード 2 点)、
   `packaging/README.md` / `packaging/Nemerle.Sdk.Unofficial/README.md`(runtime package の記載、
-  GenerateDependencyFile 記述の更新)。
+  GenerateDependencyFile 記述の更新)、
+  `ProjectInfo.Test/Program.cs`(SDK パッケージ評価テスト `SdkPackageTests` の
+  `GenerateDependencyFile` アサートを SDK 既定 `true` へ = deps.json が生成され runtime 閉包が
+  Nemerle.Runtime.Unofficial 由来で載る、という WP-O3 の期待値に一致させる)。
 - 共有ソース(`ncc/`・`lib/`・`macros/`)と `VsIntegration/` は無変更 = Stage リビルド不要。
 
 ## 検証
@@ -105,6 +108,13 @@ console テンプレートの `Main` は `Console.WriteLine` のみで Nemerle.d
 `<clear />` した local feed のみで install → `dotnet new nemerle-console` → build → run が成立
 (`Hello from Nemerle on .NET 10!`)。追加ガード PASS: 生成物 `deps.json` が生成され `Nemerle.dll` を
 列挙、ランタイム使用版が `GenerateDependencyFile` 既定(`true`)で run 成立。
+
+### SDK パッケージ評価(`ProjectInfo.Test -- --integration` の `SdkPackageTests`)
+
+`<clear />` local feed から `Nemerle.Sdk.Unofficial` を解決した probe `.nproj` を `dotnet msbuild
+-getProperty` で静的評価し、`GenerateDependencyFile` が SDK 既定 `true`(WP-O3 後)であることを含め
+PASS。packaged targets とレイアウト構成の検証も同テスト内で継続。`PASS project info unit + sample
+integration tests`。
 
 ### SDK パッケージ経由の Library / 診断(`npm run test:sdk`)
 
@@ -125,6 +135,7 @@ PackageReference が feed から復元されることを LSP 経路でも確認�
 pwsh dotnet-port/build-libs-core.ps1
 pwsh dotnet-port/pack-tool.ps1 -Pack
 pwsh dotnet-port/smoke-release.ps1
+dotnet run -c Release --project dotnet-port/ProjectInfo.Test/Nemerle.ProjectInfo.Test.csproj -- --integration
 Push-Location dotnet-port/vscode-nemerle; npm run test:sdk; Pop-Location
 # checkout 形式の回帰(dist/ncc 前提):
 dotnet build dotnet-port/samples/Sokoban/Sokoban/Sokoban.nproj -c Debug

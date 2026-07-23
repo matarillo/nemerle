@@ -642,7 +642,7 @@ internal static class Program
             // Nemerle's defaults must survive the Microsoft.NET.Sdk import that follows them.
             Equal("false", properties.GetProperty("ProduceReferenceAssembly").GetString(), "ncc has no /refout: equivalent, so the SDK's ref-assembly optimization stays off");
             Equal("false", properties.GetProperty("UseAppHost").GetString(), "no native apphost");
-            Equal("false", properties.GetProperty("GenerateDependencyFile").GetString(), "no deps.json, so the host probes the app dir for Nemerle.dll");
+            Equal("true", properties.GetProperty("GenerateDependencyFile").GetString(), "deps.json keeps the SDK default (WP-O3): the Nemerle runtime closure is supplied by the Nemerle.Runtime.Unofficial package, so it lands in deps.json legitimately");
             var globbed = document.RootElement.GetProperty("Items").GetProperty("NemerleCompile");
             Equal(1, globbed.GetArrayLength(), "default **/*.n glob found the single source exactly once");
         }
