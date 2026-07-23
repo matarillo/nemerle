@@ -18,6 +18,9 @@
 - **本判断は恒久ではない**。状況が変われば別途判断する。PO 指示によりバックログには積まない。
 - 公開ワークフロー(release workflow)・packaging・msbuild・共有ソースへの変更は無い =
   Stage リビルド不要。
+- WP-O4 の決定(GitHub Release 維持)を実際に行使し、WP-O3 の完全セット
+  (`Nemerle.Runtime.Unofficial` を初めて含む)を `release/1.2.635-preview.2` として発行した
+  (commit `019a749de`、preview.1 は残置)。方法の結論は下記「GitHub Release の運用」。
 
 ## 環境
 
@@ -75,6 +78,30 @@ nuget.org no-go により、この継続性/破壊のトレードオフは発生
   nuget.org no-go である限り残る。したがって Marketplace の「摩擦なく試せる」便益は部分的で、
   publisher identity の一方通行コミットに見合わない。
 
+## GitHub Release の運用(更新セットの発行)
+
+GitHub Release を配布器として維持する決定のもと、WP-O3 の成果(`Nemerle.Runtime.Unofficial` を
+初めて含む完全セット)の発行方法を確定した。
+
+**リリースは provenance 封印された「セット」であり、個別ファイルではない。** runtime パッケージ 1 個
+だけを配る単位は存在せず、更新した runtime を出す = セット全体を出し直す。
+
+- **正解 = 新規 `1.2.635-preview.2` を release workflow で発行**。base `1.2.635` は `version.txt`
+  ピンで据え置き、サフィックスのみ `preview.1 → preview.2`(WP-N1 規約: 同一 base で中身が変わったら
+  `preview.<N+1>`)。CI 緑の commit(`019a749de`)に lightweight・`v` 非開始タグを打ち、
+  `build-smoke`(dry-run)→ `build-smoke-release` で発行(リポジトリファイルの変更なし)。
+- **不可 (a) 既存リリースに runtime nupkg だけ追加**: 旧セットの SDK は WP-O3 前で runtime を
+  参照せず無意味。かつ別コミット産物の混入で `release-info.json` の provenance を破壊
+  (`pack-release.ps1` が混在コミット由来のセットの封印を拒否するのはこのため)。
+- **不可 (b) 同一版でアセット差し替え**: 版番号の不変性違反(`DISTRIBUTION.md` WP-N1)。NuGet は
+  `(id, version)` を内容ごとキャッシュするため、消費側で旧ビットが静かに勝つ。
+- **preview.1 は残置**(両者 prerelease で "Latest" にならない)。一度外へ出た番号 `preview.1` は
+  削除しても再利用しない(順序逆行・通知済みのため)。
+
+発行結果: `release/1.2.635-preview.2`(prerelease、commit `019a749de`)。アセット = 4 nupkg
+(`Nemerle.Sdk` / `Nemerle.Runtime` / `Nemerle.Templates` / `Nemerle.Linq`、いずれも
+`1.2.635-preview.2`)+ `vscode-nemerle-0.9.0.vsix` + `README.md` + `release-info.json`。
+
 ## 変更ファイル
 
 - 新規: `dotnet-port/docs/51-wp-o4-log.md`(本書)。
@@ -95,6 +122,10 @@ nuget.org no-go により、この継続性/破壊のトレードオフは発生
   - VSIX が LSP サーバーを同梱し .NET 10 は非同梱: `DISTRIBUTION.md`(WP-L4 更新節)。
   - ローカルフィード前提の SDK 消費: `packaging/README.md` §1。
 - docs 相互参照の整合: `47-wp-o-plan.md` / `00-PLAN.md` の WP-O4 記述が本判断と一致。
+- release workflow の発行: `build-smoke`(dry-run、副作用なし)と `build-smoke-release` がいずれも
+  green。公開 asset の `release-info.json` の `commit` = タグ commit(`019a749de`)で provenance 整合。
+  収録 4 パッケージはすべて `1.2.635-preview.2`、runtime パッケージの `lib/net10.0/` に
+  `Nemerle.dll` / `Nemerle.Macros.dll` / `Nemerle.Compiler.dll` を確認。
 
 ## 既知の制約 / 残課題
 
