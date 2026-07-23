@@ -63,9 +63,19 @@
 
   <ItemGroup>
     <!-- 1. The SDK entry points NuGet's MSBuild SDK resolver looks for, at the package root's
-            Sdk/ folder (this path is a hard convention, not a choice). -->
-    <None Include="$(NemerleMSBuildDir)sdk\Sdk.props;$(NemerleMSBuildDir)sdk\Sdk.targets"
+            Sdk/ folder (this path is a hard convention, not a choice).
+
+            Sdk.targets ships verbatim. Sdk.props ships from a STAGED copy: it declares the
+            implicit PackageReference to Nemerle.Runtime.Unofficial (WP-O3), whose version must be
+            pinned to this package's own generation, so pack-tool.ps1 substitutes
+            __NEMERLE_RUNTIME_VERSION__ into a staged Sdk.props and passes it as
+            $(NemerleStagedSdkPropsFile) - the same staging pattern the templates and READMEs use.
+            Packing $(NemerleMSBuildDir)sdk\Sdk.props verbatim would ship the literal placeholder
+            and every restore would fail. -->
+    <None Include="$(NemerleMSBuildDir)sdk\Sdk.targets"
           Pack="true" PackagePath="Sdk/" Visible="false" />
+    <None Include="$(NemerleStagedSdkPropsFile)"
+          Pack="true" PackagePath="Sdk/Sdk.props" Visible="false" />
 
     <!-- 2. The actual build logic: the very same file a repo checkout imports
             (dotnet-port\msbuild\Nemerle.Core.targets), shipped verbatim. Sdk.targets imports it
@@ -111,6 +121,8 @@
   <Target Name="ValidateNccLayout" BeforeTargets="Build;Pack">
     <Error Condition="'$(NemerleReadmeFile)' == '' OR !Exists('$(NemerleReadmeFile)')"
            Text="NemerleReadmeFile ($(NemerleReadmeFile)) does not exist. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which stages README.md with the package version substituted in; packing this project directly would ship a literal __NEMERLE_SDK_VERSION__ placeholder." />
+    <Error Condition="'$(NemerleStagedSdkPropsFile)' == '' OR !Exists('$(NemerleStagedSdkPropsFile)')"
+           Text="NemerleStagedSdkPropsFile ($(NemerleStagedSdkPropsFile)) does not exist. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which stages Sdk.props with the Nemerle.Runtime.Unofficial version substituted in; packing this project directly would ship a literal __NEMERLE_RUNTIME_VERSION__ placeholder." />
     <Error Condition="!Exists('$(NccLayoutDir)ncc.dll')"
            Text="NccLayoutDir ($(NccLayoutDir)) does not contain ncc.dll: run dotnet-port\pack-tool.ps1 first (or pass -p:NccLayoutDir=&lt;path&gt;)." />
     <Error Condition="!Exists('$(NccLayoutDir)ncc-info.json')"

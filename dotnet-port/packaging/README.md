@@ -14,7 +14,8 @@ use them.
 
 | Artifact | What it is |
 |---|---|
-| `Nemerle.Sdk.Unofficial.<version>.nupkg` | An MSBuild project SDK. Carries the `ncc` compiler and the MSBuild task that runs it, so `dotnet build` compiles `.n` sources. This is the only package a project needs. |
+| `Nemerle.Sdk.Unofficial.<version>.nupkg` | An MSBuild project SDK. Carries the `ncc` compiler and the MSBuild task that runs it, so `dotnet build` compiles `.n` sources. This is the only package you reference. |
+| `Nemerle.Runtime.Unofficial.<version>.nupkg` | The Nemerle runtime assemblies your compiled program binds against. Pulled in automatically by the SDK (so the program's `deps.json` lists its runtime closure); you never reference it directly, but it must be in the same feed. |
 | `Nemerle.Templates.Unofficial.<version>.nupkg` | `dotnet new` templates (`nemerle-console`, `nemerle-classlib`). Convenience only — you can write the project file by hand instead. |
 | `Nemerle.Linq.Unofficial.<version>.nupkg` | The Nemerle LINQ macro library (`linq <# … #>` query syntax, `ToExpression`, lambda-to-expression-tree conversion). Optional; add as an ordinary `PackageReference`. |
 | `vscode-nemerle-<version>.vsix` | VS Code support (optional): highlighting plus project-aware diagnostics, hover, completion, go-to-definition. |
@@ -51,6 +52,7 @@ keep the folder somewhere permanent. Any path works; these are just examples:
 ```text
 C:\nemerle-packages\                     ~/nemerle-packages/
   Nemerle.Sdk.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
+  Nemerle.Runtime.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
   Nemerle.Templates.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
   Nemerle.Linq.Unofficial.__NEMERLE_SDK_VERSION__.nupkg
   vscode-nemerle-__NEMERLE_VSIX_VERSION__.vsix
@@ -304,15 +306,14 @@ Released versions never change, so this only bites if you build packages yoursel
   already declared, so it does not double up.
 - **`Nemerle toolchain/language server version mismatch`** — the VS Code extension and the SDK
   package come from different releases. Install matching ones.
-- **`FileNotFoundException: Nemerle` at run time** — the Nemerle runtime assemblies are copied next
-  to your output rather than resolved through the package graph, which requires
-  `GenerateDependencyFile` to stay `false` (the SDK's default). If you set it to `true`, the
-  generated `deps.json` will not list them and the host will ignore them.
+- **`FileNotFoundException: Nemerle` at run time** — the `Nemerle.Runtime.Unofficial` package the
+  SDK pulls in for you did not resolve, so the runtime assemblies are neither beside your output
+  nor listed in `deps.json`. Make sure that package is in the same feed as `Nemerle.Sdk.Unofficial`
+  (a release set contains both) and re-run `dotnet restore`.
 
 ## Known limitations
 
 - `.csproj` is not usable; use `.nproj` (see above).
-- `GenerateDependencyFile` defaults to `false` and should stay that way (see above).
 - Preview quality: local-feed / GitHub-release distribution only, not published to nuget.org.
 
 ## License

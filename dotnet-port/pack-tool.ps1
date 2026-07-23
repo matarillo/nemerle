@@ -302,7 +302,7 @@ if ($Pack) {
     $LibsDirWithSlash = (Resolve-Path $LibsDir).Path.TrimEnd('\','/') + '/'
 
     Write-Host ""
-    Write-Host "Packing Nemerle.Sdk.Unofficial / Nemerle.Templates.Unofficial / Nemerle.Linq.Unofficial $PackageVersion ..."
+    Write-Host "Packing Nemerle.Sdk.Unofficial / Nemerle.Runtime.Unofficial / Nemerle.Templates.Unofficial / Nemerle.Linq.Unofficial $PackageVersion ..."
 
     # The templates generate projects that pin the SDK version they were packed alongside
     # (<Project Sdk="Nemerle.Sdk.Unofficial/x.y.z">), so the version has to be injected here
@@ -354,7 +354,7 @@ if ($Pack) {
     $ReadmeStageDir = Join-Path $PSScriptRoot "dist/readmes"
     if (Test-Path $ReadmeStageDir) { Remove-Item -Recurse -Force $ReadmeStageDir }
     $StagedReadmes = @{}
-    foreach ($pkgId in @("Nemerle.Sdk.Unofficial", "Nemerle.Templates.Unofficial", "Nemerle.Linq.Unofficial")) {
+    foreach ($pkgId in @("Nemerle.Sdk.Unofficial", "Nemerle.Templates.Unofficial", "Nemerle.Linq.Unofficial", "Nemerle.Runtime.Unofficial")) {
         $stagePkgDir = Join-Path $ReadmeStageDir $pkgId
         New-Item -ItemType Directory -Force -Path $stagePkgDir | Out-Null
         $stagedReadme = Join-Path $stagePkgDir "README.md"
@@ -363,8 +363,26 @@ if ($Pack) {
     }
     Write-Host "Staged package READMEs -> $ReadmeStageDir (pinned to $PackageVersion / VSIX $VsixVersion)"
 
+    # WP-O3: Sdk.props declares the implicit PackageReference to Nemerle.Runtime.Unofficial, whose
+    # version must be pinned to this release's generation (a floating range could pull a different
+    # compiler generation). Stage it with the placeholder substituted -- the same pattern the
+    # templates and READMEs use -- and hand the SDK package the staged copy via
+    # NemerleStagedSdkPropsFile. Sdk.props is package-only (a repo checkout imports
+    # msbuild\Nemerle.Core.targets directly, never Sdk.props), so the source file can carry the
+    # placeholder without affecting any in-tree build.
+    $SdkPropsSrc = Join-Path $PSScriptRoot "msbuild/sdk/Sdk.props"
+    $SdkStageDir = Join-Path $PSScriptRoot "dist/sdk"
+    if (Test-Path $SdkStageDir) { Remove-Item -Recurse -Force $SdkStageDir }
+    New-Item -ItemType Directory -Force -Path $SdkStageDir | Out-Null
+    $StagedSdkProps = Join-Path $SdkStageDir "Sdk.props"
+    $sdkPropsText = Get-Content -Raw -Path $SdkPropsSrc
+    if ($sdkPropsText -notmatch '__NEMERLE_RUNTIME_VERSION__') { throw "No __NEMERLE_RUNTIME_VERSION__ placeholder found in $SdkPropsSrc -- the SDK props and this script have drifted apart." }
+    Set-Content -Path $StagedSdkProps -Value $sdkPropsText.Replace('__NEMERLE_RUNTIME_VERSION__', $PackageVersion) -NoNewline -Encoding utf8
+    Write-Host "Staged Sdk.props -> $StagedSdkProps (Nemerle.Runtime.Unofficial pinned to $PackageVersion)"
+
     $PackageProjects = @(
         (Join-Path $PSScriptRoot "packaging/Nemerle.Sdk.Unofficial/Nemerle.Sdk.Unofficial.csproj"),
+        (Join-Path $PSScriptRoot "packaging/Nemerle.Runtime.Unofficial/Nemerle.Runtime.Unofficial.csproj"),
         (Join-Path $PSScriptRoot "packaging/Nemerle.Templates.Unofficial/Nemerle.Templates.Unofficial.csproj"),
         (Join-Path $PSScriptRoot "packaging/Nemerle.Linq.Unofficial/Nemerle.Linq.Unofficial.csproj")
     )
@@ -377,7 +395,7 @@ if ($Pack) {
     # for an SDK whose version is meaningful. Evict the exact (id, version) instead, so
     # re-packing the same version during development is honest.
     $GlobalPackages = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $HOME ".nuget/packages" }
-    foreach ($id in @("nemerle.sdk.unofficial", "nemerle.templates.unofficial", "nemerle.linq.unofficial")) {
+    foreach ($id in @("nemerle.sdk.unofficial", "nemerle.runtime.unofficial", "nemerle.templates.unofficial", "nemerle.linq.unofficial")) {
         $cached = Join-Path $GlobalPackages "$id/$PackageVersion"
         if (Test-Path $cached) {
             Remove-Item -Recurse -Force $cached
@@ -389,7 +407,7 @@ if ($Pack) {
         $pkgId = [System.IO.Path]::GetFileNameWithoutExtension($proj)
         & dotnet pack -c $Configuration $proj -o $PackageOutDir "-p:Version=$PackageVersion" `
             "-p:NccLayoutDir=$OutDirWithSlash" "-p:NemerleTemplateStagingDir=$TemplateStageWithSlash" `
-            "-p:NemerleLibsDir=$LibsDirWithSlash" `
+            "-p:NemerleLibsDir=$LibsDirWithSlash" "-p:NemerleStagedSdkPropsFile=$StagedSdkProps" `
             "-p:NemerleReadmeFile=$($StagedReadmes[$pkgId])" -v:minimal
         if ($LASTEXITCODE -ne 0) { throw "dotnet pack failed for $proj (exit $LASTEXITCODE)" }
     }

@@ -1,0 +1,95 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-O3 (dotnet-port\docs\47-wp-o-plan.md): the Nemerle RUNTIME closure, packaged so it flows
+    through the NuGet graph and lands in a consumer's deps.json legitimately. This is the root
+    fix for D1 (36 §2.2): ordinary Nemerle programs reference Nemerle.dll (and, at macro call
+    sites, Nemerle.Macros.dll / Nemerle.Compiler.dll) at RUN time, but until now those assemblies
+    were copied next to the output by Nemerle.Core.targets' NemerleCopyRuntimeAssemblies rather
+    than resolved through a package - so they were absent from any generated deps.json, and the
+    only way to make the program run was to suppress deps.json entirely
+    (GenerateDependencyFile=false). See dotnet-port\docs\50-wp-o3-log.md.
+
+    Nemerle.Sdk.Unofficial's Sdk/Sdk.props adds this package as an implicit PackageReference with
+    ExcludeAssets="compile": the runtime assets are copied to the consumer's output and listed in
+    deps.json, while the compile assets are withheld so ncc is not handed a duplicate -ref: for
+    assemblies it already auto-resolves from its own layout (ncc\passes.n LoadCoreStdlibReferences;
+    Nemerle.Compiler.targets' framework-facade exclusion). GenerateDependencyFile can therefore be
+    left at the SDK default (true) for package consumers.
+
+    Package shape mirrors Nemerle.Sdk.Unofficial: pure repackaging of already-built bits from the
+    dist\ncc layout (dotnet-port\pack-tool.ps1), no compile of its own, driven by
+    pack-tool.ps1 -Pack (which versions it off the packaged compiler, identically to the SDK
+    package, so the two always share a generation).
+
+    Package ID: the ".Unofficial" suffix continues the naming used across this port's packages and
+    marks provenance permanently (maturity lives in the prerelease label). Whether the published
+    identity stays a single bundling package, splits into the existing per-assembly IDs
+    (Nemerle.Unofficial / Nemerle.Compiler.Unofficial / Nemerle.Macros.Unofficial, the net4x
+    assets at 1.2.547), or is not published at all is a WP-O4 decision; the deps.json mechanism
+    here is independent of that choice and already delivers value from a local feed.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Nemerle.Runtime.Unofficial</PackageId>
+
+    <!-- Pure repackaging: no compile inputs, no build output of our own. The runtime assemblies
+         are contributed as lib/ content below. Unlike the tools-only Nemerle.Sdk.Unofficial this
+         is a genuine lib/ package, so dependencies are NOT suppressed: pack emits the normal
+         (empty, since there are no PackageReferences) net10.0 dependency group, which is both
+         correct and what keeps NU5128 from firing. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <Authors>matarillo</Authors>
+    <Copyright>Copyright (c) 2003-2008 The University of Wroclaw. Copyright (c) 2008-2014 Nemerle Project Team.</Copyright>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/matarillo/nemerle</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/matarillo/nemerle</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>Nemerle;runtime;unofficial</PackageTags>
+    <Description>UNOFFICIAL .NET 10 build of the Nemerle runtime assemblies (Nemerle.dll and the macro-support libraries). Not a release of the Nemerle project. Pulled in automatically by Nemerle.Sdk.Unofficial so that a compiled Nemerle program's deps.json lists its runtime closure; not meant to be installed directly.</Description>
+
+    <!-- Where dotnet-port\pack-tool.ps1 wrote the runnable layout the runtime dlls are taken
+         from. Override with -p:NccLayoutDir=... if built elsewhere. -->
+    <NccLayoutDir Condition="'$(NccLayoutDir)' == ''">$(MSBuildThisFileDirectory)..\..\dist\ncc\</NccLayoutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The runtime closure, as ordinary lib/ assets so they become copy-local + deps.json
+         runtime entries for the consumer. Nemerle.Macros.dll / Nemerle.Compiler.dll are here
+         because macro expansions at a consumer's call sites can emit code that references them at
+         run time (the same three NemerleCopyRuntimeAssemblies has always copied). ExcludeAssets
+         on the consuming reference (Sdk.props) keeps their TYPES out of compile scope. -->
+    <None Include="$(NccLayoutDir)Nemerle.dll" Pack="true" PackagePath="lib/net10.0/" Visible="false" />
+    <None Include="$(NccLayoutDir)Nemerle.Macros.dll" Pack="true" PackagePath="lib/net10.0/" Visible="false" />
+    <None Include="$(NccLayoutDir)Nemerle.Compiler.dll" Pack="true" PackagePath="lib/net10.0/" Visible="false" />
+
+    <!-- Staged by pack-tool.ps1 with the version substituted in (like the other package READMEs);
+         packing packaging\...\README.md verbatim would ship the literal placeholder. -->
+    <None Include="$(NemerleReadmeFile)" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <Target Name="ValidateRuntimeLayout" BeforeTargets="Build;Pack">
+    <Error Condition="'$(NemerleReadmeFile)' == '' OR !Exists('$(NemerleReadmeFile)')"
+           Text="NemerleReadmeFile ($(NemerleReadmeFile)) does not exist. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which stages README.md with the package version substituted in; packing this project directly would ship a literal __NEMERLE_SDK_VERSION__ placeholder." />
+    <Error Condition="!Exists('$(NccLayoutDir)Nemerle.dll')"
+           Text="NccLayoutDir ($(NccLayoutDir)) does not contain Nemerle.dll: run dotnet-port\pack-tool.ps1 first (or pass -p:NccLayoutDir=&lt;path&gt;)." />
+    <Error Condition="!Exists('$(NccLayoutDir)Nemerle.Macros.dll') OR !Exists('$(NccLayoutDir)Nemerle.Compiler.dll')"
+           Text="NccLayoutDir ($(NccLayoutDir)) is missing Nemerle.Macros.dll / Nemerle.Compiler.dll: run dotnet-port\pack-tool.ps1 first." />
+  </Target>
+
+  <!-- Same rationale as Nemerle.Sdk.Unofficial: the version must describe the compiler generation
+       inside the package, so pack-tool.ps1 derives it from the packaged Nemerle.dll and passes
+       -p:Version=. A silent 1.0.0 default would ship bits under a version that lies about them and
+       that NuGet then caches by (id, version). -->
+  <Target Name="ValidateExplicitVersion" BeforeTargets="Pack">
+    <Error Condition="'$(Version)' == '1.0.0'"
+           Text="No -p:Version was supplied, so the SDK's 1.0.0 default is in effect. Pack via `pwsh dotnet-port\pack-tool.ps1 -Pack`, which derives the version from the packaged compiler's own assembly version." />
+  </Target>
+
+</Project>

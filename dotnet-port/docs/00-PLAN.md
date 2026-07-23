@@ -140,7 +140,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-L | VS Code extension + project-aware LSP(コンパイラー移植後の次期作業) | —(計画後) | 完了(WP-L1〜L4、2026-07-14) | 24-vscode-development-plan.md / 25-vscode-extension-log.md / 26-vscode-project-info-log.md / 27-vscode-project-workspace-log.md / 28-vscode-packaging-log.md |
 | WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | **WP-M1〜M6 完了(2026-07-15)= WP-M 完了** | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md / 34-devenv2-wp-m5-log.md / 35-devenv2-wp-m6-log.md |
 | WP-N | 公開前の品質固めと既知制約の解消(ビルド再現性・engine 品質・Nemerle.Linq/testsuite・Linux 実地・版タグ契約 + GitHub Release・版ピン留め・最小 CI) | —(計画後) | **完了(2026-07-22)**(N1〜N5 完了、N7 = 部分 GO で case 1 実装済み、N6 = CI/release workflow 稼働) | 36-prerelease-quality-plan.md / 37-prerelease-wp-n1-log.md / 38-prerelease-wp-n2-log.md / 39-prerelease-wp-n2-log.md / 40-prerelease-wp-n3-log.md / 41-prerelease-wp-n4-log.md / 42-prerelease-wp-n5-log.md / 43-boot-net10-log.md / 44-prerelease-wp-n7-log.md / 45-boot-4.0-refresh-log.md / 46-prerelease-wp-n6-log.md |
-| WP-O | 保存・配布フェーズ(入口の現代化・保存/再現性の確定・runtime package 根治・配布の器の判断・任意 showcase) | —(計画後) | 進行中(O1/O2 完了 2026-07-23。O3〜O5 は未合意ドラフト) | 47-wp-o-plan.md / 48-preservation-wp-o1-log.md / 49-preservation-wp-o2-log.md |
+| WP-O | 保存・配布フェーズ(入口の現代化・保存/再現性の確定・runtime package 根治・配布の器の判断・任意 showcase) | —(計画後) | 進行中(O1/O2/O3 完了 2026-07-23。O4/O5 は未合意ドラフト) | 47-wp-o-plan.md / 48-preservation-wp-o1-log.md / 49-preservation-wp-o2-log.md / 50-wp-o3-log.md |
 
 ## 作業ログ
 
@@ -770,3 +770,12 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   再ビルドして初回発行物との一致(版・構成・provenance)を再実証。再現・保存手順を
   `DISTRIBUTION.md` / `packaging/README.md` に保存目線で整理。詳細は
   `49-preservation-wp-o2-log.md`。
+- 2026-07-23: **WP-O3(net10 runtime package の根治)完了**。D1(`GenerateDependencyFile=false`
+  依存)を根治。Nemerle ランタイム閉包を新パッケージ `Nemerle.Runtime.Unofficial`
+  (`lib/net10.0/{Nemerle,Nemerle.Macros,Nemerle.Compiler}.dll`)化し、`Nemerle.Sdk.Unofficial` の
+  `Sdk.props` が `ExcludeAssets="compile"` の暗黙 PackageReference で参照。runtime + deps.json
+  にのみ載せ compile 参照には入れないことで ncc 自前解決との二重参照を回避。`GenerateDependencyFile`
+  既定を SDK 既定(true)へ戻し、checkout 形式は `NemerleRuntimeProvidedByPackage` で従来の
+  copy-local を維持。版は pack 時 staging で SDK 世代にピン。smoke-release(local feed のみで
+  install → new → build → run、deps.json がランタイムを列挙)/ test:sdk 1/1 / samples 回帰 で検証。
+  公開時の恒久命名は WP-O4 の判断。共有ソース無変更。詳細は `50-wp-o3-log.md`。

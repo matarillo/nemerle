@@ -50,25 +50,43 @@
          UseAppHost=false                : ncc emits a managed PE directly runnable via
                                            "dotnet <dll>"; no native apphost is needed
                                            (dotnet-port\DISTRIBUTION.md §1).
-         GenerateDependencyFile=false    : LOAD-BEARING, not a tidy-up. Nemerle.dll and friends
-                                           are copied next to the output by
-                                           NemerleCopyRuntimeAssemblies rather than flowing
-                                           through the package graph, so they are absent from
-                                           any generated deps.json - and when a deps.json IS
-                                           present the host builds its assembly list from it and
-                                           ignores unlisted files sitting beside the app, so the
-                                           program would fail at run time with a missing
-                                           Nemerle.dll. Without deps.json the host falls back to
-                                           probing the application directory, which finds them.
-                                           Every sample .nproj has set this since WP-I2 for the
-                                           same reason. The principled fix is to ship the
-                                           Nemerle runtime as a real PackageReference so it
-                                           lands in deps.json legitimately; that needs a
-                                           published net10.0 runtime package (WP-N). -->
+
+         GenerateDependencyFile is deliberately NOT defaulted here any more (WP-O3,
+         dotnet-port\docs\50-wp-o3-log.md). It used to be forced to false because Nemerle.dll and
+         the macro-support assemblies were copied next to the output by
+         NemerleCopyRuntimeAssemblies rather than flowing through the package graph: they were
+         therefore absent from any generated deps.json, and a host that has a deps.json builds its
+         assembly list from it and ignores unlisted files beside the app - so the program failed
+         at run time with a missing Nemerle.dll, and suppressing deps.json (falling back to
+         directory probing) was the only workaround. The root fix is below: the SDK now references
+         Nemerle.Runtime.Unofficial, which carries that runtime closure as ordinary package assets,
+         so it lands in deps.json legitimately and GenerateDependencyFile keeps the SDK default
+         (true). A consumer may still set it to false; the runtime assemblies are copied to the
+         output by the package's copy-local either way, so probing still finds them. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
     <UseAppHost Condition="'$(UseAppHost)' == ''">false</UseAppHost>
-    <GenerateDependencyFile Condition="'$(GenerateDependencyFile)' == ''">false</GenerateDependencyFile>
+
+    <!-- Tells Nemerle.Core.targets that the runtime closure arrives through the package graph
+         (the PackageReference below), so its NemerleCopyRuntimeAssemblies fallback must NOT also
+         copy the same dlls out of the compiler layout: that would map two source paths to one
+         output file. A repository checkout that imports Nemerle.Core.targets directly never sets
+         this, so it keeps the copy-local behaviour. -->
+    <NemerleRuntimeProvidedByPackage>true</NemerleRuntimeProvidedByPackage>
   </PropertyGroup>
+
+  <!-- The root fix for D1 (WP-O3): the Nemerle runtime closure as a real package, so a compiled
+       program's deps.json lists it and the .NET host loads it. ExcludeAssets="compile" is the
+       whole point - the assemblies are contributed as RUNTIME assets (copy-local + deps.json)
+       but withheld from compilation, because ncc auto-resolves Nemerle.dll from its own layout
+       (ncc\passes.n) and would otherwise be handed a duplicate -ref: for it, and the macro-support
+       assemblies' types must not enter the consumer's compile scope. The version is pinned by
+       pack-tool.ps1 at pack time (this file is staged with the placeholder substituted), so it
+       always matches the SDK package's own generation. -->
+  <ItemGroup>
+    <PackageReference Include="Nemerle.Runtime.Unofficial"
+                      Version="__NEMERLE_RUNTIME_VERSION__"
+                      ExcludeAssets="compile" />
+  </ItemGroup>
 
   <!-- Microsoft.NET.Sdk supplies everything that is not Nemerle-specific: TargetFramework
        handling, NuGet restore, ResolveAssemblyReferences, @(IntermediateAssembly),

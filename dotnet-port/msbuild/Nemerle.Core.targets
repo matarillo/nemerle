@@ -267,8 +267,16 @@
        creates $(OutDir) and copies the main assembly/pdb) and BEFORE IncrementalClean, which is
        the target that snapshots @(FileWrites) into the clean file; an earlier version ran
        AfterTargets="Build" (after IncrementalClean) and off the FileWrites path, so these dlls
-       were left behind in bin\ by clean. -->
-  <Target Name="NemerleCopyRuntimeAssemblies" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(OutDir)' != ''">
+       were left behind in bin\ by clean.
+
+       Skipped when NemerleRuntimeProvidedByPackage=true (WP-O3): the Nemerle.Sdk.Unofficial
+       package references Nemerle.Runtime.Unofficial, whose runtime assets the SDK already copies
+       to the output (and lists in deps.json). Copying the same file names out of the compiler
+       layout on top of that would map two source paths to one output path. A repository checkout
+       that imports this file directly does not set the flag, so it keeps copying from the
+       layout - it has no package to lean on. -->
+  <Target Name="NemerleCopyRuntimeAssemblies" AfterTargets="CopyFilesToOutputDirectory"
+          Condition="'$(OutDir)' != '' AND '$(NemerleRuntimeProvidedByPackage)' != 'true'">
     <ItemGroup>
       <_NemerleRuntimeDll Include="$(NccLayoutDir)Nemerle.dll;$(NccLayoutDir)Nemerle.Compiler.dll;$(NccLayoutDir)Nemerle.Macros.dll" />
     </ItemGroup>

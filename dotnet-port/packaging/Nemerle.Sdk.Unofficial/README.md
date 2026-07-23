@@ -89,11 +89,10 @@ control Portable PDB emission, so `#if` and debugging behave as in C# projects.
   from the project extension, and a `.csproj` would import C#'s `CoreCompile` (csc) after
   this SDK's, so csc would try to compile your Nemerle sources. Use `.nproj`. The SDK raises
   an explicit error if it detects a `.csproj`.
-- `GenerateDependencyFile` defaults to `false`. The Nemerle runtime assemblies are copied
-  beside your output rather than resolved through the package graph, so they are absent from
-  any generated `deps.json` - and a present-but-incomplete `deps.json` would stop the host from
-  finding them at run time. Set it back to `true` only if you also arrange for
-  `Nemerle.dll` to be listed there.
+- The SDK references `Nemerle.Runtime.Unofficial` for you, so the Nemerle runtime assemblies
+  flow through the package graph and land in your program's `deps.json`. That package must be in
+  the same feed as this one (a release set contains both). `GenerateDependencyFile` therefore
+  works at its normal default (`true`); there is no longer any need to turn it off.
 - This is a preview: it is verified against a local feed and the port's own samples, not
   broadly in the wild.
 

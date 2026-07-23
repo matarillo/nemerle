@@ -69,6 +69,47 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "dotnet build failed (exit $LASTEXITCODE)" }
             $out = & dotnet run --no-build
             if ($LASTEXITCODE -ne 0) { throw "dotnet run failed (exit $LASTEXITCODE)" }
+
+            # WP-O3 (dotnet-port/docs/50-wp-o3-log.md) D1 guard. The template builds with
+            # GenerateDependencyFile at the SDK default (true), which used to be forced off because
+            # the Nemerle runtime was absent from any generated deps.json. Prove the root fix two
+            # ways so a regression cannot pass silently:
+            #   (a) a deps.json IS generated and lists the runtime closure (Nemerle.dll), and
+            #   (b) a program that actually EXERCISES the runtime at run time -- not just
+            #       System.Console -- loads it through that deps.json and runs.
+            # The stock template's Main only calls Console.WriteLine, so on its own it would run
+            # even with a broken closure; (b) replaces it with runtime-using code to close that gap.
+            $depsJson = Get-ChildItem -Path (Join-Path (Get-Location) "bin") -Recurse -Filter "SmokeApp.deps.json" -File | Select-Object -First 1
+            if (-not $depsJson) {
+                throw "No SmokeApp.deps.json was generated -- GenerateDependencyFile is not defaulting to true for SDK consumers (WP-O3 regression)."
+            }
+            $depsText = Get-Content -Raw -Path $depsJson.FullName
+            if ($depsText -notmatch 'Nemerle\.dll') {
+                throw "SmokeApp.deps.json does not list Nemerle.dll -- the runtime closure is not flowing into deps.json (WP-O3 regression).`n$depsText"
+            }
+
+            Set-Content -Path (Join-Path (Get-Location) "Program.n") -Encoding utf8 -Value @(
+                'using System;'
+                'using System.Console;'
+                ''
+                'module Program'
+                '{'
+                '  Main() : void'
+                '  {'
+                '    def parts = ["Nemerle", "runtime", "OK"];'
+                '    WriteLine(string.Join(" ", parts));'
+                '  }'
+                '}'
+            )
+            & dotnet build
+            if ($LASTEXITCODE -ne 0) { throw "dotnet build (runtime-exercising variant) failed (exit $LASTEXITCODE)" }
+            $rtOut = & dotnet run --no-build
+            if ($LASTEXITCODE -ne 0) {
+                throw "dotnet run (runtime-exercising variant) failed (exit $LASTEXITCODE) -- the Nemerle runtime did not load from deps.json (WP-O3 regression)."
+            }
+            if (($rtOut -join "`n") -notmatch 'Nemerle runtime OK') {
+                throw "runtime-exercising variant printed '$($rtOut -join "`n")', expected 'Nemerle runtime OK'."
+            }
         }
         finally { Pop-Location }
     }
@@ -79,6 +120,7 @@ try {
         throw "dotnet run output did not contain '$expected'. Got:`n$($out -join "`n")"
     }
     Write-Host "Smoke test PASS: install -> new -> build -> run -> '$expected'"
+    Write-Host "WP-O3 PASS: deps.json lists the Nemerle runtime, and a runtime-using program runs with GenerateDependencyFile default (true)."
 }
 finally {
     if ($templatesInstalled) { & dotnet new uninstall Nemerle.Templates.Unofficial *> $null }

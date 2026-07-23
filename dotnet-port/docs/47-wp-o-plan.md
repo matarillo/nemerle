@@ -1,9 +1,9 @@
 # 47. WP-O 計画
 
-**状態: WP-O1 / WP-O2 は PO 指示により実施・完了(2026-07-23。ログ:
-`48-preservation-wp-o1-log.md` / `49-preservation-wp-o2-log.md`)。
-WP-O3 / WP-O4 / WP-O5 は未合意のドラフトのまま**(§8 の論点は未決。着手は PO 判断待ち)。
-`00-PLAN.md` の WP 表・作業ログへは O1/O2 の合意時に反映済み。
+**状態: WP-O1 / WP-O2 / WP-O3 は PO 指示により実施・完了(2026-07-23。ログ:
+`48-preservation-wp-o1-log.md` / `49-preservation-wp-o2-log.md` / `50-wp-o3-log.md`)。
+WP-O4 / WP-O5 は未合意のドラフトのまま**(§8 の論点は未決。着手は PO 判断待ち)。
+`00-PLAN.md` の WP 表・作業ログへは O1/O2/O3 の合意時に反映済み。
 
 WP-O1 には PO 指示によるスコープ追加が 1 点ある: `dotnet-port/` 直下に置かれていた
 計画・作業ログ文書(`00-PLAN.md`・番号付き `NN-*.md`)を `dotnet-port/docs/` へ移設する
@@ -148,24 +148,27 @@ Marketplace・署名)と仮置きしてきたが、本計画は **公開を目�
 
 可逆性: 高(文書・検証中心)。リスク: 低。
 
-### WP-O3: net10 runtime package の根治(公開先に依存しない品質改善)
+### WP-O3: net10 runtime package の根治(公開先に依存しない品質改善)— 完了(2026-07-23、ログ 50)
 
 `GenerateDependencyFile=false` 依存(D1)を解消し、GitHub Release 経由の利用者を含む
-全消費者の製品品質を上げる。公開(nuget.org)とは独立に、local feed で価値を確認できる。
+全消費者の製品品質を上げた。公開(nuget.org)とは独立に、local feed で価値を確認できる。
 
-成果物(案):
+確定した機構(`50-wp-o3-log.md`): deps.json への供給はパッケージ/プロジェクト由来の NuGet
+ライブラリ項目でしか成立しないため、runtime を実パッケージ `Nemerle.Runtime.Unofficial`
+(`lib/net10.0/{Nemerle,Nemerle.Macros,Nemerle.Compiler}.dll`)化し、`Sdk.props` が
+`ExcludeAssets="compile"` の暗黙 PackageReference で参照する。compile 参照(`-ref:`)には入れず
+runtime + deps.json にのみ載せることで、ncc の自前解決との二重参照とマクロ支援型の compile scope
+混入を避ける。`GenerateDependencyFile=false` 既定を撤去し SDK 既定(true)へ。checkout 形式は
+`NemerleRuntimeProvidedByPackage` で従来の copy-local 経路を維持。版は pack 時 staging で SDK 世代に
+ピン。既存 net4x パッケージとの版/命名関係は WP-O4 の方針に従う(公開しない場合も local 実装は成立)。
 
-- net10 向け runtime package(または相当の deps.json 供給機構)を設計・実装し、
-  `GenerateDependencyFile=false` 回避を撤去できるか検証。既存 net4x パッケージとの
-  版/命名関係は WP-O4 の方針に従う(公開しない場合も local 実装は成立する)。
-- local feed での消費 e2e(`dotnet new` → build → run、deps.json 正常生成)。
+受け入れ基準の結果:
 
-受け入れ基準(案):
-
-1. SDK 消費プロジェクトが `GenerateDependencyFile` 既定(true)で build・run 成立、
-   または不成立の場合は原因と代替を log に記録。
-2. nuget.org へ出さずとも(local feed で)価値が確認できる。
-3. 回帰: 既存 sample / test:sdk / CI green。
+1. ✓ SDK 消費プロジェクトが `GenerateDependencyFile` 既定(true)で build・run 成立
+   (smoke-release: install → new → build → run、deps.json がランタイム閉包を列挙)。
+2. ✓ nuget.org へ出さず local feed(`<clear />`)のみで確認(smoke-release / test:sdk)。
+3. ✓ 回帰: samples(HelloCore/PackageReference/Warnings/Defines/Sokoban/RefDemo)green、
+   test:sdk 1/1 PASS。共有ソース無変更 = Stage リビルド不要。
 
 可逆性: 中(パッケージは local に留められる)。リスク: 中(deps.json / 依存解決の未知)。
 
