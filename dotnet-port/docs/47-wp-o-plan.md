@@ -1,9 +1,11 @@
 # 47. WP-O 計画
 
-**状態: WP-O1 / WP-O2 / WP-O3 は PO 指示により実施・完了(2026-07-23。ログ:
-`48-preservation-wp-o1-log.md` / `49-preservation-wp-o2-log.md` / `50-wp-o3-log.md`)。
-WP-O4 / WP-O5 は未合意のドラフトのまま**(§8 の論点は未決。着手は PO 判断待ち)。
-`00-PLAN.md` の WP 表・作業ログへは O1/O2/O3 の合意時に反映済み。
+**状態: WP-O1 / WP-O2 / WP-O3 / WP-O4 は PO 指示により実施・完了(2026-07-23。ログ:
+`48-preservation-wp-o1-log.md` / `49-preservation-wp-o2-log.md` / `50-wp-o3-log.md` /
+`51-wp-o4-log.md`)。WP-O4 は nuget.org / Marketplace とも no-go(GitHub Release 維持、単一
+`Nemerle.Runtime.Unofficial` 維持)で確定。§8 の論点 1/2 は決着(下記)。WP-O5 は未合意のドラフトの
+まま**(任意項目、着手は PO 判断待ち)。`00-PLAN.md` の WP 表・作業ログへは O1/O2/O3/O4 の合意時に
+反映済み。
 
 WP-O1 には PO 指示によるスコープ追加が 1 点ある: `dotnet-port/` 直下に置かれていた
 計画・作業ログ文書(`00-PLAN.md`・番号付き `NN-*.md`)を `dotnet-port/docs/` へ移設する
@@ -172,10 +174,18 @@ runtime + deps.json にのみ載せることで、ncc の自前解決との二�
 
 可逆性: 中(パッケージは local に留められる)。リスク: 中(deps.json / 依存解決の未知)。
 
-### WP-O4: 配布の器の判断(go/no-go)
+### WP-O4: 配布の器の判断(go/no-go)— 完了(2026-07-23、ログ 51)
 
 GitHub Release による配布・再現は既に成立している(§2)。本 WP は、位置づけ(保存中心・
-少し試せる間口・本格採用は非狙い)に照らして、nuget.org / VS Code Marketplace を足すかを判断する。
+少し試せる間口・本格採用は非狙い)に照らして、nuget.org / VS Code Marketplace を足すかを判断した。
+
+**確定した判断(`51-wp-o4-log.md`)**: nuget.org = **no-go**、VS Code Marketplace = **no-go**。
+両器とも GitHub Release 配布を維持する。公開時の恒久命名は確定不要(公開しないため)で、runtime
+package は単一 `Nemerle.Runtime.Unofficial`(WP-O3)を維持。理由: nuget.org は package ID/版、
+Marketplace は publisher identity という一方通行のコミットを伴い、位置づけに不釣り合い。Marketplace
+の便益(VSIX の手動 install 摩擦の解消)は、SDK がローカルフィード前提である以上部分的にしかならない
+(nuget.org no-go のため)。**本判断は恒久ではなく**、状況が変われば別途判断する(PO 指示により
+バックログには積まない)。公開ワークフロー・packaging・msbuild・共有ソースへの変更はなし。
 
 判断材料:
 
@@ -249,10 +259,13 @@ GitHub Release による配布・再現は既に成立している(§2)。本 WP
 
 ## 8. PO が決めるべき論点
 
-1. **配布の器(WP-O4)**: GitHub Release のみで足りるか。足りないなら Marketplace / nuget.org の
-   どちらを足すか(試遊導線としては Marketplace が自然、ただし identity の継続コミット)。
-2. **パッケージ命名・版方針**: `*.Unofficial` + 1.2.x 継続でよいか(器を開ける場合)。
-3. **試遊 showcase(WP-O5)** と **semantic tokens** を入れるか(任意)。
+1. ~~**配布の器(WP-O4)**: GitHub Release のみで足りるか。足りないなら Marketplace / nuget.org の
+   どちらを足すか~~ → **決着(2026-07-23、ログ 51)**: 両器とも **no-go**、GitHub Release のみを維持。
+   恒久ではなく状況次第で再判断。
+2. ~~**パッケージ命名・版方針**: `*.Unofficial` + 1.2.x 継続でよいか(器を開ける場合)~~ →
+   **決着(同上)**: 公開しないため恒久命名の確定は不要。runtime package は単一
+   `Nemerle.Runtime.Unofficial` を維持(利用者不可視・機能的実害なし・GitHub Release では ID 可逆)。
+3. **試遊 showcase(WP-O5)** と **semantic tokens** を入れるか(任意、未決)。
 
 ---
 
