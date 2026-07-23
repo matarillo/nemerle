@@ -2,7 +2,7 @@
 # directory so `vsce package` produces a VSIX that runs without a repository checkout.
 #
 # The packaging unit is the LspServer project's ENTIRE bin\<Configuration>\net10.0\
-# output directory (design rule from dotnet-port\24-vscode-development-plan.md §7 and
+# output directory (design rule from dotnet-port\docs\24-vscode-development-plan.md §7 and
 # 28-vscode-packaging-log.md): it already contains Nemerle.dll / Nemerle.Compiler.dll /
 # Nemerle.Macros.dll (HintPath references with Private=true), Nemerle.Compiler.Utils.dll,
 # Nemerle.ProjectInfo.dll, the OmniSharp.*/MediatR protocol stack with its runtimes\ and

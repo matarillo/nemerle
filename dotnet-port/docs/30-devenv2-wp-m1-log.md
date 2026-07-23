@@ -6,7 +6,7 @@
 
 開始 commit: `68837aa56`(`Plan the next .NET 10 Nemerle development environment phase (WP-M)`)
 
-対象: `dotnet-port/29-devenv2-plan.md` の **WP-M1** のみ。hover/completion/definition
+対象: `dotnet-port/docs/29-devenv2-plan.md` の **WP-M1** のみ。hover/completion/definition
 (WP-M2〜M4)、incremental rebuild(WP-M5)、`Nemerle.Sdk` NuGet 化(WP-M6)は範囲外。
 
 ## 結論

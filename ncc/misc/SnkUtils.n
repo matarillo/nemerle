@@ -36,7 +36,7 @@ namespace Nemerle.Compiler
   /// Used to derive the RSA public key blob -- and, from it, the public key token
   /// -- without going through System.Reflection.StrongNameKeyPair, whose
   /// constructors throw PlatformNotSupportedException when run on CoreCLR (see
-  /// dotnet-port\03-dotnet-runtime-facts.md fact 5). The .snk file is just a CAPI
+  /// dotnet-port\docs\03-dotnet-runtime-facts.md fact 5). The .snk file is just a CAPI
   /// PRIVATEKEYBLOB; parsing it out is pure byte manipulation and needs no crypto
   /// API beyond SHA1 (only for the 8-byte token), which exists unchanged on both
   /// runtimes. Because of that, unlike the rest of the CoreCLR emission port, this

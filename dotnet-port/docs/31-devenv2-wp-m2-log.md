@@ -6,7 +6,7 @@
 
 開始 commit: `2437d5bfd`(`Implement WP-M1 IDE/build parity and window/logMessage server logging`)
 
-対象: `dotnet-port/29-devenv2-plan.md` の **WP-M2** のみ。completion(WP-M3)、
+対象: `dotnet-port/docs/29-devenv2-plan.md` の **WP-M2** のみ。completion(WP-M3)、
 definition/references(WP-M4)、incremental rebuild(WP-M5)、`Nemerle.Sdk` NuGet 化
 (WP-M6)は範囲外。
 

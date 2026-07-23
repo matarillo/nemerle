@@ -137,7 +137,7 @@ MSBuild タスクアセンブリ。MSBuild が自分の task-ALC にロードす
 - 注意: Hosting のビルドは dist レイアウトの存在に依存する(参照 HintPath)ので、
   「レイアウト組み立て → Hosting/Tasks ビルド → コピー」の順にする。
 
-### 5. ドキュメント: `dotnet-port\20-inproc-task-log.md`(新規、作業ログ)+ `DISTRIBUTION.md` 追記
+### 5. ドキュメント: `dotnet-port\docs\20-inproc-task-log.md`(新規、作業ログ)+ `DISTRIBUTION.md` 追記
 
 ---
 

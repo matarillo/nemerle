@@ -6,7 +6,7 @@
 
 開始 commit: `0687c7302`(`Close WP-N3: seal the 1.2.627-preview.1 release set`)
 
-対象: `dotnet-port/36-prerelease-quality-plan.md` の **WP-N5** のみ。
+対象: `dotnet-port/docs/36-prerelease-quality-plan.md` の **WP-N5** のみ。
 最小 CI の構築(WP-N6)は範囲外だが、その go/no-go 判断の前提となる検証
 (checked-in stage1 起点の Linux ブートストラップ可否)は本 WP の成果物に含まれる。
 

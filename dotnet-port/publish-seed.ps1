@@ -9,7 +9,7 @@
 # and a seed commit on main would advance it -- making the seed one generation stale the instant
 # it was committed (the "+1 paradox"). With the version pinned by version.txt
 # (dotnet-port/version-pin.ps1), a commit no longer moves the version, so the seed can simply live
-# in the tree. See dotnet-port/44-prerelease-wp-n7-log.md sections 7 and 8.
+# in the tree. See dotnet-port/docs/44-prerelease-wp-n7-log.md sections 7 and 8.
 #
 # What "seed" means: exactly the 6 files a Stage1 compiler directory needs to run via
 # `dotnet exec` (ncc.exe, its runtimeconfig.json, and the 4 assemblies it loads: Nemerle.dll,

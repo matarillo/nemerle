@@ -11,7 +11,7 @@ namespace Nemerle.Compiler.Hosting
     /// through the hosting AssemblyLoadContext instead of Assembly.Load/Assembly.LoadFrom's
     /// default-ALC behavior. This is what makes reference dll file locks release when the
     /// ALC is unloaded after a compile (see NccCompile.Execute's alc.Unload(), the fix for
-    /// the "file in use" / node-reuse risk noted in dotnet-port\20-inproc-task-plan.md,
+    /// the "file in use" / node-reuse risk noted in dotnet-port\docs\20-inproc-task-plan.md,
     /// investigation point 1 / risk table row 3).
     /// </summary>
     internal sealed class AlcLibraryReferenceManager : LibraryReferenceManager

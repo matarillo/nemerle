@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    WP-K (LSP feasibility validation, dotnet-port\21-lsp-feasibility.md step 1): builds
+    WP-K (LSP feasibility validation, dotnet-port\docs\21-lsp-feasibility.md step 1): builds
     VsIntegration\Nemerle.Compiler.Utils (the VS2010 IDE engine, ~22K lines, "Nemerle.Completion2.Engine"
     core) with the core (net10) toolchain, on top of dist\ncc, EXCLUDING the WinForms/CodeDom-designer
     files that are irrelevant to a headless engine (debug AST browser forms, VS Forms-designer
@@ -10,7 +10,7 @@
     one source of truth.
 
     Excluded (WinForms/System.Drawing designer-only; not on the IIdeEngine->LSP surface in
-    dotnet-port\21-lsp-feasibility.md), all genuinely coupled to System.Windows.Forms/
+    dotnet-port\docs\21-lsp-feasibility.md), all genuinely coupled to System.Windows.Forms/
     System.Drawing (not just System.CodeDom, see the note further down for that distinction):
       AstBrowserForm.n, Nemerle.Completion2\CompiledUnitAstBrowser.n (debug AST tree Form),
       Nemerle.Completion2\CodeModel\Project.Debug.n (only caller of CompiledUnitAstBrowser; its own

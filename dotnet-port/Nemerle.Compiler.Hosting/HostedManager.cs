@@ -8,7 +8,7 @@ namespace Nemerle.Compiler.Hosting
     /// seam that lets a caller of ManagerClass, without touching ncc's own sources, swap in a
     /// LibraryReferenceManager that routes reference loading into a specific
     /// AssemblyLoadContext instead of the CLR default one (ncc\passes.n:540-541 /
-    /// ncc\external\LibraryReferenceManager.n:224-234; see dotnet-port\20-inproc-task-plan.md
+    /// ncc\external\LibraryReferenceManager.n:224-234; see dotnet-port\docs\20-inproc-task-plan.md
     /// investigation point 1).
     ///
     /// CreateComponentsFactory() is called from INSIDE ManagerClass's own base constructor

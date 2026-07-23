@@ -1,8 +1,8 @@
 # 23. WP-K: LSP feasibility step 2 — 最小 .NET 10 LSP サーバー
 
 日付: 2026-07-13
-前提: `dotnet-port/21-lsp-feasibility.md` の「推奨する進め方」ステップ5、
-および `dotnet-port/22-lsp-step1-log.md` で動作確認した IDE エンジン。
+前提: `dotnet-port/docs/21-lsp-feasibility.md` の「推奨する進め方」ステップ5、
+および `dotnet-port/docs/22-lsp-step1-log.md` で動作確認した IDE エンジン。
 
 ## 結論
 

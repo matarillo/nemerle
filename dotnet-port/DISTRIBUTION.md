@@ -61,7 +61,7 @@
 > ロードされる(静的状態隔離・参照 dll のファイルロック解放が目的)。診断はテキストではなく
 > `Log.LogError`/`LogWarning`(file/line/col 付き構造化)で報告される。
 > `-p:NemerleUseExec=true` で従来の `<Exec>` 経路にフォールバック可能。詳細・検証結果は
-> `dotnet-port\20-inproc-task-plan.md` / `dotnet-port\20-inproc-task-log.md` を参照。
+> `dotnet-port\docs\20-inproc-task-plan.md` / `dotnet-port\docs\20-inproc-task-log.md` を参照。
 > `pack-tool.ps1` は既定でこの2プロジェクトもビルドし、レイアウトへ配置するようになった。
 
 > **更新 (2026-07-13, WP-L2 — VS Code project information)**: `dotnet msbuild` の
@@ -420,7 +420,7 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 - 新規: `dotnet-port\msbuild\linux\Nemerle.Core.targets`(Linux 版, 253d2ecb3。インプロセスタスク追加)
 - 新規: `dotnet-port\Nemerle.Compiler.Hosting\`(WP-A3、`ManagerClass` API の C# ブリッジ)
 - 新規: `dotnet-port\Nemerle.MSBuild.Tasks\`(WP-A3、`NccCompile` インプロセスタスク)
-- 新規: `dotnet-port\20-inproc-task-plan.md` / `dotnet-port\20-inproc-task-log.md`(WP-A3 計画/ログ)
+- 新規: `dotnet-port\docs\20-inproc-task-plan.md` / `dotnet-port\docs\20-inproc-task-log.md`(WP-A3 計画/ログ)
 - 新規: `dotnet-port\samples\HelloCore\HelloCore.nproj`, `hello.n`
 - 新規: `dotnet-port\samples\RefDemo\`(MathLib ライブラリ → App exe の ProjectReference 例)
 - 新規: `dotnet-port\DISTRIBUTION.md`(本ドキュメント)
@@ -433,7 +433,7 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
 - コンパイラー側: `ncc\passes.n`(CoreCLR デフォルト参照の自動解決 `LoadCoreStdlibReferences`, 56964d879)。
   **WP-A3 ではコンパイラー側は無変更**。
 - 既存改変(最小限): `.gitignore`(`dotnet-port/dist/` と `*.nupkg` を追加、
-  生成物を誤って追跡しないため)、`dotnet-port\00-PLAN.md`(作業ログ追記)
+  生成物を誤って追跡しないため)、`dotnet-port\docs\00-PLAN.md`(作業ログ追記)
 - 生成物(既定では git 追跡対象外): `dotnet-port\dist\ncc\`(pack-tool.ps1 の
   出力、`Nemerle.Compiler.Hosting.dll`/`msbuild-task\Nemerle.MSBuild.Tasks.dll` を含む)、
   `dotnet-port\dist\nupkg\`(この節の `Nemerle.Tool` PoC の `dotnet pack -o` 出力)。
@@ -450,7 +450,7 @@ dotnet exec dotnet-port\samples\HelloCore\bin\Debug\net10.0\HelloCore.dll
    Newtonsoft.Json 13.0.4 について build と project-information snapshot を実測した。
 2. ~~インプロセス化: MSBuild の `<Exec>` による ncc.dll 別プロセス起動を、
    `Nemerle.Compiler.dll` の API 直呼びへ置き換える~~ →
-   **完了 (WP-A3、`dotnet-port\20-inproc-task-plan.md` / `20-inproc-task-log.md`)**。
+   **完了 (WP-A3、`dotnet-port\docs\20-inproc-task-plan.md` / `20-inproc-task-log.md`)**。
    `dotnet-port\Nemerle.MSBuild.Tasks`(`NccCompile` タスク)+
    `dotnet-port\Nemerle.Compiler.Hosting`(`ManagerClass` API ブリッジ)で実現。
    コンパイル毎の collectible `AssemblyLoadContext` 隔離、`Log.LogError`/`LogWarning` による
@@ -536,11 +536,11 @@ worktree もブランチ解決も不要になった。再現の一致水準(41 l
   provenance の `packedAtUtc`、C# 製補助アセンブリの PE メタデータ(タイムスタンプ/MVID)が
   ビルドごとに変わるため。照合は「版 + zip 内エントリー単位の内容ハッシュ」で行うこと。
 
-詳細な設計と実測は `dotnet-port\41-prerelease-wp-n4-log.md`。
+詳細な設計と実測は `dotnet-port\docs\41-prerelease-wp-n4-log.md`。
 
 ## CI(WP-N6、Linux)
 
-GitHub Actions ワークフロー 2 本。設計と実測は `dotnet-port\46-prerelease-wp-n6-log.md`。
+GitHub Actions ワークフロー 2 本。設計と実測は `dotnet-port\docs\46-prerelease-wp-n6-log.md`。
 
 **`.github\workflows\dotnet-port-ci.yml`(push/PR CI)**: `wip/dotnet-port` への push と
 同ブランチ宛 PR で自動実行(`**/*.md` のみの変更は除外。`workflow_dispatch` で手動起動も可)。

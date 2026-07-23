@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    WP-M1 warning-code fixture (dotnet-port\29-devenv2-plan.md, acceptance
+    WP-M1 warning-code fixture (dotnet-port\docs\29-devenv2-plan.md, acceptance
     criterion 3).  warnings.n has a redundant ':>' upcast, so ncc emits
     warning N10001 "there is no check needed to cast ...".  WP-M1 surfaces the
     N10001 code as a structured warning code:

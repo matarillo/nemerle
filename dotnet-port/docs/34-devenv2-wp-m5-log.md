@@ -6,7 +6,7 @@
 
 開始 commit: `2239bd697`(`Implement WP-M4 definition/references via synchronous GetGotoInfo`)
 
-対象: `dotnet-port/29-devenv2-plan.md` の **WP-M5** のみ。`Nemerle.Sdk` NuGet 化(WP-M6)は範囲外。
+対象: `dotnet-port/docs/29-devenv2-plan.md` の **WP-M5** のみ。`Nemerle.Sdk` NuGet 化(WP-M6)は範囲外。
 
 ## 結論
 
@@ -153,7 +153,7 @@ off でも relocation trace は出ず、診断挙動は従来どおり(受け入
   `dotnet-port/LspServer.IntegrationTest/LspTestClient.cs`(環境変数付き起動と initialize 結果保持)。
 - 変更(doc): `dotnet-port/vscode-nemerle/README.md`(incremental rebuild + escape hatch)、
   `dotnet-port/vscode-nemerle/package.json`(version 0.7.0、package:vsix 出力名)、
-  `dotnet-port/00-PLAN.md`。
+  `dotnet-port/docs/00-PLAN.md`。
 - `ncc/` `lib/` `macros/` `VsIntegration/`(engine 共有ソース)は**無変更**。extension の実装
   TypeScript(`src/`)も**無変更**(sync 切替は capability 追従)。
 

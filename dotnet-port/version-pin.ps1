@@ -6,7 +6,7 @@
 # environment -> `git describe --tags --long` -> hard-coded default (macros\ExpandEnv.n
 # evaluateVar), so setting the environment variables overrides the describe recipe WITHOUT
 # touching any shared source -- which is what makes this pin free of the usual Stage-rebuild
-# hazard (dotnet-port\44-prerelease-wp-n7-log.md section 7.3).
+# hazard (dotnet-port\docs\44-prerelease-wp-n7-log.md section 7.3).
 #
 # Consequence, and the whole point: AssemblyVersion no longer advances per commit, so a seed
 # compiler can build any commit within the same version.txt span. Without the pin, CoreCLR's

@@ -1,7 +1,7 @@
 <Project>
   <!--
     THE Nemerle build logic: one file, every platform, every distribution form (WP-M6,
-    dotnet-port\29-devenv2-plan.md §6.7). It is used, byte-for-byte identically, by:
+    dotnet-port\docs\29-devenv2-plan.md §6.7). It is used, byte-for-byte identically, by:
 
       * a repository checkout, on Windows AND on Linux/Unix, via
           <Import Project="...\dotnet-port\msbuild\Nemerle.Core.targets" />
@@ -21,7 +21,7 @@
     conditionalised: the layout dir is an overridable property, `dotnet exec` (the explicit,
     platform-neutral verb) is used unconditionally, and forward slashes are used throughout
     (Windows accepts them). Re-verified on Windows and under WSL; see
-    dotnet-port\35-devenv2-wp-m6-log.md.
+    dotnet-port\docs\35-devenv2-wp-m6-log.md.
 
     Inputs an importer may set (all optional; the defaults below serve the repo checkout, and
     the Sdk package's Sdk.props overrides the first three before importing this file):
@@ -31,7 +31,7 @@
       $(NemerleLayoutHint)   - how to obtain the layout; quoted in error text.
 
     Design (unchanged from the WP-I2/WP-A3 originals; see dotnet-port\DISTRIBUTION.md and
-    dotnet-port\20-inproc-task-plan.md): this is NOT a port of the legacy Ncc ToolTask
+    dotnet-port\docs\20-inproc-task-plan.md): this is NOT a port of the legacy Ncc ToolTask
     (tools\msbuild-task\MSBuildTask.cs derives from Microsoft.Build.Tasks.ManagedCompiler, a
     type that does not exist in modern Microsoft.Build.Tasks.Core). It overrides the single
     well-known extension point real compilers hook - `CoreCompile` - with the in-process
@@ -81,7 +81,7 @@
          same way Nemerle.MSBuild.targets/the legacy .nproj files do. -->
     <NemerleTargetType Condition="'$(NemerleTargetType)' == '' AND '$(OutputType)' == 'Exe'">exe</NemerleTargetType>
     <NemerleTargetType Condition="'$(NemerleTargetType)' == ''">library</NemerleTargetType>
-    <!-- ncc emits a standalone Portable PDB (WP-E, dotnet-port\14-pdb-log.md) at <out>.pdb when
+    <!-- ncc emits a standalone Portable PDB (WP-E, dotnet-port\docs\14-pdb-log.md) at <out>.pdb when
          -debug is passed, i.e. at $(IntermediateOutputPath)$(TargetName).pdb, exactly where the
          SDK's @(_DebugSymbolsIntermediatePath) already points, so once ncc writes it there the
          common targets copy it to $(OutDir) and clean it with no extra wiring. Emit symbols

@@ -14,7 +14,7 @@
 # Extracted from build-from-boot.ps1 for WP-N6: CI runs the build chain WITHOUT the release
 # sealing that build-from-boot.ps1 performs (pack-release.ps1 requires a clean tree, which does
 # not fit a PR build), but it still has to verify the seed first.  build-from-boot.ps1 now calls
-# this script rather than carrying its own copy.  See dotnet-port/46-prerelease-wp-n6-log.md.
+# this script rather than carrying its own copy.  See dotnet-port/docs/46-prerelease-wp-n6-log.md.
 #
 # Usage:
 #   pwsh dotnet-port/verify-seed.ps1              # provenance mismatch is an error
@@ -43,7 +43,7 @@ if ($seedInfo.schema -ne 2) {
 . "$PSScriptRoot/version-pin.ps1"
 $pin = Get-NemerleVersionPin -RepoRoot $RepoRoot
 if ($seedInfo.pinnedVersion -ne $pin.Base) {
-    throw "Seed is pinned to $($seedInfo.pinnedVersion) but this checkout's version.txt says $($pin.Base). They must match: a seed can only build sources in its own version.txt span (dotnet-port/44-prerelease-wp-n7-log.md section 7.1). If version.txt was just bumped, the seed has to be refreshed on Windows (section 7.4)."
+    throw "Seed is pinned to $($seedInfo.pinnedVersion) but this checkout's version.txt says $($pin.Base). They must match: a seed can only build sources in its own version.txt span (dotnet-port/docs/44-prerelease-wp-n7-log.md section 7.1). If version.txt was just bumped, the seed has to be refreshed on Windows (section 7.4)."
 }
 
 $G = $seedInfo.generation

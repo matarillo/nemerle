@@ -5,8 +5,8 @@
 # Background: assembly versions come from the `GeneratedAssemblyVersion("$GitTag.0.$GitRevision")`
 # macro (macros\AssemblyInfo.n). If a build loads a freshly built Nemerle.dll (same simple name,
 # different version) into a compiler process built at another version, the CLR throws a ref-def
-# mismatch FileLoadException ("manifest definition does not match") -- see dotnet-port\14-pdb-log.md
-# F4 and dotnet-port\30-devenv2-wp-m1-log.md:191-197 for the failure mode.
+# mismatch FileLoadException ("manifest definition does not match") -- see dotnet-port\docs\14-pdb-log.md
+# F4 and dotnet-port\docs\30-devenv2-wp-m1-log.md:191-197 for the failure mode.
 #
 # WP-N7 (case 1) changed where the expected version comes from. It used to be replayed from
 # `git describe --tags --long`, which advanced on every commit -- so this check was really
@@ -66,11 +66,11 @@ function Test-NemerleAssemblyVersionFreshness {
 $Label assembly-version mismatch: '$NemerleDllPath' is $actual, but this checkout builds at $expected (pinned by $($pin.Path)).
 The two are from different version.txt spans. Loading a freshly built assembly of the same simple
 name at a different version into this compiler process will fail with a ref-def mismatch
-FileLoadException ("manifest definition does not match") -- see dotnet-port\14-pdb-log.md F4 and
-dotnet-port\30-devenv2-wp-m1-log.md:191-197.
+FileLoadException ("manifest definition does not match") -- see dotnet-port\docs\14-pdb-log.md F4 and
+dotnet-port\docs\30-devenv2-wp-m1-log.md:191-197.
 Two ways this happens, with different fixes:
   - version.txt was bumped but this binary predates the bump: rebuild it for the new version. For
-    a seed compiler that means the Windows/CLR4 bump ritual in dotnet-port\44-prerelease-wp-n7-log.md
+    a seed compiler that means the Windows/CLR4 bump ritual in dotnet-port\docs\44-prerelease-wp-n7-log.md
     section 7.4; for a stage/lib output, just re-run the build script that produces it.
   - This binary belongs to a newer span than version.txt names: version.txt was reverted or edited
     by hand. Restore it to $actual, or rebuild the binary at $expected.
@@ -138,7 +138,7 @@ $Label was built from commit $RecordedCommit, which is NOT an ancestor of HEAD i
 Its sources are not the ones being built here -- it comes from a different branch, a rewritten
 history, or a commit that never landed. The assembly-version check cannot catch this: version.txt
 pins every binary in a span to the same version, so provenance commits are what distinguish them
-(dotnet-port\44-prerelease-wp-n7-log.md section 8.3).
+(dotnet-port\docs\44-prerelease-wp-n7-log.md section 8.3).
 Either check out a history that contains $RecordedCommit, or rebuild the artifact here.
 "@
 

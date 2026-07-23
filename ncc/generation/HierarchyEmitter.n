@@ -64,7 +64,7 @@ namespace Nemerle.Compiler
         through CoreEmitBridge.SetAssemblyCustomAttribute, which defers (instead of
         applying directly) any attribute whose constructor belongs to a locally-defined
         (TypeBuilder) type -- PersistedAssemblyBuilder's assembly-level SetCustomAttribute
-        silently corrupts the saved PE for those (see dotnet-port\17-resources-fixes-log.md);
+        silently corrupts the saved PE for those (see dotnet-port\docs\17-resources-fixes-log.md);
         attributes with an external constructor are applied immediately exactly as before.
         Use this for every assembly-level attribute instead of calling
         `_assembly_builder.SetCustomAttribute` directly. */
@@ -335,7 +335,7 @@ namespace Nemerle.Compiler
      * Win32 resources (-win32-resource) are handled separately (see
      * `Manager.Options.UnmanagedResource`, threaded straight through to
      * CoreEmitBridge.Save/Nemerle.CoreEmit.Emitter.Save/ResFileResourceSection --
-     * dotnet-port\17-resources-fixes-log.md). Linked resources (-linkres) are collected
+     * dotnet-port\docs\17-resources-fixes-log.md). Linked resources (-linkres) are collected
      * here too (same "name|absoluteFilePath" shape) and written as File+ManifestResource
      * metadata rows by Nemerle.CoreEmit.Emitter.Save -- spec-correct, but note
      * System.Reflection.Assembly.GetManifestResourceInfo/GetManifestResourceStream return

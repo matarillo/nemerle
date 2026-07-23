@@ -1,7 +1,7 @@
 # 25. WP-L1: VS Code extension shell 実装記録
 
 日付: 2026-07-13
-対象: `dotnet-port/24-vscode-development-plan.md` の WP-L1 だけ。WP-L2 の
+対象: `dotnet-port/docs/24-vscode-development-plan.md` の WP-L1 だけ。WP-L2 の
 `.nproj` / MSBuild project model は実装していない。
 
 ## 結論

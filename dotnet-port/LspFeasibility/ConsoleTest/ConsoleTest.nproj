@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    WP-K (LSP feasibility validation, dotnet-port\21-lsp-feasibility.md step 1): headless
+    WP-K (LSP feasibility validation, dotnet-port\docs\21-lsp-feasibility.md step 1): headless
     equivalent of the legacy VsIntegration\ConsoleTest\Program.cs (a plain console app that drives
     Nemerle.Compiler.Utils.Tests' Test1 fixture directly, without VS/NUnit runner or GUI). Unlike
     the legacy version (which lets the first failing Assert crash the whole process), this driver

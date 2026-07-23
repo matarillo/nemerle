@@ -7,11 +7,11 @@
 #                      their runtime conversion helpers)
 #
 # Nemerle.Unsafe / Nemerle.WPF are deliberately NOT built here: WP-N3's scope is
-# Nemerle.Linq only (dotnet-port\36-prerelease-quality-plan.md WP-N3), the others are
+# Nemerle.Linq only (dotnet-port\docs\36-prerelease-quality-plan.md WP-N3), the others are
 # individual backlog decisions (same doc section 10-6; WPF's System.Xaml/WindowsBase
 # dependency makes it a Windows-only, likely-infeasible case).
 #
-# Design notes (see dotnet-port\40-prerelease-wp-n3-log.md):
+# Design notes (see dotnet-port\docs\40-prerelease-wp-n3-log.md):
 #   - The 7 Linq\Macro sources use no CLR4-only BCL surface at all (audited: no
 #     System.Windows.Forms / System.Data / System.Xml usage despite Linq.nproj's stale
 #     reference list, no AppDomain, no direct Reflection.Emit, no #if branches), so this
@@ -69,7 +69,7 @@ New-Item -ItemType Directory -Force -Path $RspDir | Out-Null
 
 # Same shared-framework resolution as build-stage2-core.ps1 (facades are useless to
 # ncc's reflection importer; real split assemblies + -use-loaded-corlib is the working
-# combination -- dotnet-port\13-stage2-log.md section 1).
+# combination -- dotnet-port\docs\13-stage2-log.md section 1).
 $runtimes = & dotnet --list-runtimes | Where-Object { $_ -match '^Microsoft\.NETCore\.App (\S+) \[(.+)\]$' }
 $netCoreRuntimes = $runtimes | ForEach-Object {
     if ($_ -match '^Microsoft\.NETCore\.App (\S+) \[(.+)\]$') {

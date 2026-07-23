@@ -2,8 +2,8 @@
 # Nemerle.Test.Framework.dll -- snippets\Nemerle.Test\...) against a CoreCLR
 # ("core"-flavor) ncc.exe, using the harness's existing `-ncc <exe>` (ExternalNcc)
 # and `-runtime <exe> -runtime-params <args>` (RuntimeProcessStartInfoFactory)
-# switches (dotnet-port\02-build-flow.md section 8) -- NO harness source changes
-# needed. See dotnet-port\18-testsuite-log.md for the full writeup/rationale.
+# switches (dotnet-port\docs\02-build-flow.md section 8) -- NO harness source changes
+# needed. See dotnet-port\docs\18-testsuite-log.md for the full writeup/rationale.
 #
 # Key facts this script relies on (see 18-testsuite-log.md for verification):
 #   - The harness itself stays a CLR4 (.NET Framework) executable -- it runs fine
@@ -97,7 +97,7 @@ $DotnetExe = $DotnetCmd.Source
 
 # ---------------------------------------------------------------------------
 # Same shared-framework/ref-assembly resolution as build-stage2-core.ps1 (see
-# dotnet-port\13-stage2-log.md section 1 for why facade refs don't work and
+# dotnet-port\docs\13-stage2-log.md section 1 for why facade refs don't work and
 # -use-loaded-corlib + real split assemblies is the working combination).
 # ---------------------------------------------------------------------------
 $runtimes = & dotnet --list-runtimes | Where-Object { $_ -match '^Microsoft\.NETCore\.App (\S+) \[(.+)\]$' }

@@ -16,7 +16,7 @@ namespace Nemerle.Compiler.Hosting
     /// in-process hosting of the compiler, confirmed still valid despite codedom itself being
     /// excluded from the core build) and ncc\main.n's CLI wiring
     /// (CompilationOptions.GetCommonOptions + Getopt.Parse). See
-    /// dotnet-port\20-inproc-task-plan.md / dotnet-port\20-inproc-task-log.md.
+    /// dotnet-port\docs\20-inproc-task-plan.md / dotnet-port\docs\20-inproc-task-log.md.
     ///
     /// Intended to be loaded, together with Nemerle.Compiler.dll/Nemerle.dll/
     /// Nemerle.Macros.dll, into one collectible AssemblyLoadContext per compile (see

@@ -3,7 +3,7 @@
 # against static response files for the 4 core projects, in dependency order:
 #   Nemerle.dll -> Nemerle.Compiler.dll -> Nemerle.Macros.dll -> ncc.exe
 #
-# This is the "smallest dotnet path" described in dotnet-port\02-build-flow.md section 7:
+# This is the "smallest dotnet path" described in dotnet-port\docs\02-build-flow.md section 7:
 # no MSBuild, no Ncc task -- just `dotnet exec <compiler>\ncc.exe /from-file:<rsp>` per
 # project, writing the 4 response files into dotnet-port\rsp\stage2\ (or -RspDir) so they
 # can be inspected/reused directly.
@@ -14,7 +14,7 @@
 # Usage (self-host fixpoint: use Stage2 to build Stage3):
 #   pwsh dotnet-port\build-stage2-core.ps1 -Compiler bin\Release\core\Stage2\ncc.exe -OutDir bin\Release\core\Stage3
 #
-# Design notes (see dotnet-port\13-stage2-log.md for the full story):
+# Design notes (see dotnet-port\docs\13-stage2-log.md for the full story):
 #   - ncc's LibraryReferenceManager enumerates every /ref:'d assembly's exported types via
 #     reflection (Assembly.GetExportedTypes()/GetTypes()) to populate the namespace tree.
 #     The .NET 10 shared-framework's *compatibility facade* assemblies (mscorlib.dll,
@@ -40,11 +40,11 @@
 #     *type-check* their bodies at compile time even though they're runtime-dead on
 #     CoreCLR, so they are now also guarded out of compilation entirely with
 #     `#if NET_4_0 ... #else <dead-code stub> #endif` (stage2 rsp files below do NOT
-#     define NET_4_0). See dotnet-port\13-stage2-log.md for the exact list of methods.
+#     define NET_4_0). See dotnet-port\docs\13-stage2-log.md for the exact list of methods.
 #   - -linkres/Win32 -res are still not supported when the compiler itself runs on
 #     CoreCLR (known gap carried over from WP-B/WP-C) -- stage2 rsp files below do not
 #     pass -res/-linkres. -debug IS supported on CoreCLR since WP-E (Portable PDB, see
-#     dotnet-port\14-pdb-log.md) but is not passed by default here, to keep the stage2
+#     dotnet-port\docs\14-pdb-log.md) but is not passed by default here, to keep the stage2
 #     output minimal/deterministic-ish -- pass -EmitDebug to this script to opt it back
 #     in (e.g. for PDB determinism verification). /doc: is NOT passed: it was dropped
 #     opportunistically to keep the rsp files minimal and closer to the ncc.nproj
@@ -135,10 +135,10 @@ $NemerleKey  = Join-Path $KeysDir "Nemerle.snk"
 $CompilerKey = Join-Path $KeysDir "Nemerle.Compiler.snk"
 
 # ---------------------------------------------------------------------------
-# Source file lists -- same globs as the .nproj files (see dotnet-port\02-build-flow.md
+# Source file lists -- same globs as the .nproj files (see dotnet-port\docs\02-build-flow.md
 # section 2), enumerated explicitly here. ncc\codedom\*.n is intentionally excluded from
 # Nemerle.Compiler.dll's source list, matching Nemerle.Compiler.nproj since WP-C
-# (dotnet-port\12-selfhost-blockers-log.md): it pulls in System.CodeDom/System.Configuration,
+# (dotnet-port\docs\12-selfhost-blockers-log.md): it pulls in System.CodeDom/System.Configuration,
 # neither of which is in the .NET 10 shared framework, and nothing in ncc\/lib\/macros\
 # calls into it.
 # ---------------------------------------------------------------------------
@@ -176,7 +176,7 @@ Write-Host "Source counts: Nemerle=$($NemerleSources.Count) Nemerle.Compiler=$($
 
 # ---------------------------------------------------------------------------
 # rsp writer. One switch/file per line, matching the Ncc MSBuild task's
-# AddResponseFileCommandsImpl format (dotnet-port\02-build-flow.md section 3/7).
+# AddResponseFileCommandsImpl format (dotnet-port\docs\02-build-flow.md section 3/7).
 # ---------------------------------------------------------------------------
 function Write-Rsp {
     param(
@@ -237,7 +237,7 @@ if (-not $SkipRspGeneration) {
 # ---------------------------------------------------------------------------
 # Build, in dependency order: Nemerle -> Nemerle.Compiler -> Nemerle.Macros -> ncc.
 # Each invocation is `dotnet exec <Compiler> /from-file:<rsp>` -- the "smallest dotnet
-# path" from dotnet-port\02-build-flow.md section 7. Note: the compiler process (Stage1
+# path" from dotnet-port\docs\02-build-flow.md section 7. Note: the compiler process (Stage1
 # or whichever -Compiler was passed) loads *its own* Nemerle.Macros.dll (next to it) for
 # standard macro expansion while compiling these sources -- that is the existing
 # bootstrap pattern (see 00-PLAN.md work log / this script's header) and is not
@@ -258,7 +258,7 @@ Invoke-Ncc -RspFile $NccRsp      -Label "ncc.exe"
 
 # ---------------------------------------------------------------------------
 # Make $OutDir a self-contained, runnable "compiler directory": copy the CoreEmit
-# helper assembly (see dotnet-port\11-emission-log.md) and write a runtimeconfig.json
+# helper assembly (see dotnet-port\docs\11-emission-log.md) and write a runtimeconfig.json
 # for ncc.exe so `dotnet exec $OutDir\ncc.exe ...` can start directly.
 # ---------------------------------------------------------------------------
 $CoreEmitSrc = Join-Path $RepoRoot "dotnet-port/Nemerle.CoreEmit/bin/$Configuration/net10.0/Nemerle.CoreEmit.dll"

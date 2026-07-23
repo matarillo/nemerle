@@ -6,7 +6,7 @@
 
 開始 commit: `5b5e0e4f6`(`Implement WP-M5 incremental rebuild via engine relocation path`)
 
-対象: `dotnet-port/29-devenv2-plan.md` の **WP-M6** のみ。nuget.org 公開・署名・CI release は範囲外(WP-N)。
+対象: `dotnet-port/docs/29-devenv2-plan.md` の **WP-M6** のみ。nuget.org 公開・署名・CI release は範囲外(WP-N)。
 
 ## 結論
 
@@ -225,7 +225,7 @@ Extension Host ではなく**決定的な raw LSP integration test** で行え�
   `SdkPackageTests`)、`dotnet-port/LspServer.IntegrationTest/{Program.cs,LspTestClient.cs}`
   (provenance 2 シナリオ、`ShowMessages`)、
   `dotnet-port/vscode-nemerle/test/{suite/index.ts,unit/manifest.test.ts}`。
-- 変更(doc/meta): `dotnet-port/DISTRIBUTION.md`、`dotnet-port/00-PLAN.md`、
+- 変更(doc/meta): `dotnet-port/DISTRIBUTION.md`、`dotnet-port/docs/00-PLAN.md`、
   `dotnet-port/vscode-nemerle/{package.json,.vscodeignore,README.md}`、`.gitignore`。
 - 削除: `dotnet-port/msbuild/linux/Nemerle.Core.targets`(§1)。
 - `ncc/` `lib/` `macros/` `VsIntegration/`(engine 共有ソース)は**無変更**。

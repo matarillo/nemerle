@@ -16,7 +16,7 @@ namespace Nemerle.MSBuild.Tasks
     /// collectible AssemblyLoadContext per call and invokes
     /// Nemerle.Compiler.Hosting.CompilerHost.Compile via reflection, translating its
     /// structured diagnostics into Log.LogError/LogWarning/LogMessage instead of parsing
-    /// stdout text. See dotnet-port\20-inproc-task-plan.md.
+    /// stdout text. See dotnet-port\docs\20-inproc-task-plan.md.
     /// </summary>
     public sealed class NccCompile : Microsoft.Build.Utilities.Task
     {
@@ -101,11 +101,11 @@ namespace Nemerle.MSBuild.Tasks
                 // Best-effort: releases the collectible ALC's hold on Nemerle.Compiler.dll and
                 // every reference assembly AlcLibraryReferenceManager loaded through it, so a
                 // node-reused MSBuild process doesn't keep those files locked for the next
-                // build (dotnet-port\20-inproc-task-plan.md investigation point 1 / risk table
+                // build (dotnet-port\docs\20-inproc-task-plan.md investigation point 1 / risk table
                 // row 3). Actual unload completion is not guaranteed by a single Unload() call
                 // (the CLR unloads only once nothing references the ALC's objects/types
                 // anymore), so this is paired with a couple of forced collections; verified
-                // empirically (dotnet-port\20-inproc-task-log.md) that file locks are in fact
+                // empirically (dotnet-port\docs\20-inproc-task-log.md) that file locks are in fact
                 // released by the time the next CoreCompile runs.
                 alc.Unload();
                 GC.Collect();

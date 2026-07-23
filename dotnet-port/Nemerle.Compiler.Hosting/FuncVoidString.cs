@@ -10,7 +10,7 @@ namespace Nemerle.Compiler.Hosting
     /// abstract member `apply_void(T)` a caller must override. This is the C# adapter that
     /// lets us pass an ordinary Action&lt;string&gt; wherever ncc's own Nemerle sources
     /// expect a `string -&gt; void` value (confirmed by reflecting the built
-    /// Nemerle.dll/Nemerle.Compiler.dll -- see dotnet-port\20-inproc-task-log.md).
+    /// Nemerle.dll/Nemerle.Compiler.dll -- see dotnet-port\docs\20-inproc-task-log.md).
     /// </summary>
     internal sealed class FuncVoidString : Nemerle.Builtins.FunctionVoid<string>
     {

@@ -1,7 +1,7 @@
 # 22. WP-K: LSP feasibility step 1 — Compiler.Utils core build + headless ConsoleTest
 
 日付: 2026-07-13
-前提: dotnet-port/21-lsp-feasibility.md の「推奨する進め方」ステップ1
+前提: dotnet-port/docs/21-lsp-feasibility.md の「推奨する進め方」ステップ1
 「WinForms/CodeDom 系を除いた Compiler.Utils を stage2 ncc でビルド → ConsoleTest 相当を
 ヘッドレスで PASS させる」を実施。ここまでで LSP 実現性はほぼ確定する、というのが21番の見立て。
 

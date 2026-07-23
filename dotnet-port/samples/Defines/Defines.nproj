@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    WP-M1 build/IDE parity fixture (dotnet-port\29-devenv2-plan.md, acceptance
+    WP-M1 build/IDE parity fixture (dotnet-port\docs\29-devenv2-plan.md, acceptance
     criterion 1).  defines.n has an #if CUSTOM_FEATURE / #else split where the
     #else branch is a deliberate type error, so whether the source compiles is
     decided entirely by the CUSTOM_FEATURE preprocessor symbol.

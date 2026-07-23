@@ -1,7 +1,7 @@
 <Project>
   <!--
     Nemerle.Sdk.Unofficial - MSBuild project SDK entry point (targets half).
-    WP-M6, dotnet-port\29-devenv2-plan.md §6.7. See Sdk.props for the rationale.
+    WP-M6, dotnet-port\docs\29-devenv2-plan.md §6.7. See Sdk.props for the rationale.
 
     Import order is the whole point of this file:
 

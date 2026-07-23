@@ -335,7 +335,7 @@ cd dotnet-port/vscode-nemerle; npm run package     # VSIX -> dist/release
 pwsh dotnet-port/pack-release.ps1                  # verifies the set, writes release-info.json
 ```
 
-The same commands run on Linux under `pwsh` (verified — `dotnet-port/42-prerelease-wp-n5-log.md`);
+The same commands run on Linux under `pwsh` (verified — `dotnet-port/docs/42-prerelease-wp-n5-log.md`);
 only building Stage1 itself (the .NET Framework bootstrap) requires Windows.
 
 `dist\release` is then the release: hand it over or zip it as-is. `pack-release.ps1` refuses to
@@ -348,7 +348,7 @@ which compiler is inside; the extension keeps its own version (see the note at t
 page). `dotnet-port\packaging\<id>\README.md` is the README embedded in each package (what
 nuget.org would render); this page is the install guide, and `pack-tool.ps1 -Pack` copies it into
 `dist\release` so the archive explains itself. Design and verification:
-`dotnet-port\35-devenv2-wp-m6-log.md`; distribution status overall: `dotnet-port\DISTRIBUTION.md`.
+`dotnet-port\docs\35-devenv2-wp-m6-log.md`; distribution status overall: `dotnet-port\DISTRIBUTION.md`.
 
 #### Building the release set from a clone (Linux or Windows, no .NET Framework required)
 

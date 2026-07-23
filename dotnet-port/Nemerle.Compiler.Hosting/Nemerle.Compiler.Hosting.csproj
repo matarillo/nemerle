@@ -9,7 +9,7 @@
     [ThreadStatic], NamespaceTree caches, etc.) is fully isolated per invocation and per node,
     and the whole compilation runs inside one ALC. Only CoreLib-defined types (string, int,
     bool, Action&lt;...&gt;) cross back out to the task; see CompilerHost.cs for the exact
-    boundary. See dotnet-port\20-inproc-task-plan.md and dotnet-port\20-inproc-task-log.md.
+    boundary. See dotnet-port\docs\20-inproc-task-plan.md and dotnet-port\docs\20-inproc-task-log.md.
 
     References Nemerle.dll/Nemerle.Compiler.dll via HintPath, Private=false: this project
     itself is never meant to carry its own copies of them (that would defeat the point of

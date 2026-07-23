@@ -8,8 +8,8 @@
 // ResourceSectionBuilder (the ".rsrc" section content) directly, so this file implements
 // the RES -> .rsrc conversion by hand (a compact analogue of Roslyn's CvtResFile /
 // Cci.ResourceSection), targeting exactly the single-.res-file, no-version-info-fallback
-// case ncc needs. See dotnet-port\17-resources-fixes-log.md for the design notes and
-// dotnet-port\03-dotnet-runtime-facts.md / 13-stage2-log.md for prior CoreCLR findings
+// case ncc needs. See dotnet-port\docs\17-resources-fixes-log.md for the design notes and
+// dotnet-port\docs\03-dotnet-runtime-facts.md / 13-stage2-log.md for prior CoreCLR findings
 // this build on (e.g. legacy Reflection.Emit unmanaged-resource APIs are CLR4-only).
 //
 // RES file format (informal but stable, matches what rc.exe/cvtres.exe produce and what

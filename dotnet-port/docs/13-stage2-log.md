@@ -366,5 +366,5 @@ detected from the `Codec.n`/`Typer-OverloadSelection.n`/`#if NET_4_0` guard chan
 - **Full `Nemerle.Compiler.Test.exe` / `Nemerle.Test.Framework` port to core** — would
   unlock the real testsuite (positive **and** negative, with proper expected-output
   diffing) via its existing `-ncc <exe>`/`-runtime <exe>` switches
-  (`dotnet-port\02-build-flow.md` section 8) instead of the ad hoc compile-only slice
+  (`dotnet-port\docs\02-build-flow.md` section 8) instead of the ad hoc compile-only slice
   used here; the natural target for a dedicated future WP.

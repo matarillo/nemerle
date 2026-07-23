@@ -11,7 +11,7 @@ overriding disk content.
 
 - Windows 11 or Linux (the preview is validated on Windows 11 and on Ubuntu
   Linux — clean-VM VSIX install plus the extension's own test suites; the
-  server is managed IL). See `dotnet-port/42-prerelease-wp-n5-log.md` for the
+  server is managed IL). See `dotnet-port/docs/42-prerelease-wp-n5-log.md` for the
   Linux verification record.
 - VS Code 1.125.0 or later.
 - The **.NET 10 runtime** (the SDK includes it). The VSIX bundles the language

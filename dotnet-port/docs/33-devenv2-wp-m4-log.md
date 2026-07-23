@@ -6,7 +6,7 @@
 
 開始 commit: `361bc64e8`(`Implement WP-M3 completion reusing EngineRequestBridge`)
 
-対象: `dotnet-port/29-devenv2-plan.md` の **WP-M4** のみ。incremental rebuild(WP-M5)、
+対象: `dotnet-port/docs/29-devenv2-plan.md` の **WP-M4** のみ。incremental rebuild(WP-M5)、
 `Nemerle.Sdk` NuGet 化(WP-M6)は範囲外。
 
 ## 結論
@@ -134,7 +134,7 @@ Windows での URI(drive letter 大文字・file スキーム)。
   (`vscode.executeDefinitionProvider` の Extension Host 検証を追加)。
 - 変更(doc): `dotnet-port/vscode-nemerle/README.md`(definition/references 実装済み)、
   `dotnet-port/vscode-nemerle/package.json`(version 0.6.0、package:vsix 出力名)、
-  `dotnet-port/00-PLAN.md`。
+  `dotnet-port/docs/00-PLAN.md`。
 - `ncc/` `lib/` `macros/` `VsIntegration/`(engine 共有ソース)は**無変更**。extension の実装 TypeScript
   (`src/`)も無変更(handler は capability 追従、test のみ追加)。
 

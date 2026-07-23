@@ -71,7 +71,7 @@
     <Compile Include="ncc\parsing\*.n">
       <SubType>Code</SubType>
     </Compile>
-    <!-- dotnet-port WP-C: ncc\codedom\*.n excluded from the build (see dotnet-port\12-selfhost-blockers-log.md).
+    <!-- dotnet-port WP-C: ncc\codedom\*.n excluded from the build (see dotnet-port\docs\12-selfhost-blockers-log.md).
          It is a public CodeDom-provider service for external hosts; nothing under ncc\, lib\ or macros\
          calls into it, and it pulls in System.CodeDom/System.Configuration, which are not part of
          the .NET 10 shared framework. Removing it narrows Nemerle.Compiler.dll's public API surface

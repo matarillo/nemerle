@@ -9,8 +9,8 @@
 // VerifyTypeAndPassedObjectType check always throws
 // ArgumentException("Constant does not match the defined type.") whenever an attribute
 // argument or named member's declared type is (or is a 1-D array of) an enum defined in
-// the same compilation ("local enum"). See dotnet-port\15-attributes01-diagnosis.md for
-// the full root-cause analysis and dotnet-port\17-resources-fixes-log.md for the fix log.
+// the same compilation ("local enum"). See dotnet-port\docs\15-attributes01-diagnosis.md for
+// the full root-cause analysis and dotnet-port\docs\17-resources-fixes-log.md for the fix log.
 //
 // This class hand-assembles the ECMA-335 SS II.23.3 custom-attribute blob -- a faithful
 // port of corelib's CustomAttributeBuilder private EmitType/EmitValue/EmitString -- and

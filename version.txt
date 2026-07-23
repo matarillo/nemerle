@@ -10,7 +10,7 @@
 # to load an assembly whose version differs from the reference. With the old `git describe`
 # recipe the version advanced on every commit, so a compiler binary could only ever build the
 # exact commit it was itself built from. Pinning it lets one checked-in seed compiler build any
-# commit in the same span. See dotnet-port/44-prerelease-wp-n7-log.md.
+# commit in the same span. See dotnet-port/docs/44-prerelease-wp-n7-log.md.
 #
 # When to bump: only at a change that breaks macro ABI compatibility -- NOT every commit.
 # Per-commit identity is carried by the provenance JSON files (boot-info.json / ncc-info.json),

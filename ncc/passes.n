@@ -566,7 +566,7 @@ namespace Nemerle.Compiler
     // even throw), so ncc used to require an explicit response file to compile anything on
     // .NET (dotnet-port\dist\ncc\ncc.default.rsp: -no-stdlib -use-loaded-corlib
     // -greedy-references:- plus -ref: paths to the real split assemblies -- see
-    // dotnet-port\13-stage2-log.md / build-stage2-core.ps1). This reproduces that
+    // dotnet-port\docs\13-stage2-log.md / build-stage2-core.ps1). This reproduces that
     // proven-good reference set automatically from the running shared framework, so a bare
     // `dotnet ncc.dll hello.n` compiles with no response file. -no-stdlib still skips this
     // entirely, leaving the old "specify every reference by hand" workflow available.

@@ -3,7 +3,7 @@
 # Historically this comparison was done ad hoc with throwaway scripts in a scratch
 # directory (never checked in) because the emitted assemblies were not byte-stable
 # across builds (MVID / PE timestamp / PDB ID were time- or randomness-derived, see
-# dotnet-port\16-determinism-diagnosis.md). Now that Nemerle.CoreEmit\Emitter.cs
+# dotnet-port\docs\16-determinism-diagnosis.md). Now that Nemerle.CoreEmit\Emitter.cs
 # derives those IDs deterministically from the emitted content (see ComputeDeterministicId
 # in that file), a real, no-mask, full-byte comparison is meaningful and worth keeping
 # in the repo instead of re-inventing it each time.

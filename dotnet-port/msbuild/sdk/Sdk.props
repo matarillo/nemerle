@@ -1,7 +1,7 @@
 <Project>
   <!--
     Nemerle.Sdk.Unofficial - MSBuild project SDK entry point (props half).
-    WP-M6, dotnet-port\29-devenv2-plan.md §6.7.
+    WP-M6, dotnet-port\docs\29-devenv2-plan.md §6.7.
 
     Consumed as (<version> = the version of the installed package; deliberately not a
     literal here, a hard-coded example rots as compiler generations move):

@@ -261,7 +261,7 @@ namespace Nemerle.CoreEmit
     types in attribute arguments/named members -- the persisted TypeBuilderImpl lacks the
     enum special case in UnderlyingSystemType that both net4 TypeBuilder and CoreCLR's
     RuntimeTypeBuilder have, so the public CustomAttributeBuilder ctor can never accept
-    such values (see dotnet-port\15-attributes01-diagnosis.md). */
+    such values (see dotnet-port\docs\15-attributes01-diagnosis.md). */
 public CreateAttributeBuilder (ctor : SR.ConstructorInfo, ctorArgs : array [object],
                                props : array [SR.PropertyInfo], propVals : array [object],
                                fields : array [SR.FieldInfo], fieldVals : array [object])

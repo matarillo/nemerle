@@ -65,4 +65,4 @@ is part of the port's default reference set.
 BSD-3-Clause. Copyright (c) 2003-2008 The University of Wroclaw. Copyright (c) 2008-2014
 Nemerle Project Team. The packaged assembly (`Nemerle.Linq.dll`) is built unmodified from the
 Nemerle sources except for a portability fix in expression-tree constructor resolution
-(documented in the port's `dotnet-port/40-prerelease-wp-n3-log.md`).
+(documented in the port's `dotnet-port/docs/40-prerelease-wp-n3-log.md`).

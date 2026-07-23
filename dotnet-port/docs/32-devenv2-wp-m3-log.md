@@ -6,7 +6,7 @@
 
 開始 commit: `64c0058e0`(`Implement WP-M2 hover with reusable EngineRequestBridge`)
 
-対象: `dotnet-port/29-devenv2-plan.md` の **WP-M3** のみ。definition/references(WP-M4)、
+対象: `dotnet-port/docs/29-devenv2-plan.md` の **WP-M3** のみ。definition/references(WP-M4)、
 incremental rebuild(WP-M5)、`Nemerle.Sdk` NuGet 化(WP-M6)は範囲外。
 
 ## 結論
@@ -130,7 +130,7 @@ unit test(`ProjectInfo.Test`、`CompletionMappingTests`)で 20 種の glyph 値�
   `dotnet-port/LspServer.IntegrationTest/LspTestClient.cs`(initialize に completion capability を追加)。
 - 変更(doc): `dotnet-port/vscode-nemerle/README.md`(completion 実装済み)、
   `dotnet-port/vscode-nemerle/package.json`(version 0.5.0、package:vsix 出力名)、
-  `dotnet-port/00-PLAN.md`。
+  `dotnet-port/docs/00-PLAN.md`。
 - `ncc/` `lib/` `macros/` `VsIntegration/`(engine 共有ソース)は**無変更**。extension の TypeScript も無変更。
 
 ## 検証(受け入れ基準)

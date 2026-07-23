@@ -119,7 +119,7 @@ namespace Nemerle.Compiler
         the enum special case in UnderlyingSystemType that both net4 TypeBuilder and
         CoreCLR's own RuntimeTypeBuilder have, so the public CustomAttributeBuilder
         constructor throws ArgumentException("Constant does not match the defined type.")
-        for any such attribute usage (see dotnet-port\15-attributes01-diagnosis.md). Falls
+        for any such attribute usage (see dotnet-port\docs\15-attributes01-diagnosis.md). Falls
         back to the normal validated constructor when no local enum is involved. */
     public CreateAttributeBuilder (ctor : ConstructorInfo, ctorArgs : array [object],
                                     props : array [PropertyInfo], propVals : array [object],
@@ -135,7 +135,7 @@ namespace Nemerle.Compiler
         PersistedAssemblyBuilder bug where AssemblyBuilder.SetCustomAttribute corrupts the
         saved PE when the attribute's constructor belongs to a TypeBuilder defined in the
         same assembly (verified independently of Nemerle -- see
-        dotnet-port\17-resources-fixes-log.md and Nemerle.CoreEmit.Emitter.
+        dotnet-port\docs\17-resources-fixes-log.md and Nemerle.CoreEmit.Emitter.
         SetAssemblyCustomAttribute's doc comment). Attributes whose constructor is external
         (already-compiled) are applied immediately as before; local-constructor ones are
         deferred and flushed by Nemerle.CoreEmit.Emitter.Save after GenerateMetadata(). Use

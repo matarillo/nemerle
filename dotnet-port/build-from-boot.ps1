@@ -19,7 +19,7 @@
 #   - the build always happens in this checkout, against THIS commit's sources -- what you have
 #     checked out is what gets built;
 #   - there is no orphan branch, no `.boot-build-tree` worktree, and no generation branching.
-# See dotnet-port/44-prerelease-wp-n7-log.md sections 7 and 8.
+# See dotnet-port/docs/44-prerelease-wp-n7-log.md sections 7 and 8.
 #
 # Usage:
 #   pwsh dotnet-port/build-from-boot.ps1
@@ -62,7 +62,7 @@ if ($ReleaseTag -ne "") {
     . "$PSScriptRoot/version-pin.ps1"
     $pinBase = (Get-NemerleVersionPin -RepoRoot $RepoRoot).Base
     if ($releaseTagBase -ne $pinBase) {
-        throw "-ReleaseTag '$ReleaseTag' has base version $releaseTagBase, but version.txt pins $pinBase, so this build would stamp every package $pinBase -- not $releaseTagBase. Tag the release release/$pinBase-<suffix>. To release base $releaseTagBase you must first bump version.txt to $releaseTagBase and refresh the seed on Windows (dotnet-port/44-prerelease-wp-n7-log.md section 8.6)."
+        throw "-ReleaseTag '$ReleaseTag' has base version $releaseTagBase, but version.txt pins $pinBase, so this build would stamp every package $pinBase -- not $releaseTagBase. Tag the release release/$pinBase-<suffix>. To release base $releaseTagBase you must first bump version.txt to $releaseTagBase and refresh the seed on Windows (dotnet-port/docs/44-prerelease-wp-n7-log.md section 8.6)."
     }
 
     if ($PackageVersionSuffix -ne "" -and $PackageVersionSuffix -ne $derivedSuffix) {
@@ -95,7 +95,7 @@ if (-not [string]::IsNullOrWhiteSpace(($status -join ""))) {
 # ---------------------------------------------------------------------------
 # 3. Verify the checked-in seed (schema / version.txt span / per-file SHA256 / provenance).
 #    The verification itself lives in verify-seed.ps1 so CI can run it without also running
-#    this script's release sealing -- see dotnet-port/46-prerelease-wp-n6-log.md.
+#    this script's release sealing -- see dotnet-port/docs/46-prerelease-wp-n6-log.md.
 # ---------------------------------------------------------------------------
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot "verify-seed.ps1") -WarnOnly
 if ($LASTEXITCODE -ne 0) { throw "Seed verification failed (exit $LASTEXITCODE)" }

@@ -12,7 +12,7 @@
 // loaded at all; the compiler uses its original System.Reflection.Emit.AssemblyBuilder
 // based backend (AppDomain.DefineDynamicAssembly, AssemblyBuilder.Save, etc.)
 //
-// See dotnet-port\03-dotnet-runtime-facts.md for the verified recipes this file is
+// See dotnet-port\docs\03-dotnet-runtime-facts.md for the verified recipes this file is
 // based on.
 
 using System;
@@ -198,10 +198,10 @@ namespace Nemerle.CoreEmit
         /// points / local names recorded via ModuleBuilder.DefineDocument,
         /// ILGenerator.MarkSequencePoint and LocalBuilder.SetLocalSymInfo, and wires a
         /// CodeView entry for it into the PE's debug directory (ncc -debug). See
-        /// dotnet-port\03-dotnet-runtime-facts.md recipe R4.</param>
+        /// dotnet-port\docs\03-dotnet-runtime-facts.md recipe R4.</param>
         /// <param name="win32ResourceFile">Path to a Win32 .RES file (ncc -win32-resource),
         /// or null. Converted to a .rsrc section by <see cref="ResFileResourceSection"/> and
-        /// passed as ManagedPEBuilder's nativeResources (see dotnet-port\17-resources-fixes-log.md).</param>
+        /// passed as ManagedPEBuilder's nativeResources (see dotnet-port\docs\17-resources-fixes-log.md).</param>
         /// <param name="linkedResources">"name|absoluteFilePath" pairs for -linkres linked
         /// (non-embedded) resources, or null/empty. Written as ECMA-335 File + ManifestResource
         /// table rows (metadata is verified spec-correct -- see 17-resources-fixes-log.md --

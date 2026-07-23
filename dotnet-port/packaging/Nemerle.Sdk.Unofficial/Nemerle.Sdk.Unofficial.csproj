@@ -13,7 +13,7 @@
     itself; see the ValidateExplicitVersion target below.
 
     Package ID (agreed with the Project Owner, 2026-07-15; recorded in
-    dotnet-port\35-devenv2-wp-m6-log.md): this is an UNOFFICIAL build of Nemerle, not a release
+    dotnet-port\docs\35-devenv2-wp-m6-log.md): this is an UNOFFICIAL build of Nemerle, not a release
     of the Nemerle project, and the ".Unofficial" suffix continues the naming already used for
     this author's existing nuget.org packages (Nemerle.Unofficial, Nemerle.Compiler.Unofficial,
     Nemerle.Macros.Unofficial, Nemerle.Compiler.Utils.Unofficial, all at 1.2.547). Provenance

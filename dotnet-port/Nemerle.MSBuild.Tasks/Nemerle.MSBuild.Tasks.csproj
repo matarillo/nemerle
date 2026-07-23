@@ -9,7 +9,7 @@
     Nemerle.Compiler.Hosting.csproj needs to; see that project's own comments); everything
     Nemerle-specific is reached purely by reflection, across a private collectible
     AssemblyLoadContext (NccLoadContext.cs) created fresh per Execute() call. See
-    dotnet-port\20-inproc-task-plan.md / dotnet-port\20-inproc-task-log.md.
+    dotnet-port\docs\20-inproc-task-plan.md / dotnet-port\docs\20-inproc-task-log.md.
 
     Microsoft.Build.Utilities.Core is referenced with ExcludeAssets="runtime": at run time
     MSBuild supplies its own Microsoft.Build*.dll set (loaded into MSBuild's default ALC by

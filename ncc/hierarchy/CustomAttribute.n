@@ -625,7 +625,7 @@ namespace Nemerle.Compiler
         if (CoreEmitBridge.IsCoreClr)
           // CoreCLR: route through Nemerle.CoreEmit.AttributeBlob, which only diverges
           // from the ordinary CustomAttributeBuilder constructor when a locally-defined
-          // (TypeBuilder) enum type is involved -- see dotnet-port\15-attributes01-diagnosis.md.
+          // (TypeBuilder) enum type is involved -- see dotnet-port\docs\15-attributes01-diagnosis.md.
           CoreEmitBridge.CreateAttributeBuilder (
             ctor_info,
             ctor_params.Reverse().ToArray(),
@@ -663,7 +663,7 @@ namespace Nemerle.Compiler
     /**
      * CLR4-only: real strong-name signing via StrongNameKeyPair. Must never run on
      * CoreCLR -- constructing StrongNameKeyPair throws PlatformNotSupportedException
-     * there (dotnet-port\03-dotnet-runtime-facts.md fact 5); isolated into its own
+     * there (dotnet-port\docs\03-dotnet-runtime-facts.md fact 5); isolated into its own
      * method so it is only ever JIT-compiled/invoked when actually called, i.e. never
      * on CoreCLR (same isolation pattern as the rest of the WP-B/WP-C emission port).
      */

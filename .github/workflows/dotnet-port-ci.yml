@@ -1,5 +1,5 @@
-# WP-N6: minimal Linux CI for the .NET 10 port (dotnet-port/36-prerelease-quality-plan.md section 6,
-# dotnet-port/46-prerelease-wp-n6-log.md).
+# WP-N6: minimal Linux CI for the .NET 10 port (dotnet-port/docs/36-prerelease-quality-plan.md section 6,
+# dotnet-port/docs/46-prerelease-wp-n6-log.md).
 #
 # What makes this possible at all is WP-N7's version pin: the AssemblyVersion comes from
 # version.txt rather than `git describe`, so the checked-in stage1 seed (dotnet-port/seed/) can

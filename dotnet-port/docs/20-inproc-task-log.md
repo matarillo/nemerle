@@ -1,6 +1,6 @@
 # WP-A3: インプロセス MSBuild タスク — 作業ログ
 
-計画: `dotnet-port\20-inproc-task-plan.md`。本ログは実装中に確定した事実・ハマった点と
+計画: `dotnet-port\docs\20-inproc-task-plan.md`。本ログは実装中に確定した事実・ハマった点と
 解決・検証結果をまとめる。**コンパイラー本体(ncc/、lib/、macros/)は無変更**
 (`git status` で確認済み、末尾参照)。
 
@@ -199,8 +199,8 @@ $ git status --porcelain
  M dotnet-port/msbuild/Nemerle.Core.targets
  M dotnet-port/msbuild/linux/Nemerle.Core.targets
  M dotnet-port/pack-tool.ps1
-?? dotnet-port/20-inproc-task-plan.md
-?? dotnet-port/20-inproc-task-log.md
+?? dotnet-port/docs/20-inproc-task-plan.md
+?? dotnet-port/docs/20-inproc-task-log.md
 ?? dotnet-port/Nemerle.Compiler.Hosting/
 ?? dotnet-port/Nemerle.MSBuild.Tasks/
 ```

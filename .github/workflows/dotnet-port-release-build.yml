@@ -1,5 +1,5 @@
 # WP-N6 (stretch): the end-to-end release path, on Linux, from a plain clone at a release tag.
-# See dotnet-port/46-prerelease-wp-n6-log.md section 6 Q3.
+# See dotnet-port/docs/46-prerelease-wp-n6-log.md section 6 Q3.
 #
 # TWO STAGES, selected by the `stage` input:
 #   build-smoke          builds the full release set and smoke-tests it, then STOPS. A dry run:

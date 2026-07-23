@@ -98,7 +98,7 @@ HEAD `ec9976dd1` = `v1.2-618` → 期待版 1.2.0.618)。この状態のまま
 Compiler (...\Stage1\ncc.exe) assembly-version mismatch: '...\Stage1\Nemerle.dll' is 1.2.0.601,
 but HEAD expects 1.2.0.618 (from 'git describe --tags --long' at ...).
 ...
-Recover with a full Stage1 rebuild (dotnet-port\30-devenv2-wp-m1-log.md:246-254):
+Recover with a full Stage1 rebuild (dotnet-port\docs\30-devenv2-wp-m1-log.md:246-254):
   Remove-Item -Recurse -Force bin\Release\net-4.0\Stage1
   & "$env:SystemRoot\Microsoft.NET\Framework\v4.0.30319\msbuild.exe" NemerleAll.nproj /tv:4.0 /p:TargetFrameworkVersion=v4.0 /p:NTargetName=Rebuild /p:Configuration=Release /t:Stage1
   pwsh dotnet-port\refresh-stage1-core.ps1

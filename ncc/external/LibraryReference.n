@@ -117,7 +117,7 @@ namespace Nemerle.Compiler
     // friend access via a strong-name key, exactly the Nemerle.dll <-> Nemerle.Compiler.dll
     // self-host scenario. Previously this used SR.StrongNameKeyPair(keyFile).PublicKey,
     // whose constructor throws PlatformNotSupportedException on CoreCLR (see
-    // dotnet-port\03-dotnet-runtime-facts.md fact 5). SnkUtils parses the .snk CAPI blob
+    // dotnet-port\docs\03-dotnet-runtime-facts.md fact 5). SnkUtils parses the .snk CAPI blob
     // directly (pure byte manipulation + SHA1 for the token, both available unchanged on
     // CLR4 and CoreCLR), so -- unlike the emission layer -- there is no CLR4/Core dual
     // path needed here at all: StrongNameKeyPair is removed from this method entirely,

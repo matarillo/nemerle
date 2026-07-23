@@ -225,7 +225,7 @@ namespace Nemerle.Compiler
             // stage1 flavor (net4 binary) running on CoreCLR: the 4-arg overload also
             // exists there and the Sym* guid holders resolve at run time through the
             // mscorlib facade (forwarded to System.Diagnostics.StackTrace.dll) --
-            // verified on .NET 10, see dotnet-port/14-pdb-log.md.
+            // verified on .NET 10, see dotnet-port/docs/14-pdb-log.md.
             def doc = _module_builder.DefineDocument (url,
               SymDocumentType.Text, SymLanguageType.ILAssembly, SymLanguageVendor.Microsoft);
 #else
