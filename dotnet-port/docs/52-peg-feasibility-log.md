@@ -198,15 +198,46 @@ CLR4 対照実験は `bin\Release\net-4.0\Stage1\ncc.exe` に同じソースを�
 
 ### 9.2 パッケージ構成
 
-2 アセンブリーを 1 パッケージの `lib/net10.0` に収める形(`Nemerle.Linq.Unofficial` と同形)で成立する。
+2 アセンブリーを 1 パッケージに収め、消費者は `<PackageReference>` 1 行だけで使える。
+どちらの構成でも消費者側の記述は変わらないが、マクロ アセンブリーの扱いが異なる。
 
-- **消費者は普通の `PackageReference` だけでよい。** 実測: `[PegGrammar]` は通常の `-ref:` から
-  発見され、`-macros:` は不要。したがって「macro-only 参照をパッケージからどう指定するか」という
-  難所は発生しない。
-- 代償として `Nemerle.Peg.Macros` の型が消費者のスコープに入り、dll が出力へコピーされる。
-  `Nemerle.Linq` と同じ性質であり、パッケージ利用者に `-macros:` 相当の細工を求めるのは非現実的。
-- `Nemerle.Peg.Macros` は `Nemerle.Peg` を参照しない(実測)ため、2 つのアセンブリーの間に
-  版結合は存在しない。
+| 構成 | マクロ アセンブリーの配置 | ncc への渡り方 | 型がスコープに入る | 出力にコピー |
+|---|---|---|---|---|
+| **推奨** | `macros/` + `build/<id>.props` | `-macros:` | **しない** | **しない** |
+| 簡易 | `lib/net10.0/` | `-ref:` | する | する |
+
+ncc の `-ref:` はマクロも登録する(`external\LibraryReference.n` の `LoadContents` が
+`LoadTypesFrom` と `LoadMacrosFrom` の両方を呼ぶ)ため、簡易構成でも `[PegGrammar]` は機能する。
+`-macros:` は「マクロだけ登録し、型はスコープに入れない」引き算のオプション
+(`CompilationOptions.n` の `-macros` ヘルプ)。
+
+推奨構成の内訳:
+
+- `lib/net10.0/Nemerle.Peg.dll` — ランタイム。通常の参照資産。
+- `macros/Nemerle.Peg.Macros.dll` — 非標準フォルダーなので NuGet は参照資産にしない(pack 時に
+  NU5100 が出るが意図どおり)。
+- `build/<id>.props` — 消費者の `obj\*.nuget.g.props` に自動 import され、次を追加する。
+
+  ```xml
+  <ItemGroup>
+    <NemerleMacroReference Include="$(MSBuildThisFileDirectory)../macros/Nemerle.Peg.Macros.dll" />
+  </ItemGroup>
+  ```
+
+  `@(NemerleMacroReference)` は WP-A4 で追加された既存の配線(`Nemerle.Core.targets` が
+  `NccCompile` の `MacroReferences` と `<Exec>` フォールバックの両方で `-macros:` に展開する)。
+  **targets / タスク / ncc のいずれにも変更は不要。**
+
+推奨構成を実測で確認した結果 — ncc コマンドラインが
+`-ref:...\lib\net10.0\Nemerle.Peg.dll` + `-macros:...\macros\Nemerle.Peg.Macros.dll` になり、
+消費者のビルド・実行が成功し、`Nemerle.Peg.NameRef`(Macros にのみ存在する型)の参照は
+`unbound name` エラーになり、出力ディレクトリーに `Nemerle.Peg.Macros.dll` は現れない。
+
+`Nemerle.Peg.Macros` は `Nemerle.Peg` を参照しない(実測)ため、2 つのアセンブリーの間に
+版結合は存在しない。
+
+なお `Nemerle.Linq` は 1 つの dll がマクロとランタイムを兼ねるため分離の余地がなく、
+`lib/net10.0` 配置(簡易構成に相当)以外の選択肢がない。分離できるのは Peg 固有の利点である。
 
 ### 9.3 ビルド方法の選択
 
