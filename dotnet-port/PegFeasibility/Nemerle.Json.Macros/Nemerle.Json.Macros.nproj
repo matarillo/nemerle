@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PEG port spike: snippets\peg-parser\Json\Nemerle.Json.Macros (sources referenced in place).
+
+    The json({ ... }) quasi-quotation macro. Needs the compiler API (NemerleMacroLibrary) and,
+    unlike Nemerle.Peg.Macros, a real reference to the runtime library it builds values of
+    (Nemerle.Json) - so this project is a macro library that is itself a normal consumer of
+    another Nemerle project, which is a second interesting shape for the port.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Nemerle.Json.Macros</AssemblyName>
+    <RootNamespace>Nemerle.Json</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NemerleMacroLibrary>true</NemerleMacroLibrary>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <JsonMacrosSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\peg-parser\Json\Nemerle.Json.Macros\</JsonMacrosSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(JsonMacrosSourceDir)Json.n" />
+    <NemerleCompile Include="$(JsonMacrosSourceDir)Properties\AssemblyInfo.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.Json\Nemerle.Json.nproj" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

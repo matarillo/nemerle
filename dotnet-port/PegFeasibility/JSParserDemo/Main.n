@@ -1,0 +1,54 @@
+using System;
+using System.Console;
+using Nemerle.Collections;
+using JSEngine;
+
+module Program
+{
+  mutable failures : int = 0;
+
+  // Parse a snippet of JavaScript and require the parser to consume all of it and produce
+  // the expected number of top-level statements.
+  Parses(name : string, source : string, expectedStatements : int) : void
+  {
+    def parser = JSParser();
+    match (parser.Parse(source))
+    {
+      | Some(statements) =>
+        def n = statements.Length;
+        if (n == expectedStatements)
+          WriteLine($"ok   $name ($n top-level statement(s))")
+        else
+        {
+          failures += 1;
+          WriteLine($"FAIL $name: expected $expectedStatements top-level statement(s), got $n");
+        }
+      | None =>
+        failures += 1;
+        WriteLine($"FAIL $name did not parse");
+    }
+  }
+
+  Main() : int
+  {
+    Parses("var declaration", "var x = 1;", 1);
+    Parses("two statements",  "var x = 1; var y = 2;", 2);
+    Parses("function decl",   "function f(a, b) { return a + b; }", 1);
+    Parses("if/else",         "if (x > 1) { y = 2; } else { y = 3; }", 1);
+    Parses("for loop",        "for (var i = 0; i < 10; i++) { sum += i; }", 1);
+    Parses("while loop",      "while (x) { x = x - 1; }", 1);
+    Parses("object literal",  "var o = { a : 1, b : [1, 2, 3] };", 1);
+    Parses("comments",        "// leading\nvar x = 1; /* trailing */", 1);
+    Parses("string escapes",  "var s = \"a\\tb\\\\c\";", 1);
+    Parses("nested function", "function outer() { function inner() { return 1; } return inner(); }", 1);
+
+    // A syntactically invalid program must be rejected.
+    def parser = JSParser();
+    if (parser.Parse("function {{{ ;").IsNone)
+      WriteLine("ok   malformed rejected")
+    else { failures += 1; WriteLine("FAIL malformed program was accepted") }
+
+    WriteLine(if (failures == 0) "\nALL OK" else $"\n$failures FAILURE(S)");
+    failures
+  }
+}

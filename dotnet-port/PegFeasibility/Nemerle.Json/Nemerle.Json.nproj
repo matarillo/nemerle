@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PEG port spike: a real-world consumer of the PEG macros, ported from
+    snippets\peg-parser\Json\Nemerle.Json (sources referenced in place).
+
+    Unlike the hand-written spike grammars this is a complete practical grammar - Unicode
+    category classes ([Lu, Ll, ...]), escape sequences, comments, [InlineAllSubrules] - so it
+    exercises far more of the macro's rule compiler and FSM/optimizer paths.
+
+    Mirrors the legacy Nemerle.Json.nproj's references: Nemerle.Peg as a normal
+    ProjectReference, Nemerle.Peg.Macros as its MacroProjectReference equivalent.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Nemerle.Json</AssemblyName>
+    <RootNamespace>Nemerle.Json</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <JsonSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\peg-parser\Json\Nemerle.Json\</JsonSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(JsonSourceDir)Ast.n" />
+    <NemerleCompile Include="$(JsonSourceDir)JsonParser.n" />
+    <NemerleCompile Include="$(JsonSourceDir)JsonUtils.n" />
+    <NemerleCompile Include="$(JsonSourceDir)Properties\AssemblyInfo.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.Peg\Nemerle.Peg.nproj" />
+    <ProjectReference Include="..\Nemerle.Peg.Macros\Nemerle.Peg.Macros.nproj"
+                      OutputItemType="NemerleMacroReference"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

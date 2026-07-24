@@ -1,0 +1,72 @@
+using Nemerle.Peg;
+using System;
+using System.Console;
+using SCG = System.Collections.Generic;
+
+namespace SimpleSpike
+{
+  // The smallest useful grammar: character range, repetition, sequence, a void rule.
+  // No extensible rules, so this isolates the plain PEG code path.
+  [PegGrammar(Options = None, start,
+  grammar
+  {
+    s     : void = ' '*;
+    digit        = ['0'..'9'];
+    num   : int  = digit+ s;
+    start : int  = s num;
+  })]
+  public class SimpleParser
+  {
+    private num(digits : NToken) : int
+    {
+      int.Parse(GetText(digits))
+    }
+
+    private start(n : int) : int
+    {
+      n
+    }
+  }
+
+  // Choice + nested rule calls, still no extensible rules.
+  [PegGrammar(Options = None, top,
+  grammar
+  {
+    ab  : int = "ab";
+    cd  : int = "cd";
+    top : int = (ab / cd)+;
+  })]
+  public class ChoiceParser
+  {
+    private ab(_ : NToken) : int { 1 }
+    private cd(_ : NToken) : int { 2 }
+    private top(items : SCG.List[int]) : int
+    {
+      mutable sum = 0;
+      foreach (i in items) sum += i;
+      sum
+    }
+  }
+
+  module Program
+  {
+    Main() : void
+    {
+      def p = SimpleParser();
+      foreach (text in ["1", "42", "7 "])
+      {
+        def (pos, result) = p.TryParse(text);
+        def tag = if (pos == text.Length) "ok  " else "FAIL";
+        WriteLine($"$tag SimpleParser '$text' => pos=$pos (len $(text.Length)) result=$result");
+      }
+
+      def c = ChoiceParser();
+      foreach (text in ["ab", "cd", "abcdab"])
+      {
+        def (pos, result) = c.TryParse(text);
+        def tag = if (pos == text.Length) "ok  " else "FAIL";
+        WriteLine($"$tag ChoiceParser '$text' => pos=$pos (len $(text.Length)) result=$result");
+      }
+    }
+  }
+}

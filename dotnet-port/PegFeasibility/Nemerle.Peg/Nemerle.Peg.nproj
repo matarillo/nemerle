@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PEG port spike: the runtime half (snippets\peg-parser\Nemerle.Peg).
+
+    Sources are referenced in place (relative @(NemerleCompile) paths into snippets\), never
+    copied, so the legacy .nproj and this one stay a single source of truth - same arrangement
+    as dotnet-port\LspFeasibility (WP-K).
+
+    This assembly is plain library code: it needs no compiler API and no PEG macros, only the
+    standard library, so it takes no references beyond ncc's auto-resolved set.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Nemerle.Peg</AssemblyName>
+    <RootNamespace>Nemerle.Peg</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PegSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\peg-parser\Nemerle.Peg\</PegSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(PegSourceDir)**\*.n" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

@@ -1,0 +1,36 @@
+using Nemerle.Peg;
+using System;
+using System.Console;
+
+namespace EmitDebugSrcSpike
+{
+  // Same trivial grammar as SimpleSpike, but with Options = EmitDebugSources, which routes
+  // every generated member through TypeBuilder.DefineWithSource instead of TypeBuilder.Define
+  // (Nemerle.Peg.Macros\Macro.n, PegGrammarOptions.GetDefineMethod). If the in-process
+  // NccCompile task is unstable here but stable in SimpleSpike, the trigger is that option
+  // rather than the extensible-rule machinery that CalcParser.n also uses.
+  [PegGrammar(Options = EmitDebugSources, start,
+  grammar
+  {
+    s     : void = ' '*;
+    digit        = ['0'..'9'];
+    num   : int  = digit+ s;
+    start : int  = s num;
+  })]
+  public class EmitDebugSrcParser
+  {
+    private num(digits : NToken) : int { int.Parse(GetText(digits)) }
+    private start(n : int) : int { n }
+  }
+
+  module Program
+  {
+    Main() : void
+    {
+      def p = EmitDebugSrcParser();
+      def (pos, result) = p.TryParse("42");
+      def tag = if (pos == 2) "ok  " else "FAIL";
+      WriteLine($"$tag EmitDebugSrcParser '42' => pos=$pos result=$result");
+    }
+  }
+}

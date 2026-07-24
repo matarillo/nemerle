@@ -1,0 +1,85 @@
+using Nemerle.Collections;
+using Nemerle.Utility;
+
+using System;
+using System.Collections.Generic;
+using System.Console;
+using System.Linq;
+using Nemerle.Json;
+
+module Program
+{
+  mutable failures : int = 0;
+
+  Check(name : string, cond : bool) : void
+  {
+    if (cond) WriteLine($"ok   $name")
+    else { failures += 1; WriteLine($"FAIL $name") }
+  }
+
+  // Parse `text`, print the AST, re-parse that, and require the two printings to agree.
+  //
+  // Comparing the printout against the input text directly would not work: the printer emits
+  // a normal form (no insignificant whitespace, \uXXXX escapes resolved to the character),
+  // so `{"a": 1}` legitimately prints as `{"a":1}`. Re-parsing the normal form and printing
+  // again is the fixpoint check that actually tests the grammar, and it also verifies that
+  // whatever the printer emits the parser accepts.
+  RoundTrip(name : string, text : string, expected : string) : void
+  {
+    def parser = JsonParser();
+    match (parser.Parse(text))
+    {
+      | None      => failures += 1; WriteLine($"FAIL $name did not parse: $text");
+      | Some(obj) =>
+        def once = obj.ToString();
+        match (parser.Parse(once))
+        {
+          | None       => failures += 1; WriteLine($"FAIL $name printer output not re-parsable: $once");
+          | Some(obj2) =>
+            def twice = obj2.ToString();
+            Check($"$name ($once)", once == twice && once == expected);
+            when (once != twice)    WriteLine($"       not a fixpoint: $once -> $twice");
+            when (once != expected) WriteLine($"       expected: $expected");
+        }
+    }
+  }
+
+  Main() : int
+  {
+    // The json(...) macro from Nemerle.Json.Macros builds the AST at compile time.
+    def arr = json([ 1, 2 ]);
+    def obj = json({ "a" : 1; "b": arr } );
+
+    def test = json({
+      a : arr;
+      b : obj;
+      c : null;
+      d : true;
+      e : { a : 1; "la la": null };
+      "f" : [true];
+      j : (43 + 55);
+    });
+
+    WriteLine($"built by macro: $test");
+
+    // The PEG-generated parser must read back what the macro produced.
+    RoundTrip("macro output", test.ToString(), test.ToString());
+
+    // Grammar features exercised directly: nesting, literals, escapes, \u sequences,
+    // empty containers, and comments (which the grammar treats as whitespace).
+    RoundTrip("empty object", "{}", "{}");
+    RoundTrip("empty array",  "[]", "[]");
+    RoundTrip("nested",       "{\"a\": [1, 2, {\"b\": null}]}", "{\"a\":[1,2,{\"b\":null}]}");
+    RoundTrip("literals",     "{\"t\": true, \"f\": false, \"n\": null}", "{\"t\":true,\"f\":false,\"n\":null}");
+    RoundTrip("escapes",      "{\"s\": \"a\\tb\\nc\\\\d\\\"e\"}", "{\"s\":\"a\\tb\\nc\\\\d\\\"e\"}");
+    RoundTrip("unicode",      "{\"u\": \"\\u0041\\u00e9\"}", "{\"u\":\"Aé\"}");
+    RoundTrip("comments",     "{ /* c */ \"a\" : 1 // trailing\n }", "{\"a\":1}");
+
+    // A malformed document must be rejected rather than silently accepted.
+    def parser = JsonParser();
+    Check("malformed rejected", parser.Parse("{\"a\" : }").IsNone);
+
+    WriteLine(if (failures == 0) "\nALL OK" else $"\n$failures FAILURE(S)");
+    failures
+  }
+}

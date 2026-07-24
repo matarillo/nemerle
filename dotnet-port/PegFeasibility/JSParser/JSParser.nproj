@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PEG port spike: the largest grammar in snippets\peg-parser (a JavaScript parser, ~435
+    lines of grammar over a 281-line AST), referenced in place. This is the stress case for
+    the macro's rule compiler, FSM builder and optimizer.
+
+    Built as a library, matching the legacy JSParser.nproj; JSParserDemo drives it.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>JSParser</AssemblyName>
+    <RootNamespace>JSParser</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <JsSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\peg-parser\JSParser\</JsSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(JsSourceDir)Ast.n" />
+    <NemerleCompile Include="$(JsSourceDir)JSParser.n" />
+    <NemerleCompile Include="$(JsSourceDir)Properties\AssemblyInfo.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.Peg\Nemerle.Peg.nproj" />
+    <ProjectReference Include="..\Nemerle.Peg.Macros\Nemerle.Peg.Macros.nproj"
+                      OutputItemType="NemerleMacroReference"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PEG port spike: a consumer, which is where the port is actually decided. Building the two
+    Nemerle.Peg assemblies only proves they compile; expanding [PegGrammar] is what exercises
+    the macro against the CoreCLR ncc (quotations, typer API, generated parser emit).
+
+    Grammar source is snippets\peg-parser\Calculator\CalcParser.n referenced in place; Main.n
+    is local to the spike and drives the generated parser at run time.
+
+    Nemerle.Peg is a normal ProjectReference (the generated parser calls its types at run
+    time); Nemerle.Peg.Macros is a macro-only one (expanded at compile time, never shipped).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(MSBuildThisFileDirectory)..\..\..\snippets\peg-parser\Calculator\CalcParser.n" />
+    <NemerleCompile Include="Main.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.Peg\Nemerle.Peg.nproj" />
+    <ProjectReference Include="..\Nemerle.Peg.Macros\Nemerle.Peg.Macros.nproj"
+                      OutputItemType="NemerleMacroReference"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

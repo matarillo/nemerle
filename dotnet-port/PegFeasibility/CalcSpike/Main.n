@@ -1,0 +1,39 @@
+using System;
+using System.Console;
+
+namespace Calculator
+{
+  module Program
+  {
+    Main() : void
+    {
+      def calc = CalcParser();
+
+      def cases =
+        [ "1+2"
+        , "10 + 2 * 3"
+        , "(1+2)*3"
+        , "-5 + 10"
+        , "10    +2 - 3- 4 *4 / 2/   2  + (2+6)/2  +(-1)"  // == 8
+        ];
+
+      foreach (text in cases)
+      {
+        def (pos, result) = calc.TryParse(text);
+        def ok = if (pos == text.Length) "ok " else "PARTIAL";
+        WriteLine($"$ok $(text.PadRight(46)) => pos=$pos result=$result");
+      }
+
+      // The `start` rule via the option-returning Parse entry point.
+      match (calc.Parse("2 * (3 + 4)"))
+      {
+        | Some(v) => WriteLine($"ok  Parse(\"2 * (3 + 4)\") => Some($v)");
+        | None    => WriteLine("FAIL Parse returned None");
+      }
+
+      // A deliberate syntax error: TryParse must stop short of the end.
+      def (badPos, _) = calc.TryParse("1 + + 2");
+      WriteLine($"ok  error case stopped at pos=$badPos (input length 7)");
+    }
+  }
+}

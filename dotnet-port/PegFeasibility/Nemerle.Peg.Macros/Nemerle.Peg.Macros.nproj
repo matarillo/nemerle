@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PEG port spike: the macro half (snippets\peg-parser\Nemerle.Peg.Macros).
+
+    Sources are referenced in place, as in the sibling Nemerle.Peg.nproj.
+
+    This assembly uses quasi-quotation and the typer API, so it needs Nemerle.Compiler.dll at
+    compile time; NemerleMacroLibrary asks the targets to supply it from whichever compiler
+    layout is in use (WP-M6), the same way dotnet-port\samples\Sokoban\SokobanMacros does.
+
+    It does NOT reference Nemerle.Peg: every mention of a runtime type
+    (Nemerle.Peg.NToken, .Located, .SourceSnapshot, ...) sits inside a quotation or a
+    LookupTypeInfo call, i.e. it is resolved in the consumer's compilation, not in this one.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Nemerle.Peg.Macros</AssemblyName>
+    <RootNamespace>Nemerle.Peg</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NemerleMacroLibrary>true</NemerleMacroLibrary>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PegMacrosSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\peg-parser\Nemerle.Peg.Macros\</PegMacrosSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(PegMacrosSourceDir)**\*.n" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>
