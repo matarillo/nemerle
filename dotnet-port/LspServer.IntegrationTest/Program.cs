@@ -16,6 +16,7 @@ internal static class Program
     {
         _repoRoot = FindRepositoryRoot();
         var probeOnly = args.Contains("--wp-n2-probe", StringComparer.Ordinal);
+        var macroSampleProbe = args.Contains("--macro-sample-probe", StringComparer.Ordinal);
         var serverArgument = args.FirstOrDefault(argument => !argument.StartsWith("--", StringComparison.Ordinal));
         _serverDll = serverArgument is not null
             ? Path.GetFullPath(serverArgument)
@@ -29,6 +30,39 @@ internal static class Program
 
         try
         {
+            if (macroSampleProbe)
+            {
+                var openFirst = args.Contains("--open-first", StringComparer.Ordinal);
+                var race = args.Contains("--race", StringComparer.Ordinal);
+                var storm = args.Contains("--hover-storm", StringComparer.Ordinal);
+                foreach (var (label, project, source) in new[]
+                         {
+                             ("Latin (LatinDemo.nproj)",
+                                 Sample("Latin", "LatinDemo", "LatinDemo.nproj"),
+                                 Sample("Latin", "LatinDemo", "Program.n")),
+                             ("SyntaxTree (SyntaxTreeDemo.nproj)",
+                                 Sample("SyntaxTree", "SyntaxTreeDemo", "SyntaxTreeDemo.nproj"),
+                                 Sample("SyntaxTree", "SyntaxTreeDemo", "Program.n")),
+                             ("SyntaxMacro (SyntaxDemo.nproj), known-good control",
+                                 Sample("SyntaxMacro", "SyntaxDemo", "SyntaxDemo.nproj"),
+                                 Sample("SyntaxMacro", "SyntaxDemo", "Program.n")),
+                         })
+                {
+                    await RunScenarioAsync(
+                        $"{label} diagnostics/hover probe" +
+                        (race ? " (tokens requested during the project query)" : openFirst ? " (didOpen before the project load)" : ""),
+                        client => args.Contains("--churn", StringComparer.Ordinal)
+                            ? MacroSampleChurnAsync(client, project, source)
+                            : storm
+                            ? MacroSampleHoverStormAsync(client, project, source)
+                            : race
+                                ? MacroSampleRaceProbeAsync(client, project, source)
+                                : MacroSampleProbeAsync(client, project, source, 1, openFirst));
+                }
+
+                return 0;
+            }
+
             if (probeOnly)
             {
                 EnsureWpN2FixturesBuilt();
@@ -98,6 +132,355 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    // ----- observation-only probe: macro-library samples (Latin / SyntaxTree) -----
+
+    /// <summary>
+    /// The ordering a real VS Code session produces: the editor restores the
+    /// document and asks for semantic tokens straight away, while the extension
+    /// is still running its (~1 s) MSBuild project query.  The server's token
+    /// handler then sits in WaitForTheAnalysisAsync, polling the engine under the
+    /// operations lock, across the project apply and the types-tree rebuild.
+    /// Observation only: it prints, it does not assert.
+    /// </summary>
+    private static async Task MacroSampleRaceProbeAsync(
+        LspTestClient client, string projectPath, string sourcePath)
+    {
+        var uri = new Uri(sourcePath).AbsoluteUri;
+        var text = await File.ReadAllTextAsync(sourcePath);
+
+        var mark = client.Mark();
+        await DidOpenAsync(client, uri, text, 1);
+        var tokensId = await client.SendRequestAsync("textDocument/semanticTokens/full", new
+        {
+            textDocument = new { uri },
+        });
+
+        var load = await LoadProjectAsync(client, projectPath);
+        Console.WriteLine($"    project load: state={load.GetProperty("state")} " +
+                          $"sources={load.GetProperty("sourceCount")} applied={load.GetProperty("appliedToEngine")}");
+
+        var tokensResponse = await client.WaitForAsync(
+            message => LspTestClient.HasId(message, tokensId), mark, "the semantic tokens response");
+
+        // A real client re-requests on every workspace/semanticTokens/refresh; the
+        // server sends several of them around the types-tree build, and it is the
+        // re-request that produces the "semantic tokens computed" log the report
+        // names as the moment before the squiggle appears.
+        for (var round = 0; round < 6; round++)
+        {
+            await client.DrainAsync(TimeSpan.FromSeconds(2));
+            var id = await client.SendRequestAsync("textDocument/semanticTokens/full", new { textDocument = new { uri } });
+            var response = await client.WaitForAsync(
+                message => LspTestClient.HasId(message, id), mark, $"semantic tokens re-request {round + 1}");
+            var summary = response.TryGetProperty("result", out var payload)
+                ? payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("data", out var array)
+                    ? array.GetArrayLength() / 5 + " tokens"
+                    : Truncate(payload.ToString())
+                : Truncate(response.ToString());
+            Console.WriteLine($"    semantic tokens re-request {round + 1}: {summary}");
+        }
+        if (!tokensResponse.TryGetProperty("result", out var data))
+            Console.WriteLine("    semantic tokens response without a result: " + Truncate(tokensResponse.ToString()));
+        else
+            Console.WriteLine("    semantic tokens: " +
+                              (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("data", out var array)
+                                  ? array.GetArrayLength() / 5 + " tokens"
+                                  : Truncate(data.ToString())));
+
+        await client.DrainAsync(TimeSpan.FromSeconds(5));
+        DumpDiagnostics(client, uri, mark, "over the whole race");
+
+        foreach (var needle in HoverProbeWords(text))
+        {
+            string? value;
+            try { value = await HoverTextAtAsync(client, uri, text, needle, 1); }
+            catch (Exception ex) { value = "<request failed: " + ex.Message + ">"; }
+
+            var (line, character) = LocateUtf16(text, needle, 1);
+            var shown = value is null ? "null" : Truncate(value.Replace("\n", " / ", StringComparison.Ordinal));
+            Console.WriteLine($"    hover {line}:{character} '{needle}' -> {shown}");
+        }
+
+        foreach (var (type, message) in client.LogMessages())
+            Console.WriteLine($"    log[{type}] {message}");
+
+        await DidCloseAsync(client, uri);
+    }
+
+    /// <summary>
+    /// Everything a real session does at once: didOpen, the project query, the
+    /// semantic-token pass and a stream of hovers over the method body, all
+    /// overlapping the types-tree build.  Hover is the one request that makes the
+    /// engine type a single method body on demand, which is where
+    /// IntelliSenseModeMethodBuilder turns an exception into an
+    /// "Exception:&lt;message&gt;" error on the body's opening brace.
+    /// </summary>
+    private static async Task MacroSampleHoverStormAsync(
+        LspTestClient client, string projectPath, string sourcePath)
+    {
+        var uri = new Uri(sourcePath).AbsoluteUri;
+        var text = await File.ReadAllTextAsync(sourcePath);
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+
+        var mark = client.Mark();
+        await DidOpenAsync(client, uri, text, 1);
+        var loadId = await client.SendRequestAsync("nemerle/projectInfo/load", new
+        {
+            projectPath,
+            configuration = "Debug",
+            platform = "AnyCPU",
+            targetFramework = "",
+            dotNetExecutable = "dotnet",
+            forceReload = true,
+        });
+        var tokensId = await client.SendRequestAsync("textDocument/semanticTokens/full", new
+        {
+            textDocument = new { uri },
+        });
+
+        // Sweep every column of every line of the file, repeatedly, without
+        // waiting for the answers - the editor's hover requests arrive the same
+        // way while the engine is still building.
+        var hoverIds = new List<int>();
+        for (var round = 0; round < 6; round++)
+        {
+            for (var line = 0; line < lines.Length; line++)
+            {
+                for (var character = 0; character < lines[line].Length; character += 3)
+                {
+                    hoverIds.Add(await client.SendRequestAsync("textDocument/hover", new
+                    {
+                        textDocument = new { uri },
+                        position = new { line, character },
+                    }));
+                }
+            }
+
+            await client.DrainAsync(TimeSpan.FromMilliseconds(600));
+        }
+
+        _ = await client.WaitForAsync(m => LspTestClient.HasId(m, loadId), mark, "the project load response");
+        _ = await client.WaitForAsync(m => LspTestClient.HasId(m, tokensId), mark, "the semantic tokens response");
+        _ = await client.WaitForAsync(m => LspTestClient.HasId(m, hoverIds[^1]), mark, "the last hover response");
+        await client.DrainAsync(TimeSpan.FromSeconds(4));
+
+        DumpDiagnostics(client, uri, mark, "over the storm");
+
+        // A settled re-check: is hover inside the body dead now?
+        foreach (var needle in HoverProbeWords(text))
+        {
+            string? value;
+            try { value = await HoverTextAtAsync(client, uri, text, needle, 1); }
+            catch (Exception ex) { value = "<request failed: " + ex.Message + ">"; }
+
+            var (line, character) = LocateUtf16(text, needle, 1);
+            var shown = value is null ? "null" : Truncate(value.Replace("\n", " / ", StringComparison.Ordinal));
+            Console.WriteLine($"    settled hover {line}:{character} '{needle}' -> {shown}");
+        }
+
+        foreach (var (type, message) in client.LogMessages())
+        {
+            if (!message.StartsWith("nemerle hover computed", StringComparison.Ordinal))
+                Console.WriteLine($"    log[{type}] {message}");
+        }
+
+        await DidCloseAsync(client, uri);
+    }
+
+    /// <summary>
+    /// Repeat project loads while the document stays open - the extension's
+    /// `**/*.n`, `**/*.{targets,props}` and reference watchers all funnel into
+    /// scheduleSelectedReload, and a workspace with two .nproj can also switch
+    /// the selected project under an open document.
+    /// </summary>
+    private static async Task MacroSampleChurnAsync(
+        LspTestClient client, string projectPath, string sourcePath)
+    {
+        var uri = new Uri(sourcePath).AbsoluteUri;
+        var text = await File.ReadAllTextAsync(sourcePath);
+        var sibling = Directory
+            .GetFiles(Path.GetDirectoryName(Path.GetDirectoryName(sourcePath)!)!, "*.nproj", SearchOption.AllDirectories)
+            .FirstOrDefault(candidate => !string.Equals(candidate, projectPath, StringComparison.OrdinalIgnoreCase));
+
+        await OpenAndAwaitAnalysisAsync(client, uri, text);
+        await ReportHoverAsync(client, uri, text, "after the first analysis");
+
+        for (var round = 1; round <= 3; round++)
+        {
+            _ = await LoadProjectAsync(client, projectPath);
+            await client.DrainAsync(TimeSpan.FromSeconds(2));
+            DumpDiagnostics(client, uri, client.Mark() - 40 < 0 ? 0 : client.Mark() - 40, $"after reload {round}");
+            await ReportHoverAsync(client, uri, text, $"after reload {round}");
+        }
+
+        if (sibling is not null)
+        {
+            Console.WriteLine($"    switching the selected project to {Path.GetFileName(sibling)}");
+            var mark = client.Mark();
+            _ = await LoadProjectAsync(client, sibling);
+            await client.DrainAsync(TimeSpan.FromSeconds(3));
+            DumpDiagnostics(client, uri, mark, "after switching to the sibling project");
+            await ReportHoverAsync(client, uri, text, "after switching to the sibling project");
+
+            mark = client.Mark();
+            _ = await LoadProjectAsync(client, projectPath);
+            await client.DrainAsync(TimeSpan.FromSeconds(3));
+            DumpDiagnostics(client, uri, mark, "after switching back");
+            await ReportHoverAsync(client, uri, text, "after switching back");
+        }
+
+        await DidCloseAsync(client, uri);
+    }
+
+    private static async Task ReportHoverAsync(LspTestClient client, string uri, string text, string label)
+    {
+        foreach (var needle in HoverProbeWords(text))
+        {
+            string? value;
+            try { value = await HoverTextAtAsync(client, uri, text, needle, 1); }
+            catch (Exception ex) { value = "<request failed: " + ex.Message + ">"; }
+
+            var shown = value is null ? "null" : Truncate(value.Replace("\n", " / ", StringComparison.Ordinal));
+            Console.WriteLine($"    hover '{needle}' {label} -> {shown}");
+        }
+    }
+
+    private static string Truncate(string value) =>
+        value.Length <= 160 ? value : value[..160] + "...";
+
+    /// <summary>
+    /// Reproduction probe for the WSL-observed behaviour: opening a console app
+    /// that uses a syntax-macro library of the same solution paints a red squiggle
+    /// on the method body's opening brace ("Exception:Object reference not set...")
+    /// after the semantic-token pass, and hover inside the body then returns null.
+    /// Observation only: it prints, it does not assert.
+    /// </summary>
+    private static async Task MacroSampleProbeAsync(
+        LspTestClient client, string projectPath, string sourcePath, int expectedSources)
+    {
+        await MacroSampleProbeAsync(client, projectPath, sourcePath, expectedSources, openFirst: false);
+    }
+
+    /// <summary>
+    /// <paramref name="openFirst"/> mimics what VS Code actually does: the editor
+    /// restores its document and the language client sends didOpen long before the
+    /// extension has finished its MSBuild project query, so the file is first
+    /// analyzed as a loose file (no macro references) and only then does the
+    /// project snapshot arrive.
+    /// </summary>
+    private static async Task MacroSampleProbeAsync(
+        LspTestClient client, string projectPath, string sourcePath, int expectedSources, bool openFirst)
+    {
+        var uriEarly = new Uri(sourcePath).AbsoluteUri;
+        if (openFirst)
+        {
+            var earlyMark = client.Mark();
+            var earlyText = await File.ReadAllTextAsync(sourcePath);
+            await DidOpenAsync(client, uriEarly, earlyText, 1);
+            try
+            {
+                _ = await client.WaitForAsync(
+                    message => IsPublishFor(message, uriEarly, out _),
+                    earlyMark, "loose-file diagnostics before the project load");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"    (no loose-file diagnostics: {ex.Message})");
+            }
+
+            DumpDiagnostics(client, uriEarly, earlyMark, "loose file (before the project load)");
+        }
+
+        var loadMark = client.Mark();
+        var load = await LoadProjectAsync(client, projectPath);
+        Console.WriteLine($"    project load: state={load.GetProperty("state")} " +
+                          $"sources={load.GetProperty("sourceCount")} applied={load.GetProperty("appliedToEngine")}");
+        _ = expectedSources;
+        try
+        {
+            _ = await client.WaitForAsync(
+                message => LspTestClient.IsLogMessageContaining(message, "engine rebuild finished", out _),
+                loadMark, "the initial engine rebuild");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    (no 'engine rebuild finished' log: {ex.Message})");
+        }
+
+        var uri = new Uri(sourcePath).AbsoluteUri;
+        var text = await File.ReadAllTextAsync(sourcePath);
+        var openMark = client.Mark();
+        if (!openFirst)
+            await DidOpenAsync(client, uri, text, 1);
+        try
+        {
+            _ = await client.WaitForAsync(
+                message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1,
+                openMark, "initial diagnostics");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    (no versioned diagnostics after didOpen: {ex.Message})");
+        }
+
+        await client.DrainAsync(TimeSpan.FromSeconds(2));
+        DumpDiagnostics(client, uri, openMark, "after didOpen (before semantic tokens)");
+
+        var tokensMark = client.Mark();
+        var tokens = await RequestSemanticTokensAsync(client, uri);
+        Console.WriteLine($"    semantic tokens: {tokens.Length}");
+        await client.DrainAsync(TimeSpan.FromSeconds(3));
+        DumpDiagnostics(client, uri, tokensMark, "after semantic tokens");
+
+        // Hover on every identifier-ish word of the body, so a body-wide failure
+        // is visible rather than a single unlucky position.
+        foreach (var needle in HoverProbeWords(text))
+        {
+            string? value;
+            try
+            {
+                value = await HoverTextAtAsync(client, uri, text, needle, 1);
+            }
+            catch (Exception ex)
+            {
+                value = "<request failed: " + ex.Message + ">";
+            }
+
+            var (line, character) = LocateUtf16(text, needle, 1);
+            var shown = value is null ? "null" : value.Replace("\n", " / ", StringComparison.Ordinal);
+            Console.WriteLine($"    hover {line}:{character} '{needle}' -> {shown}");
+        }
+
+        foreach (var (type, message) in client.LogMessages())
+            Console.WriteLine($"    log[{type}] {message}");
+
+        await DidCloseAsync(client, uri);
+    }
+
+    private static string[] HoverProbeWords(string text) =>
+        text.Contains("revelare", StringComparison.Ordinal)
+            ? ["Program", "Main", "gold", "si", "WriteLine", "revelare"]
+            : text.Contains("explain", StringComparison.Ordinal)
+                ? ["Program", "Main", "x", "y", "answer", "explain", "WriteLine"]
+                : ["Program", "Main", "twice", "WriteLine"];
+
+    private static void DumpDiagnostics(LspTestClient client, string uri, int fromMark, string label)
+    {
+        var any = false;
+        foreach (var publish in client.Messages(fromMark))
+        {
+            if (!IsPublishFor(publish, uri, out var parameters))
+                continue;
+            any = true;
+            Console.WriteLine($"    diagnostics {label} (version {VersionOf(parameters)}): {CountOf(parameters)}");
+            foreach (var diagnostic in parameters.GetProperty("diagnostics").EnumerateArray())
+                Console.WriteLine("      " + diagnostic.ToString());
+        }
+
+        if (!any)
+            Console.WriteLine($"    diagnostics {label}: none published");
     }
 
     // ----- WP-N2 observation-only probe: concrete reported locations -----

@@ -132,6 +132,18 @@ internal sealed class LspTestClient : IAsyncDisposable
             $"response to {method} (id {id})").ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Sends a request and returns its id without waiting for the response, so a
+    /// scenario can overlap it with other traffic (what a real editor does: it
+    /// asks for semantic tokens while the extension is still querying MSBuild).
+    /// </summary>
+    public async Task<int> SendRequestAsync(string method, object? parameters)
+    {
+        var id = ++_nextRequestId;
+        await SendAsync(new { jsonrpc = "2.0", id, method, @params = parameters }).ConfigureAwait(false);
+        return id;
+    }
+
     public Task NotifyAsync(string method, object? parameters) =>
         SendAsync(new { jsonrpc = "2.0", method, @params = parameters });
 
@@ -219,6 +231,15 @@ internal sealed class LspTestClient : IAsyncDisposable
                 return;
             }
         }
+    }
+
+    /// <summary>The messages received since <paramref name="fromMark"/>, in order.</summary>
+    public IReadOnlyList<JsonElement> Messages(int fromMark = 0)
+    {
+        var result = new List<JsonElement>();
+        for (var index = fromMark; index < _history.Count; index++)
+            result.Add(_history[index]);
+        return result;
     }
 
     /// <summary>Counts the messages received since <paramref name="fromMark"/> that match.</summary>
