@@ -109,6 +109,13 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed for $($_.FullName)" }
           }
 
+      # dotnet-port/samples/README.md walks a reader through a set of samples; this checks they
+      # still build (and that the compile-time-failure counter-example still fails for its
+      # documented reason).  Distinct from the raw LSP suite's EnsureFixturesBuilt, which builds
+      # what that suite needs on disk rather than what the README advertises.
+      - name: Samples advertised in the README build
+        run: pwsh -NoProfile -File dotnet-port/build-samples.ps1
+
       - name: Extension unit tests (npm)
         working-directory: dotnet-port/vscode-nemerle
         run: |
