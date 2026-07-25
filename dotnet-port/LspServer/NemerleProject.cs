@@ -589,18 +589,52 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
 
     /// <summary>
     /// Colorizes a whole open document with the engine's <c>ScanLexer</c> and
-    /// returns LSP semantic tokens (WP-O5a).  Like definition/references this is a
-    /// synchronous engine API, so it runs directly under <c>_engineOperations</c>
-    /// (serialized with document changes and reloads).  Returns null when the
-    /// document is not open or the engine has no initialized compiler yet; the
-    /// client then keeps its TextMate coloring instead of being handed a
-    /// half-classified document.
+    /// returns LSP semantic tokens (WP-O5a).  Returns null when the document is not
+    /// open, the engine has no initialized compiler yet, or the answer no longer
+    /// applies (superseded / the buffer moved on); the client then keeps its
+    /// TextMate coloring instead of being handed a half-classified document.
+    ///
+    /// <para><b>Why this goes through the AsyncWorker instead of just running under
+    /// <c>_engineOperations</c>.</b>  The IDE engine is single-threaded by contract:
+    /// every one of its entry points asserts it
+    /// (<c>AsyncWorker.CheckCurrentThreadIsTheAsyncWorker</c>, ~10 call sites), and
+    /// every other feature here - hover, completion, definition, references, the
+    /// types-tree build - reaches it through a <c>Begin*</c> request on that one
+    /// worker thread.  <c>_engineOperations</c> serializes this class's own
+    /// bookkeeping; it does <b>not</b> serialize against the worker, which is where
+    /// reloads and method-body typing run.</para>
+    ///
+    /// <para><b>What breaks when the colorizer runs off that thread.</b>
+    /// <c>ScanLexer.GetIdentifierColor</c> calls <c>GlobalEnv.LookupType</c> for
+    /// every identifier in the document, which forces lazy construction of
+    /// <c>LibraryReference.ExternalTypeInfo</c> for referenced-assembly types.  That
+    /// constructor publishes <c>this</c> into the shared namespace-tree cache before
+    /// it assigns <c>direct_supertypes</c> - deliberately, to break recursion within
+    /// one thread ("first cache ourself to avoid loops").  A second thread that
+    /// resolves the same type meanwhile gets the half-built instance and dereferences
+    /// the still-null field in <c>SuperClass()</c>.  Observed as a
+    /// NullReferenceException inside the worker's method-body typing, which
+    /// <c>IntelliSenseModeMethodBuilder</c> then reports as an error pinned to the
+    /// method body's opening brace, leaving <c>_bodyTyped</c> null so hover inside
+    /// that method stays dead until the file is edited.  It is timing-dependent
+    /// (widest while a reload re-reflects the references), so it survives test runs
+    /// and shows up in real editor sessions.</para>
+    ///
+    /// <para><b>Alternatives that were rejected.</b>  Locking around the engine
+    /// cannot work: the shared state is the compiler's global type caches, which
+    /// this class has no way to fence.  Dropping the <c>LookupType</c> call would
+    /// lose user-type coloring and still leave <c>GetActiveEnv</c>'s declaration-tree
+    /// walk running off-thread.  Making <c>ExternalTypeInfo</c> publish itself only
+    /// once fully built would break the single-thread recursion guard it exists
+    /// for.  Queueing is the fix the engine already prescribes.</para>
     /// </summary>
-    public EngineSemanticTokens? GetSemanticTokens(string uri)
+    public async Task<EngineSemanticTokens?> GetSemanticTokensAsync(string uri, CancellationToken token)
     {
+        Task<EngineRequestBridge.RequestResult<EngineSemanticTokens?>> pending;
         lock (_engineOperations)
         {
             InMemoryNemerleSource source;
+            int expectedVersion;
             lock (_gate)
             {
                 if (_disposed ||
@@ -612,31 +646,93 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
                 }
 
                 source = state.Source;
+                expectedVersion = source.CurrentVersion;
             }
+
+            pending = _bridge.RunAsync<EngineSemanticTokens?>(
+                () => BeginColorize(source),
+                () => source.CurrentVersion,
+                expectedVersion,
+                static request => ((ColorizeRequest)request).Tokens,
+                token);
+        }
+
+        var result = await pending.ConfigureAwait(false);
+        return result.IsUsable ? result.Value : null;
+    }
+
+    /// <summary>
+    /// The colorize work item.  It carries its result the way the engine's own
+    /// requests do (<c>QuickTipInfoAsyncRequest.QuickTipInfo</c> etc.), so
+    /// <see cref="EngineRequestBridge"/> can extract it after completion.
+    ///
+    /// <para><b>Why <c>AsyncRequestType.EmptyRequest</c>.</b>  The colorizer is not
+    /// one of the engine's own request kinds, and giving it one would mean editing
+    /// <c>AsyncRequestType</c> in the VsIntegration sources that the legacy Visual
+    /// Studio integration also builds from - a shared-source change for a
+    /// server-only feature.  <c>EmptyRequest</c> is the engine's existing name for
+    /// "a work item the queue carries but does not reason about", and the engine
+    /// uses it exactly this way itself (<c>Engine-BuildTypeTree.n</c> posts a bare
+    /// <c>AsyncRequest(AsyncRequestType.EmptyRequest, this, null, emptyWork)</c>).
+    /// The one behavioral consequence is <c>AsyncRequest.IsForceOutBy</c>: an
+    /// <c>EmptyRequest</c> is superseded only by <c>CloseProject</c>, never by a
+    /// later build or edit.  That is the safe direction - the request is never
+    /// silently dropped - and the cost, redundant colorize passes when requests
+    /// pile up, is avoided on the caller's side instead: the handler waits for the
+    /// types-tree signal rather than polling.</para>
+    /// </summary>
+    private sealed class ColorizeRequest(IIdeEngine engine, IIdeSource source, Action<AsyncRequest> work)
+        : AsyncRequest(AsyncRequestType.EmptyRequest, engine, source, work)
+    {
+        public EngineSemanticTokens? Tokens { get; set; }
+    }
+
+    /// <summary>
+    /// Enqueues a colorize pass on the engine's worker thread.  Runs synchronously
+    /// up to the enqueue (before the first await in
+    /// <see cref="EngineRequestBridge.RunAsync{T}"/>), so the caller may hold
+    /// <c>_engineOperations</c> here and await the result after releasing it.
+    /// </summary>
+    private AsyncRequest BeginColorize(InMemoryNemerleSource source)
+    {
+        var request = new ColorizeRequest(_engine, source, RunColorize);
+        AsyncWorker.AddWork(request);
+        return request;
+    }
+
+    /// <summary>Runs on the AsyncWorker thread.</summary>
+    private void RunColorize(AsyncRequest request)
+    {
+        var source = (InMemoryNemerleSource)request.Source;
+        try
+        {
+            if (request.Stop || _disposed)
+                return;
 
             // ScanLexer takes its base keyword set from ManagerClass.CoreEnv (and
             // asserts on it), which exists only once InitCompiler ran.  At startup
             // the client asks before that, and the answer has to be "nothing yet"
             // rather than a half-classified document (see the refresh retry in
             // NemerleSemanticTokensHandler).
-            // No logging here: the handler polls this while it waits for the
-            // compiler, and it reports the wait once on its own.
             if (!_engine.RequestOnInitEngine() ||
                 _engine is not ManagerClass manager ||
                 manager.CoreEnv is null)
-                return null;
+                return;
 
-            try
-            {
-                return Tokenize(manager, source);
-            }
-            catch (Exception ex)
-            {
-                // A colorizer failure must not take out the request loop; the
-                // document simply falls back to grammar-based coloring.
-                _log.Warning($"nemerle semantic tokens failed for {source.Path}: {ex}");
-                return null;
-            }
+            ((ColorizeRequest)request).Tokens = Tokenize(manager, source);
+        }
+        catch (Exception ex)
+        {
+            // A colorizer failure must not take out the worker loop; the document
+            // simply falls back to grammar-based coloring.
+            _log.Warning($"nemerle semantic tokens failed for {source.Path}: {ex}");
+        }
+        finally
+        {
+            // The worker only completes a request itself when the work threw
+            // (AsyncWorker.ThreadProc); on the success path every work item is
+            // expected to do it, as the engine's own Begin* handlers do.
+            request.MarkAsCompleted();
         }
     }
 
@@ -650,7 +746,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         lock (_gate) return !_disposed && _openUriToPath.ContainsKey(uri);
     }
 
-    /// <summary>Caller must hold <c>_engineOperations</c>.</summary>
+    /// <summary>Runs on the AsyncWorker thread; see <see cref="GetSemanticTokensAsync"/>.</summary>
     private EngineSemanticTokens Tokenize(ManagerClass manager, InMemoryNemerleSource source)
     {
         var text = source.GetText();
@@ -908,10 +1004,20 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
 
     public void TypesTreeCreated()
     {
-        var startedAt = Interlocked.Read(ref _reloadStartedTimestamp);
+        // Consume the start stamp rather than just reading it.  The field records
+        // one start at a time, so when several reloads are requested in quick
+        // succession - which the editor's watchers do - a plain read makes every
+        // completion report its duration from the *latest* start.  A real session's
+        // log then shows several rebuilds "finishing" a few tens of ms apart, which
+        // reads as overlapping builds and is not what happened.  Zeroing it means
+        // each start is reported once, by the first completion after it, and any
+        // further completion prints no duration instead of a fabricated one.
+        var startedAt = Interlocked.Exchange(ref _reloadStartedTimestamp, 0);
         if (startedAt != 0)
             _log.Log(
                 $"nemerle engine rebuild finished after {Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F0} ms");
+        else
+            _log.Log("nemerle engine rebuild finished");
         RaiseDiagnosticsChanged();
         TypesTreeRebuilt?.Invoke();
     }

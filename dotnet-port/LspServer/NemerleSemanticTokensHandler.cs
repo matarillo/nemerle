@@ -51,9 +51,8 @@ internal sealed class NemerleSemanticTokensHandler : SemanticTokensHandlerBase
         TimeSpan.FromSeconds(8),
     ];
 
-    /// <summary>How long a request waits for the engine's analysis, and how often it looks.</summary>
+    /// <summary>How long a request waits for the engine's analysis.</summary>
     private static readonly TimeSpan AnalysisWait = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan AnalysisPollInterval = TimeSpan.FromMilliseconds(50);
 
     private readonly ILanguageServerFacade _server;
     private readonly NemerleProject _project;
@@ -62,13 +61,30 @@ internal sealed class NemerleSemanticTokensHandler : SemanticTokensHandlerBase
     private int _tokensRequested;
     private int _retryRunning;
 
+    /// <summary>
+    /// Completed by the next types-tree build.  A request that arrived too early
+    /// awaits this instead of re-asking on a timer: a colorize pass now runs on the
+    /// engine's worker thread, so polling would put a full-document pass on that
+    /// queue every interval and slow down the very build it is waiting for.
+    /// </summary>
+    private TaskCompletionSource _typesTreeBuilt =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public NemerleSemanticTokensHandler(ILanguageServerFacade server, NemerleProject project, ServerLog log)
     {
         _server = server;
         _project = project;
         _log = log;
         WarnOnColorMirrorDrift(log);
-        _project.TypesTreeRebuilt += RequestRefresh;
+        _project.TypesTreeRebuilt += OnTypesTreeRebuilt;
+    }
+
+    private void OnTypesTreeRebuilt()
+    {
+        Interlocked
+            .Exchange(ref _typesTreeBuilt, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .TrySetResult();
+        RequestRefresh();
     }
 
     /// <summary>
@@ -152,9 +168,12 @@ internal sealed class NemerleSemanticTokensHandler : SemanticTokensHandlerBase
         var uri = identifier.TextDocument.Uri.ToString();
 
         var stopwatch = Stopwatch.StartNew();
-        var result = _project.GetSemanticTokens(uri);
+        // Captured before asking, so a build that finishes between the request and
+        // the wait completes this instance rather than being missed.
+        var nextBuild = Volatile.Read(ref _typesTreeBuilt).Task;
+        var result = await _project.GetSemanticTokensAsync(uri, token).ConfigureAwait(false);
         if (result is not { FromTypesTree: true })
-            result = await WaitForTheAnalysisAsync(uri, result, token).ConfigureAwait(false);
+            result = await WaitForTheAnalysisAsync(uri, result, nextBuild, token).ConfigureAwait(false);
         if (result is null)
         {
             _log.Log($"nemerle semantic tokens unavailable at {uri}");
@@ -205,6 +224,7 @@ internal sealed class NemerleSemanticTokensHandler : SemanticTokensHandlerBase
     private async Task<EngineSemanticTokens?> WaitForTheAnalysisAsync(
         string uri,
         EngineSemanticTokens? incomplete,
+        Task nextBuild,
         CancellationToken token)
     {
         if (!_project.IsDocumentOpen(uri))
@@ -216,14 +236,21 @@ internal sealed class NemerleSemanticTokensHandler : SemanticTokensHandlerBase
         {
             try
             {
-                await Task.Delay(AnalysisPollInterval, token).ConfigureAwait(false);
+                await nextBuild.WaitAsync(AnalysisWait - waited.Elapsed, token).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                break;
             }
             catch (OperationCanceledException)
             {
                 return incomplete;
             }
 
-            var result = _project.GetSemanticTokens(uri);
+            // Re-arm before re-asking, for the same reason the first capture is
+            // taken before the first request.
+            nextBuild = Volatile.Read(ref _typesTreeBuilt).Task;
+            var result = await _project.GetSemanticTokensAsync(uri, token).ConfigureAwait(false);
             if (result is { FromTypesTree: true })
                 return result;
 
