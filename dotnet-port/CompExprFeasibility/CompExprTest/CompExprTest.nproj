@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ComputationExpressions port spike: the upstream test driver
+    (snippets\ComputationExpressions\Test), sources referenced in place.
+
+    That project is already a self-contained console harness - TestExecuter.n compares each
+    [TestCase] method's captured output against a literal template and Main.n returns 0/-1 -
+    so it needs no test framework and runs unattended as-is. Nothing here is rewritten.
+
+    Reference shape mirrors the legacy Test.nproj: a normal ProjectReference to the runtime
+    plus a macro-only reference to the macro assembly (legacy <MacroProjectReference
+    Private="False">, which in dotnet-port is a ProjectReference with
+    OutputItemType=NemerleMacroReference and ReferenceOutputAssembly=false - WP-A4 wiring,
+    same as PegFeasibility\JsonDemo).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ComputationExpressions.Tests</AssemblyName>
+    <RootNamespace>Test</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <CeTestSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\ComputationExpressions\Test\</CeTestSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(CeTestSourceDir)**\*.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.ComputationExpressions\Nemerle.ComputationExpressions.nproj" />
+    <ProjectReference Include="..\Nemerle.ComputationExpressions.Macros\Nemerle.ComputationExpressions.Macros.nproj"
+                      OutputItemType="NemerleMacroReference"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

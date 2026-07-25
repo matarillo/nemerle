@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ComputationExpressions port spike: the second WinForms consumer
+    (snippets\ComputationExpressions\WindowsFormsTest), sources referenced in place.
+
+    Same shape and same framework-reference workarounds as the sibling AsyncHttp.nproj - read
+    that file's comments; the only difference is that these sources touch no System.Net, so the
+    reference list is shorter. What it adds over AsyncHttp is `Async.SwitchTo` hopping between a
+    ThreadPool ExecutionContext and a SynchronizationContext one inside a single `comp async`.
+
+    Builds only with -p:NemerleUseExec=true (in-process task cannot carry -ref: paths containing
+    spaces); GUI app, so build-only verification.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>WindowsFormsTest</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <WinFormsTestSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\ComputationExpressions\WindowsFormsTest\</WinFormsTestSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(WinFormsTestSourceDir)**\*.n" />
+  </ItemGroup>
+
+  <Target Name="_WindowsFormsTestFrameworkRefs" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_DesktopVersion>@(ResolvedFrameworkReference->WithMetadataValue('Identity', 'Microsoft.WindowsDesktop.App.WindowsForms')->'%(TargetingPackVersion)')</_DesktopVersion>
+      <_DesktopRuntimeDir>$(NetCoreRoot)shared\Microsoft.WindowsDesktop.App\$(_DesktopVersion)\</_DesktopRuntimeDir>
+      <_CoreVersion>@(ResolvedFrameworkReference->WithMetadataValue('Identity', 'Microsoft.NETCore.App')->'%(TargetingPackVersion)')</_CoreVersion>
+      <_CoreRuntimeDir>$(NetCoreRoot)shared\Microsoft.NETCore.App\$(_CoreVersion)\</_CoreRuntimeDir>
+      <NemerleAdditionalOptions>$(NemerleAdditionalOptions) -ref:"$(_DesktopRuntimeDir)System.Windows.Forms.dll" -ref:"$(_DesktopRuntimeDir)System.Drawing.Common.dll" -ref:"$(_CoreRuntimeDir)System.Drawing.Primitives.dll"</NemerleAdditionalOptions>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_DesktopRuntimeDir)System.Windows.Forms.dll')"
+           Text="Microsoft.WindowsDesktop.App $(_DesktopVersion) shared framework not found at $(_DesktopRuntimeDir)." />
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.ComputationExpressions\Nemerle.ComputationExpressions.nproj" />
+    <ProjectReference Include="..\Nemerle.ComputationExpressions.Macros\Nemerle.ComputationExpressions.Macros.nproj"
+                      OutputItemType="NemerleMacroReference"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ComputationExpressions port spike: the macro half
+    (snippets\ComputationExpressions\ComputationExpressions.Macros), sources referenced in
+    place as in the sibling runtime project.
+
+    Shape: macro library that is ALSO a normal consumer of another Nemerle project - the same
+    shape as PegFeasibility\Nemerle.Json.Macros, and unlike Nemerle.Peg.Macros. The reference
+    to the runtime is real: Builders\*.n name Nemerle.ComputationExpressions.Internal types
+    (EnumerableHelper, DelayedEnumerable, ...) and Async\Builder types outside quotations.
+
+    NemerleMacroLibrary asks the targets to supply Nemerle.Compiler.dll at compile time
+    (WP-M6), as dotnet-port\samples\Sokoban\SokobanMacros does.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Nemerle.ComputationExpressions.Macros</AssemblyName>
+    <RootNamespace>Nemerle.ComputationExpressions</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NemerleMacroLibrary>true</NemerleMacroLibrary>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <CeMacrosSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\ComputationExpressions\ComputationExpressions.Macros\</CeMacrosSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(CeMacrosSourceDir)**\*.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.ComputationExpressions\Nemerle.ComputationExpressions.nproj" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ComputationExpressions port spike: the runtime half
+    (snippets\ComputationExpressions\ComputationExpressions).
+
+    Sources are referenced in place (relative @(NemerleCompile) globs into snippets\), never
+    copied, so the legacy .nproj and this one stay a single source of truth - same arrangement
+    as dotnet-port\PegFeasibility (doc 52) and dotnet-port\LspFeasibility (WP-K).
+
+    The glob is exact: every .n under the source directory appears in the legacy .nproj's
+    <Compile> list and vice versa.
+
+    Plain library code - async combinators over ThreadPool/SynchronizationContext plus lazy
+    IEnumerable helpers. No compiler API, no macros beyond the standard library, so ncc's
+    auto-resolved reference set suffices.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Nemerle.ComputationExpressions</AssemblyName>
+    <RootNamespace>Nemerle.ComputationExpressions</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <CeSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\ComputationExpressions\ComputationExpressions\</CeSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(CeSourceDir)**\*.n" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

@@ -1,0 +1,98 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ComputationExpressions port spike: the WinForms consumer
+    (snippets\ComputationExpressions\AsyncHttp), sources referenced in place.
+
+    This is the interesting third consumer shape: `comp async` driven from a
+    SynchronizationContext-based ExecutionContext, i.e. the UI-thread marshalling path that the
+    console test suite never exercises.
+
+    Deviations from the console projects, all forced by WinForms/System.Net rather than by
+    anything ComputationExpressions does:
+
+      * TargetFramework is net10.0-windows with UseWindowsForms, so the SDK brings in the
+        Microsoft.WindowsDesktop.App framework reference.
+      * Nemerle.Core.targets drops @(ReferencePath) items that carry a %(FrameworkReferenceName)
+        (ncc auto-resolves the shared framework itself), which is right for
+        Microsoft.NETCore.App but discards the WindowsDesktop ref pack too - ncc has no
+        auto-resolution for it. The assemblies these sources actually need are added by hand
+        below, as -ref: via NemerleAdditionalOptions. See that target for why they are the
+        shared-framework copies and not the ref-pack ones.
+      * System.Net.Requests / System.Net.Primitives are outside ncc's auto-ref set
+        (LoadCoreStdlibReferences, ncc\passes.n:592) too, so WebRequest needs them named.
+
+    MainForm.resx is NOT embedded: neither Designer.n mentions ComponentResourceManager, so
+    nothing reads it. Wiring .resx through ncc's -resource: would need GenerateResource plus an
+    un-stubbed CreateManifestResourceNames; out of scope for a feasibility check.
+
+    GUI app - build-only verification; it cannot run unattended.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>AsyncHttp</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <AsyncHttpSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\ComputationExpressions\AsyncHttp\</AsyncHttpSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(AsyncHttpSourceDir)**\*.n" />
+  </ItemGroup>
+
+  <!-- The framework assemblies these sources need beyond ncc's auto-ref set, added as -ref:.
+
+       Two rules were found the hard way, both about ncc reading references by actually LOADING
+       them (LibraryReferenceManager.assemblyLoadFrom -> plain reflection) into the same default
+       ALC that already holds the running framework's implementation assemblies:
+
+       1. Use the IMPLEMENTATION assemblies under dotnet\shared, not the reference assemblies
+          under dotnet\packs that @(ReferencePath) carries. A ref-pack copy is a second file with
+          an identity the ALC has already bound elsewhere, and the load is refused:
+            internal compiler error : ... System.IO.FileLoadException: Could not load ...
+            Microsoft.WindowsDesktop.App.Ref\...\System.Drawing.dll. The located assembly's
+            manifest definition does not match the assembly reference. (0x80131040)
+          The version comes from the ref pack the SDK resolved; only the directory is redirected.
+
+       2. Name System.Drawing.Common, NOT System.Drawing. WindowsDesktop's System.Drawing.dll is
+          a type-forwarding facade whose simple name collides with Microsoft.NETCore.App's own
+          System.Drawing.dll facade, and it fails with the same 0x80131040 even when it is the
+          only -ref: given. System.Drawing.Common is where Font/FontStyle/GraphicsUnit really
+          live and its simple name is unique, so it loads cleanly. Point/Size/SizeF come from
+          System.Drawing.Primitives in Microsoft.NETCore.App.
+
+       This project builds only with -p:NemerleUseExec=true: the in-process NccCompile task
+       whitespace-splits AdditionalOptions without honouring quotes, so any path containing a
+       space (here, "C:\Program Files\dotnet\...") is shattered. See
+       dotnet-port\docs\55-computation-expressions-feasibility-log.md. -->
+  <Target Name="_AsyncHttpFrameworkRefs" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_DesktopVersion>@(ResolvedFrameworkReference->WithMetadataValue('Identity', 'Microsoft.WindowsDesktop.App.WindowsForms')->'%(TargetingPackVersion)')</_DesktopVersion>
+      <_DesktopRuntimeDir>$(NetCoreRoot)shared\Microsoft.WindowsDesktop.App\$(_DesktopVersion)\</_DesktopRuntimeDir>
+      <_CoreVersion>@(ResolvedFrameworkReference->WithMetadataValue('Identity', 'Microsoft.NETCore.App')->'%(TargetingPackVersion)')</_CoreVersion>
+      <_CoreRuntimeDir>$(NetCoreRoot)shared\Microsoft.NETCore.App\$(_CoreVersion)\</_CoreRuntimeDir>
+      <NemerleAdditionalOptions>$(NemerleAdditionalOptions) -ref:"$(_DesktopRuntimeDir)System.Windows.Forms.dll" -ref:"$(_DesktopRuntimeDir)System.Drawing.Common.dll" -ref:"$(_CoreRuntimeDir)System.Drawing.Primitives.dll" -ref:"$(_CoreRuntimeDir)System.Net.Requests.dll" -ref:"$(_CoreRuntimeDir)System.Net.Primitives.dll"</NemerleAdditionalOptions>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_DesktopRuntimeDir)System.Windows.Forms.dll')"
+           Text="Microsoft.WindowsDesktop.App $(_DesktopVersion) shared framework not found at $(_DesktopRuntimeDir)." />
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.ComputationExpressions\Nemerle.ComputationExpressions.nproj" />
+    <ProjectReference Include="..\Nemerle.ComputationExpressions.Macros\Nemerle.ComputationExpressions.Macros.nproj"
+                      OutputItemType="NemerleMacroReference"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

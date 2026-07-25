@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ComputationExpressions port spike: the continuation-monad builder the upstream harness
+    leaves disabled (see Main.n). Same three upstream sources as CompExprTest, minus its
+    Main.n, plus the local one.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNemerleCompileItems>false</EnableDefaultNemerleCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <CeTestSourceDir>$(MSBuildThisFileDirectory)..\..\..\snippets\ComputationExpressions\Test\</CeTestSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="$(CeTestSourceDir)TestExecuter.n" />
+    <NemerleCompile Include="$(CeTestSourceDir)ContBuilder.n" />
+    <NemerleCompile Include="$(CeTestSourceDir)ContTest.n" />
+    <NemerleCompile Include="Main.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nemerle.ComputationExpressions\Nemerle.ComputationExpressions.nproj" />
+    <ProjectReference Include="..\Nemerle.ComputationExpressions.Macros\Nemerle.ComputationExpressions.Macros.nproj"
+                      OutputItemType="NemerleMacroReference"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

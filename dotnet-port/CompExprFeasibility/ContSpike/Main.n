@@ -1,0 +1,27 @@
+// ComputationExpressions port spike: run the one test the upstream harness leaves disabled.
+//
+// snippets\ComputationExpressions\Test\Main.n compiles ContTest.n / ContBuilder.n but has its
+// ContTest line commented out, so `comp cont { ... }` (a user-defined builder driving a
+// continuation monad, the most demanding shape ComputationExpander has to handle) is never
+// exercised. This driver runs exactly that case, so the port can be compared against the CLR4
+// toolchain on it too rather than inheriting an untested hole.
+
+using System;
+using System.Globalization.CultureInfo;
+using System.Threading.Thread;
+
+using Test;
+
+namespace ContSpike
+{
+  module Program
+  {
+    Main() : int
+    {
+      CurrentThread.CurrentCulture = InvariantCulture;
+      CurrentThread.CurrentUICulture = InvariantCulture;
+
+      if (TestExecuter.Run(typeof(ContTest))) 0 else -1
+    }
+  }
+}

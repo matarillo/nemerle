@@ -1,0 +1,163 @@
+// ComputationExpressions port spike: the one runtime path neither the console test suite nor a
+// build-only check covers.
+//
+// The two WinForms projects are the only upstream users of
+// SystemExecutionContexts.FromCurrentSynchronizationContext(), i.e. of `comp async`
+// continuations being marshalled back onto a single UI thread; being GUI apps they can only be
+// verified to compile. This driver reproduces that shape headlessly: a minimal pumping
+// SynchronizationContext on a dedicated thread stands in for WinForms', and the workload is the
+// one WindowsFormsTest\MainForm.n runs - SwitchTo(pool) to compute, SwitchTo(gui) to touch
+// "UI" state, repeatedly, from inside one computation expression.
+//
+// Every "UI" mutation asserts it is on the pump thread, so a marshalling failure is a
+// mismatch and not a silent race, and the output is deterministic (thread identity is reported
+// as "gui"/"not-gui", never a raw managed thread id).
+
+using Nemerle.ComputationExpressions;
+using Nemerle.ComputationExpressions.Async;
+
+using System;
+using System.Collections.Generic;
+using System.Globalization.CultureInfo;
+using System.Threading;
+
+namespace SyncCtxSpike
+{
+  /// A SynchronizationContext that runs every Post on one dedicated thread, the way a WinForms
+  /// message loop does. Send is not needed by ExecutionContext.Execute and is left unsupported.
+  internal class PumpSynchronizationContext : SynchronizationContext
+  {
+    // Plain Queue + Monitor rather than BlockingCollection: System.Collections.Concurrent is
+    // outside ncc's auto-ref set (LoadCoreStdlibReferences, ncc\passes.n:592) and pulling it in
+    // would mean repeating the AsyncHttp -ref: dance for no benefit here.
+    private queue : Queue[void -> void] = Queue();
+    private mutable closed : bool = false;
+    private thread : Thread;
+
+    public this()
+    {
+      thread = Thread(Pump);
+      thread.IsBackground = true;
+      thread.Start();
+    }
+
+    public PumpThreadId : int { get { thread.ManagedThreadId } }
+
+    private Pump() : void
+    {
+      SynchronizationContext.SetSynchronizationContext(this);
+      def next()
+      {
+        lock (queue)
+        {
+          while (queue.Count == 0 && !closed)
+            _ = Monitor.Wait(queue);
+          if (queue.Count > 0) queue.Dequeue() else null
+        }
+      }
+      def loop()
+      {
+        match (next())
+        {
+          | null => ()
+          | work => work(); loop()
+        }
+      }
+      loop()
+    }
+
+    public override Post(d : SendOrPostCallback, state : object) : void
+    {
+      lock (queue)
+      {
+        queue.Enqueue(() => d(state));
+        Monitor.PulseAll(queue);
+      }
+    }
+
+    public Shutdown() : void
+    {
+      lock (queue)
+      {
+        closed = true;
+        Monitor.PulseAll(queue);
+      }
+      thread.Join();
+    }
+
+    /// Runs `body` on the pump thread and blocks until it completes, so the caller can obtain a
+    /// gui ExecutionContext the same way a Form constructor does (on the UI thread).
+    public RunOnPump[A](body : void -> A) : A
+    {
+      mutable result = default(A);
+      mutable error : Exception = null;
+      def done = ManualResetEventSlim(false);
+      Post(_ =>
+        {
+          try { result = body() } catch { | e is Exception => error = e }
+          finally { done.Set() }
+        }, null);
+      done.Wait();
+      when (error != null)
+        throw InvalidOperationException("body failed", error);
+      result
+    }
+  }
+
+  module Program
+  {
+    Main() : int
+    {
+      Thread.CurrentThread.CurrentCulture = InvariantCulture;
+      Thread.CurrentThread.CurrentUICulture = InvariantCulture;
+
+      def pump = PumpSynchronizationContext();
+      def guiCtx = pump.RunOnPump(() => SystemExecutionContexts.FromCurrentSynchronizationContext());
+      def poolCtx = SystemExecutionContexts.ThreadPool();
+
+      def log = List.[string]();
+      def threadKind() { if (Thread.CurrentThread.ManagedThreadId == pump.PumpThreadId) "gui" else "not-gui" }
+      def note(what : string) { def w = threadKind(); lock (log) log.Add($"$what: $w") }
+
+      // The WindowsFormsTest\MainForm.n shape: compute off the UI thread, publish on it, loop.
+      def step(n)
+      {
+        comp async
+        {
+          callcomp Async.SwitchTo(poolCtx);
+          note($"compute($n)");
+          def fib(k) { if (k < 2) 1 else fib(k - 2) + fib(k - 1) }
+          def value = fib(n + 10);
+
+          callcomp Async.SwitchTo(guiCtx);
+          note($"publish($n)=$value");
+          when (n < 3)
+            callcomp step(n + 1);
+        }
+      }
+
+      // ...and the AsyncHttp\MainForm.n shape: start the computation ON the gui context, so the
+      // very first continuation has to be marshalled there rather than run inline.
+      def started = step(1).Start(guiCtx);
+      started.WaitOne();
+
+      pump.Shutdown();
+
+      // step(n) computes fib(n + 10) with fib(0) = fib(1) = 1, and recurses while n < 3.
+      def expected = array[
+          "compute(1): not-gui", "publish(1)=144: gui",
+          "compute(2): not-gui", "publish(2)=233: gui",
+          "compute(3): not-gui", "publish(3)=377: gui" ];
+
+      mutable ok = log.Count == expected.Length;
+      foreach (line in log with i)
+        when (i >= expected.Length || line != expected[i])
+          ok = false;
+
+      foreach (line in log)
+        Console.WriteLine(line);
+      Console.WriteLine(if (ok) "SyncCtxSpike OK" else "SyncCtxSpike FAILED");
+      if (ok) 0 else -1
+    }
+  }
+}
