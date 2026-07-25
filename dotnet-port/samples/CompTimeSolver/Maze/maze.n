@@ -26,20 +26,32 @@ macro SolveMaze(inputFile : string){
   | Some((sx, sy)) => 
     q.Add([(sx, sy)]);
     mutable path = null;
+    mutable solved = false;
     def Loop() {
-      when(q.IsEmpty) Message.Error("This maze cannot be solved");
+      // Out of frontier: every reachable cell has been visited and none was the
+      // goal.  Stop here.  Reporting the error and falling through would call
+      // Take() on the empty queue, and the InvalidOperationException that throws
+      // escapes the macro - the build still fails, but with two follow-on errors
+      // about the macro itself on top of the one the maze author cares about.
+      when(q.IsEmpty) return;
       path = q.Take();
       def (x, y) = path.Head;
-      when(maze[y][x] == 'G') return;
+      when(maze[y][x] == 'G') { solved = true; return; }
       when((!v[y][x]) && maze[y][x] != '*') {
         v[y][x] = true;
-        d.Iter(fun(_){ 
+        d.Iter(fun(_){
         | (dx, dy) => q.Add((x + dx, y + dy)::path);
         });
       }
       Loop();
     }
     Loop();
+    when(!solved) {
+      // Same shape as the "S is not found" branch above: report, and hand back a
+      // well-typed expression so the only diagnostic is this one.
+      Message.Error("This maze cannot be solved");
+      return <[ ("" : string) ]>;
+    }
     def result = System.Text.StringBuilder();
     for(mutable y = 0; y < h; y = y + 1) {
       for(mutable x = 0; x < w; x = x + 1) {
