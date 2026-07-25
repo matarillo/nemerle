@@ -1,4 +1,6 @@
-# 53. WP-O5 実装ログ — semantic tokens(マクロ拡張キーワードの動的彩色)
+# 53. WP-O5a 実装ログ — semantic tokens(マクロ拡張キーワードの動的彩色)
+
+WP-O5b(試遊用サンプルと README 導線)は `54-wp-o5b-log.md`。
 
 実施日: 2026-07-25
 
@@ -268,11 +270,11 @@ fixture `samples/SyntaxMacro` を **project として load** し、**利用者�
 - `SyntaxMacro/SyntaxDemo/`: それを **macro-only ProjectReference** で参照し `twice` を使う 1 ファイル。
   `dotnet exec` で `count = 2` を出す(= マクロが実際に展開されている)。
 
-`EnsureFixturesBuilt` に `SyntaxDemo.nproj` が入っている(ProjectReference 経由で macro dll も建つ)。
-CI は `samples/**/*.nproj` を一括 restore し raw LSP スイートを実行するので、この 2 本は CI で
-自動的に回る。fixture は WP-O5b(試遊サンプル、PO 主導)と目的が重なるので、PO が showcase を
-整備する際は差し替え・拡張して構わない(テストが参照しているのは
-`SyntaxDemo/Program.n` の `twice` と `SyntaxMacros/macros.n` の quotation)。
+`EnsureFixturesBuilt` に `SyntaxDemo.nproj` が入っており、raw LSP スイートがこれを建てるので
+CI でも回る(CI の `samples/**/*.nproj` 一括処理は restore であって build ではない —
+`54-wp-o5b-log.md` §3)。この fixture は WP-O5b の showcase と目的が重なるため、差し替え・拡張
+して構わない(テストが参照しているのは `SyntaxDemo/Program.n` の `twice` と
+`SyntaxMacros/macros.n` の quotation)。
 
 ### 観測用 probe(`--macro-sample-probe`)
 

@@ -6,9 +6,11 @@
 `Nemerle.Runtime.Unofficial` 維持)で確定。§8 の論点 1/2/3 はすべて決着(下記)。
 **WP-O5 は PO 指示により実施すると決定(2026-07-25)**: 順序は **(a) semantic tokens を先に入れ、
 (b) その後に試遊用サンプルを入れる**。(b) は **PO 自身が色々試しながら随時取り込む**ため、
-本計画の作業対象は (a) に限る。**(a) は完了(2026-07-25、ログ `53-wp-o5-log.md`)**、(b) は PO 主導で
-継続。`00-PLAN.md` の WP 表・作業ログへは
-O1/O2/O3/O4/O5 の合意時に反映済み。
+本計画の作業対象は (a) に限る。**(a) は完了(2026-07-25、ログ `53-wp-o5-log.md`)**。
+**(b) は受け入れ基準を構造として充足(2026-07-26、ログ `54-wp-o5b-log.md`)** —
+サンプル集合の確定ではなく、README 導線と CI ゲートにより「以後の追加でも基準が維持される」
+状態にしたという意味であり、サンプルの取り込み自体は PO 主導で継続する。
+`00-PLAN.md` の WP 表・作業ログへは反映済み。
 
 WP-O1 には PO 指示によるスコープ追加が 1 点ある: `dotnet-port/` 直下に置かれていた
 計画・作業ログ文書(`00-PLAN.md`・番号付き `NN-*.md`)を `dotnet-port/docs/` へ移設する
@@ -269,6 +271,12 @@ TextMate では原理的に不可能なため、価値は明確」= WP-M 完了�
 可逆性: 高。リスク: 低〜中。位置づけ上の必須ではなく、間口の質を上げる項目。
 規模が「小さく閉じた」範囲を超えると判断したら、そこで止めてバックログへ回す。
 
+**状況(2026-07-26、`54-wp-o5b-log.md`)**: 受け入れ基準を構造として充足。`samples/README.md` を
+ルート `README.md` から辿れるようにし、`build-samples.ps1` を CI に組み込んで README が載せる
+サンプルのビルド(および `CompTimeSolver/Fail` の失敗)を保証した。同スクリプトが `samples/`
+配下の全 `.nproj` の分類を強制するため、**以後サンプルを足しても基準は維持される**。
+成果物を固定しないという方針は変えていない。
+
 ---
 
 ## 6. 実装順序
@@ -292,7 +300,7 @@ TextMate では原理的に不可能なため、価値は明確」= WP-M 完了�
 | runtime package 消費 | `GenerateDependencyFile` 既定で deps.json 正常・build/run(WP-O3) |
 | 器入手 e2e(go の器のみ) | 別環境で install → build/run、版・provenance 一致(WP-O4) |
 | semantic tokens | ✓ マクロ拡張キーワードが別 type、既存の色が非回帰、raw LSP + 実 VS Code で固定(WP-O5a) |
-| 試遊 showcase | core build・run/表示、README から辿れる(WP-O5b、PO 主導) |
+| 試遊 showcase | ✓ core build・run/表示、README から辿れる。`build-samples.ps1` が CI で保証(WP-O5b) |
 | 既存回帰ゲート | testsuite 全数 / stage2·3 一致 / CLR4 スモーク / raw LSP / bundled server / CI(共有ソース改修時のみ) |
 
 注: WP-O1/O2/O4 は主に文書・判断・スクリプトで、共有ソース(ncc / engine)を触らない見込み
