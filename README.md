@@ -18,9 +18,10 @@ What the port gives you:
   MSBuild compile task with structured diagnostics, `ProjectReference` / `PackageReference`,
   Portable PDB debugging, incremental build and `dotnet clean`.
 - **A VS Code extension with a language server**: project-aware diagnostics, hover, completion,
-  go-to-definition / find-references, incremental analysis. The analysis engine *is* the
-  Nemerle compiler, so the editor understands syntax and keywords that macros add
-  dynamically — something Roslyn-based tooling cannot offer for a macro language.
+  go-to-definition / find-references, incremental analysis, and semantic highlighting. The
+  analysis engine *is* the Nemerle compiler, so the editor understands syntax and keywords that
+  macros add dynamically — a keyword introduced by a syntax macro is even colored differently
+  from a built-in one, which Roslyn-based tooling cannot offer for a macro language.
 - **Windows and Linux.** The packages are pure managed IL; the same set is verified on both
   (Windows 11 in daily use, Ubuntu on clean VMs and CI).
 

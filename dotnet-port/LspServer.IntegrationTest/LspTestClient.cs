@@ -13,6 +13,20 @@ internal sealed class LspTestClient : IAsyncDisposable
 {
     private static readonly TimeSpan MessageTimeout = TimeSpan.FromSeconds(120);
 
+    /// <summary>
+    /// The semantic token vocabulary this client understands (WP-O5a): the
+    /// standard LSP types the server's legend draws from, plus the two
+    /// Nemerle-specific modifiers.  A real client (VS Code) declares the custom
+    /// modifiers through the extension manifest.
+    /// </summary>
+    public static readonly string[] SemanticTokenLegendTypes =
+    [
+        "keyword", "macro", "comment", "string", "number", "operator", "variable",
+        "type", "class", "interface", "enum", "struct", "property", "method", "event",
+    ];
+
+    public static readonly string[] SemanticTokenLegendModifiers = ["quotation", "escape"];
+
     private readonly Process _process;
     private readonly Task<string> _stderrTask;
     private readonly List<JsonElement> _history = [];
@@ -71,6 +85,26 @@ internal sealed class LspTestClient : IAsyncDisposable
                     // (WP-M4).
                     definition = new { linkSupport = false },
                     references = new { },
+                    // Advertise semantic tokens so that handler registers
+                    // (WP-O5a).  The legend advertised here is the client's
+                    // vocabulary; the server answers with its own legend in the
+                    // initialize result, which the scenario asserts.
+                    semanticTokens = new
+                    {
+                        requests = new { range = false, full = new { delta = false } },
+                        tokenTypes = SemanticTokenLegendTypes,
+                        tokenModifiers = SemanticTokenLegendModifiers,
+                        formats = new[] { "relative" },
+                        overlappingTokenSupport = false,
+                        multilineTokenSupport = false,
+                    },
+                },
+                workspace = new
+                {
+                    // Lets the server ask for a re-query once the types tree is
+                    // built, which is when macro-introduced keywords become
+                    // knowable (WP-O5a).
+                    semanticTokens = new { refreshSupport = true },
                 },
             },
             clientInfo = new { name = "nemerle-lsp-integration-test", version = "2.0" },
@@ -165,6 +199,41 @@ internal sealed class LspTestClient : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Reads (and, for server-to-client requests, answers) every message that
+    /// arrives within <paramref name="duration"/> without asserting anything.
+    /// Needed because the history only advances while someone reads: a scenario
+    /// that just sleeps would never see what the server sent it.
+    /// </summary>
+    public async Task DrainAsync(TimeSpan duration)
+    {
+        using var cancellation = new CancellationTokenSource(duration);
+        while (true)
+        {
+            try
+            {
+                _ = await ReadMessageAsync(cancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>Counts the messages received since <paramref name="fromMark"/> that match.</summary>
+    public int CountMessages(Func<JsonElement, bool> predicate, int fromMark)
+    {
+        var count = 0;
+        for (var index = fromMark; index < _history.Count; index++)
+        {
+            if (predicate(_history[index]))
+                count++;
+        }
+
+        return count;
+    }
+
     public async Task ShutdownAsync()
     {
         _ = await RequestAsync("shutdown", null).ConfigureAwait(false);
@@ -225,8 +294,18 @@ internal sealed class LspTestClient : IAsyncDisposable
         using var document = JsonDocument.Parse(body);
         var element = document.RootElement.Clone();
         _history.Add(element);
+        // Server-to-client requests must be answered, or the server is left with a
+        // pending response.  The only one this server sends is the semantic tokens
+        // refresh (WP-O5a), whose result is null.
+        if (IsSemanticTokensRefresh(element) && element.TryGetProperty("id", out var refreshId))
+            await SendAsync(new { jsonrpc = "2.0", id = refreshId, result = (object?)null }).ConfigureAwait(false);
         return element;
     }
+
+    /// <summary>True for the server's <c>workspace/semanticTokens/refresh</c> request.</summary>
+    public static bool IsSemanticTokensRefresh(JsonElement message) =>
+        message.TryGetProperty("method", out var method) &&
+        method.GetString() == "workspace/semanticTokens/refresh";
 
     public static bool HasId(JsonElement message, int id) =>
         message.TryGetProperty("id", out var value) &&

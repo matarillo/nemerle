@@ -3,9 +3,12 @@
 **状態: WP-O1 / WP-O2 / WP-O3 / WP-O4 は PO 指示により実施・完了(2026-07-23。ログ:
 `48-preservation-wp-o1-log.md` / `49-preservation-wp-o2-log.md` / `50-wp-o3-log.md` /
 `51-wp-o4-log.md`)。WP-O4 は nuget.org / Marketplace とも no-go(GitHub Release 維持、単一
-`Nemerle.Runtime.Unofficial` 維持)で確定。§8 の論点 1/2 は決着(下記)。WP-O5 は未合意のドラフトの
-まま**(任意項目、着手は PO 判断待ち)。`00-PLAN.md` の WP 表・作業ログへは O1/O2/O3/O4 の合意時に
-反映済み。
+`Nemerle.Runtime.Unofficial` 維持)で確定。§8 の論点 1/2/3 はすべて決着(下記)。
+**WP-O5 は PO 指示により実施すると決定(2026-07-25)**: 順序は **(a) semantic tokens を先に入れ、
+(b) その後に試遊用サンプルを入れる**。(b) は **PO 自身が色々試しながら随時取り込む**ため、
+本計画の作業対象は (a) に限る。**(a) は完了(2026-07-25、ログ `53-wp-o5-log.md`)**、(b) は PO 主導で
+継続。`00-PLAN.md` の WP 表・作業ログへは
+O1/O2/O3/O4/O5 の合意時に反映済み。
 
 WP-O1 には PO 指示によるスコープ追加が 1 点ある: `dotnet-port/` 直下に置かれていた
 計画・作業ログ文書(`00-PLAN.md`・番号付き `NN-*.md`)を `dotnet-port/docs/` へ移設する
@@ -213,19 +216,58 @@ Marketplace は publisher identity という一方通行のコミットを伴い
 
 可逆性: 公開部分は **低(一方通行)** のため go/no-go を器ごとに。リスク: 中(identity/命名の恒久性)。
 
-### WP-O5(任意): 試遊を心地よくする小さな showcase
+### WP-O5: 試遊を心地よくする小さな showcase — 実施決定(2026-07-25、PO 指示)
 
 「少し試せる間口」を魅力的にするための、**小さく閉じた**要素。生態系の大規模移植は行わない。
+PO 指示により **2 段構成**とし、順序を固定する。
 
-成果物候補(いずれか。小規模に限定):
+#### WP-O5a: semantic tokens(先行、本計画の作業対象)— 完了(2026-07-25、ログ 53)
 
-- マクロが「効いている」ことが一目で分かる小さな sample の追加・整理(既存 samples の延長)。
-- (任意)semantic tokens: マクロ拡張キーワードの動的彩色。差別化を直接可視化する小機能。
+マクロ拡張キーワードの動的彩色。**差別化(マクロ対応エディター)を直接可視化する小機能**で、
+TextMate 文法では原理的に出せない色(`using` で開いた名前空間の syntax マクロが増やした
+キーワード)をエディターに出す。
 
-受け入れ基準(案): 追加要素が core でビルド・実行/表示でき、README から辿れる。
-規模が「小さく閉じた」範囲を超えると判断したら、着手せずバックログへ回す。
+位置づけの再確認: 本項目は既存バックログの筆頭項目であり、根拠も既に記録済み —
+`29-devenv2-plan.md` §11-1(「`ScanLexer` ベース。macro が拡張する keyword の動的彩色が
+TextMate では原理的に不可能なため、価値は明確」= WP-M 完了後の優先順位 1 位)、
+`36-prerelease-quality-plan.md` §2.2 の課題 **E1** の一部 / 同 §10-2。したがって本 WP は
+新規発明ではなく、E1 のうち **semantic tokens だけ**を切り出して実施するもの。E1 の残り
+(signatureHelp / documentHighlight / formatting / rename / codeAction)は §9 の非ゴールに留める。
 
-可逆性: 高。リスク: 低〜中。位置づけ上の必須ではなく、間口の質を上げる任意項目。
+成果物(実装済み。詳細は `53-wp-o5-log.md`):
+
+- LSP `textDocument/semanticTokens/full`: engine の `ScanLexer`(`ScanTokenColor`)を全文に走らせ、
+  LSP semantic token の type / modifier に写す。**マクロ由来キーワードは
+  `env.Keywords \ CoreEnv.Keywords` で判定**して `macro` type で返す。
+- 色分類は engine 非依存の純関数 + unit test(`ProjectInfo/SemanticTokenMapping.cs`。
+  `HoverMarkup` / `CompletionMapping` / `GotoMapping` の前例に従う)。engine 色 enum の mirror
+  ズレは server 起動時に警告する。
+- legend は **標準 LSP token type のみ**で足りた(既定テーマがそのまま色を持つ)ので、拡張側の
+  宣言は Nemerle 固有の **modifier 2 個(`quotation` / `escape`)** と `semanticTokenScopes` の
+  テーマ fallback、`[nemerle]` での semantic highlighting 有効化のみ。TextMate 文法は fallback
+  として維持(engine が分類しない範囲を色付ける)。
+- 追加で必要になったもの: **`workspace/semanticTokens/refresh`**。行のキーワード集合は types tree
+  由来なので、`didOpen` 直後の初回要求が build と競争して負けるとマクロキーワードが色付かないまま
+  固定される。rebuild 完了時に再要求を促して解決した。
+- raw LSP 統合シナリオ + 実 VS Code(Extension Host)シナリオで legend とマクロキーワードの type を固定。
+
+受け入れ基準の結果:
+
+1. ✓ マクロで増えたキーワードが `macro`、素のキーワードは `keyword` で返る。`using` を消すと
+   同じ語が `variable`(識別子)に戻ることをテストで固定 = 動的であることの証拠。
+2. ✓ 文字列(`$` splice を `escape` modifier で分離)・コメント・型・quotation(基底 type +
+   `quotation` modifier)が色付き、複数行構文は `ScanState` の持ち回しで行単位トークンに分割される。
+3. ✓ 共有ソース無改造 = Stage リビルド不要(`1.2.0.635` のまま)。回帰ゲートすべて green
+   (raw LSP 30 / 実 VS Code 5+1 / 拡張 unit 23 / ProjectInfo unit+integration)。
+
+#### WP-O5b: 試遊用サンプル(後続、PO 主導)
+
+マクロが「効いている」ことが一目で分かる小さな sample の追加・整理(既存 samples の延長)。
+**PO 自身が色々試しながら随時取り込む**ため、本計画では成果物を先に固定しない。
+受け入れ基準は従来どおり「core でビルド・実行でき、README から辿れる」。
+
+可逆性: 高。リスク: 低〜中。位置づけ上の必須ではなく、間口の質を上げる項目。
+規模が「小さく閉じた」範囲を超えると判断したら、そこで止めてバックログへ回す。
 
 ---
 
@@ -236,7 +278,8 @@ Marketplace は publisher identity という一方通行のコミットを伴い
    依存せず価値が出る。
 3. **WP-O4(器の判断)** — 保存中心の位置づけに照らして採否を決める。go の器があれば
    下流の具体値を固定してから publish。
-4. **WP-O5(任意 showcase)** — 余力があれば間口の質を上げる。
+4. **WP-O5(showcase)** — 間口の質を上げる。**O5a(semantic tokens)を先に実装し、その後に
+   O5b(試遊サンプル、PO 主導)**。
 
 ---
 
@@ -248,7 +291,8 @@ Marketplace は publisher identity という一方通行のコミットを伴い
 | 保存・再現 | 公開 asset + seed だけからリリース再現、初回発行物と一致(WP-O2) |
 | runtime package 消費 | `GenerateDependencyFile` 既定で deps.json 正常・build/run(WP-O3) |
 | 器入手 e2e(go の器のみ) | 別環境で install → build/run、版・provenance 一致(WP-O4) |
-| 試遊 showcase(任意) | core build・run/表示、README から辿れる(WP-O5) |
+| semantic tokens | ✓ マクロ拡張キーワードが別 type、既存の色が非回帰、raw LSP + 実 VS Code で固定(WP-O5a) |
+| 試遊 showcase | core build・run/表示、README から辿れる(WP-O5b、PO 主導) |
 | 既存回帰ゲート | testsuite 全数 / stage2·3 一致 / CLR4 スモーク / raw LSP / bundled server / CI(共有ソース改修時のみ) |
 
 注: WP-O1/O2/O4 は主に文書・判断・スクリプトで、共有ソース(ncc / engine)を触らない見込み
@@ -265,7 +309,9 @@ Marketplace は publisher identity という一方通行のコミットを伴い
 2. ~~**パッケージ命名・版方針**: `*.Unofficial` + 1.2.x 継続でよいか(器を開ける場合)~~ →
    **決着(同上)**: 公開しないため恒久命名の確定は不要。runtime package は単一
    `Nemerle.Runtime.Unofficial` を維持(利用者不可視・機能的実害なし・GitHub Release では ID 可逆)。
-3. **試遊 showcase(WP-O5)** と **semantic tokens** を入れるか(任意、未決)。
+3. ~~**試遊 showcase(WP-O5)** と **semantic tokens** を入れるか~~ → **決着(2026-07-25、PO 指示)**:
+   **両方入れる**。順序は semantic tokens(O5a)先行 → 試遊サンプル(O5b)。O5b は PO 自身が
+   試しながら随時取り込むため、実装 WP としては O5a のみを扱う(§5 WP-O5)。
 
 ---
 
@@ -273,8 +319,8 @@ Marketplace は publisher identity という一方通行のコミットを伴い
 
 WP-O の非ゴール:
 
-- 本格採用を狙うエディター機能(rename / codeAction / formatting / signatureHelp、E1/E2)。
-  semantic tokens のみ、間口の質を上げる小機能として WP-O5 の任意要素で扱う。
+- 本格採用を狙うエディター機能(rename / codeAction / formatting / signatureHelp、E1 の残り / E2)。
+  **semantic tokens のみ E1 から切り出して WP-O5a で実施**(間口の質と差別化の可視化のため)。
 - マクロ生態系の移植(Peg 125 files / Statechart 342 files / csharp-parser 150 files 等)。
   本格採用を狙う場合の要件であり本計画のスコープ外。着手する場合は評価先行(36 §5-3)の独立スコープ。
 - nemish REPL 等 tools 移植、`[Resource]` マクロ core 対応(B2)。
@@ -295,5 +341,8 @@ WP-O の非ゴール:
 - `36-prerelease-quality-plan.md`: WP-N 計画。§2.2 の課題 ID(D1/F1/F2/F3 等)と §10 バックログ。
 - `DISTRIBUTION.md` / `packaging/README.md`: 配布・再現の現状(WP-O1/O2/O4 の出発点)。
 - `46-prerelease-wp-n6-log.md`: CI / release workflow / 版ピン / in-tree seed の現況。
-- `21-lsp-feasibility.md`: エディター差別化(マクロ対応)の根拠。
+- `21-lsp-feasibility.md`: エディター差別化(マクロ対応)の根拠。engine API 対応表の
+  `ScanLexer` / `ScanTokenColor` → `semanticTokens` 行が WP-O5a の出発点。
+- `29-devenv2-plan.md`: WP-M 計画。**§11-1 が semantic tokens をバックログ筆頭に置いた根拠**
+  (WP-O5a はこれを実施する)。§6.2/§6.3 の bridge / handler 設計は O5a でも踏襲。
 - `README.md`(ルート): 現行の入口(upstream のまま、WP-O1 の改修対象)。

@@ -112,14 +112,27 @@ reflect unsaved editor buffers. Definitions on a BCL/NuGet member return no
 location (generated-source display is not provided). References honor
 `includeDeclaration`.
 
+**Semantic highlighting** (`textDocument/semanticTokens/full`) is available and
+enabled for Nemerle files: the compiler's own colorizer classifies the document,
+so coloring follows what the compiler actually sees rather than a static grammar.
+Most visibly, **a keyword that a syntax macro added to the file** — `surroundwith`
+after `using Nemerle.Surround;`, or any keyword your own macros define — is
+reported as a `macro` token and colored differently from a core keyword; remove
+the `using` and the same word goes back to being an identifier. Quasi-quotations
+(`<[ ... ]>`) carry a `quotation` modifier and string escapes/`$`-splices an
+`escape` modifier, both declared by this extension with a theme fallback. Spans
+the compiler has nothing to say about keep their TextMate grammar coloring, and
+the server asks the editor to re-query once a project rebuild finishes (macro
+keywords are only knowable after the macros are loaded). Turn it off per-language
+with `"[nemerle]": { "editor.semanticHighlighting.enabled": false }`.
+
 **Incremental rebuild** is enabled by default: editing inside a method body
 re-types just that method (a relocation) instead of reloading the whole project,
 so diagnostics update faster while typing. Edits that change a source's structure
 (adding/removing a member, a `using`, or a type) automatically fall back to a
 full types-tree rebuild. To restore the previous behavior (a full reload on
 every change) set the `NEMERLE_INCREMENTAL_UPDATE` environment variable to `0`
-for the server process. Semantic tokens and signature help are the next work
-packages.
+for the server process. Signature help is the next work package.
 
 ## Troubleshooting
 

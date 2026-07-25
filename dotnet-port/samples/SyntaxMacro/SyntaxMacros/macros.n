@@ -1,0 +1,18 @@
+using Nemerle.Compiler;
+using Nemerle.Compiler.Parsetree;
+
+namespace SyntaxMacro
+{
+  /// <summary>
+  /// A syntax macro: it does not merely add a callable name, it adds the keyword
+  /// `twice` to the grammar of every file that opens this namespace.  That is the
+  /// case the editor support exists for - no static grammar can know this word,
+  /// because it does not exist until the compiler loaded this assembly and the
+  /// consuming file wrote `using SyntaxMacro;`.
+  /// </summary>
+  macro Twice(body : PExpr)
+  syntax ("twice", body)
+  {
+    <[ { $body; $body } ]>
+  }
+}

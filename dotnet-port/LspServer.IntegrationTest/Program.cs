@@ -63,6 +63,21 @@ internal static class Program
             await RunScenarioAsync("Definition: external (BCL/NuGet) member is an empty result", DefinitionExternalEmptyAsync);
             await RunScenarioAsync("Definition: CRLF + non-BMP position", DefinitionCrlfNonBmpAsync);
             await RunScenarioAsync("References: cross-source usages and includeDeclaration toggle", ReferencesAsync);
+            await RunScenarioAsync(
+                "Semantic tokens: macro-introduced keyword, quotation/escape modifiers, dynamic on using removal",
+                SemanticTokensAsync);
+            await RunScenarioAsync(
+                "Semantic tokens: a keyword from the project's own macro library (macro-only reference)",
+                SemanticTokensUserMacroKeywordAsync);
+            await RunScenarioAsync(
+                "Semantic tokens: a macro library on its own (quotation bodies, compiler API types)",
+                SemanticTokensMacroLibraryAsync);
+            await RunScenarioAsync(
+                "Semantic tokens: the very first request (before any analysis) still answers with tokens",
+                SemanticTokensBeforeTheEngineIsReadyAsync);
+            await RunScenarioAsync(
+                "Semantic tokens: a silent client is nudged until it asks once, then left alone",
+                SemanticTokensStartupRefreshRetryAsync);
             await RunScenarioAsync("Incremental: method-body relocation avoids full rebuild; stale/hover/definition hold",
                 IncrementalRelocationAsync);
             await RunScenarioAsync("Incremental: structural edit falls back to a full types-tree rebuild",
@@ -1762,6 +1777,391 @@ internal static class Program
                 $"includeDeclaration=false should drop exactly the declaration (with={withDecl.Length}, without={withoutDecl.Length}).");
     }
 
+    // ----- Semantic tokens (WP-O5a) -----
+
+    // Colorization is lexical (the engine's ScanLexer), so this fixture does not
+    // need to type-check: what matters is that the `using` puts Nemerle.Surround's
+    // syntax macro into the line's GlobalEnv, which is what turns `surroundwith`
+    // into a keyword the TextMate grammar could never know about.
+    private const string SemanticTokensProbeSource = """
+        using Nemerle.Surround;
+
+        module SemanticTokensProbe
+        {
+          // a line comment
+          Run() : void
+          {
+            def value = 21;
+            def text = $"value = $value";
+            def quoted = <[ 1 + 2 ]>;
+            surroundwith (probe)
+              System.Console.WriteLine(text);
+            _ = quoted;
+          }
+        }
+        """;
+
+    private static async Task SemanticTokensAsync(LspTestClient client)
+    {
+        var (legendTypes, legendModifiers) = ServerSemanticTokensLegend(client);
+        // The legend is the server's contract with the client; pin its head and
+        // the two Nemerle-specific modifiers (the extension manifest declares the
+        // same names).
+        if (legendTypes.Length < 2 || legendTypes[0] != "keyword" || legendTypes[1] != "macro")
+            throw new InvalidDataException(
+                "semantic tokens legend did not start with keyword/macro: " + string.Join(",", legendTypes));
+        if (!legendModifiers.SequenceEqual(["quotation", "escape"]))
+            throw new InvalidDataException(
+                "semantic tokens legend modifiers changed: " + string.Join(",", legendModifiers));
+
+        var uri = new Uri(Path.Combine(CreateTempDirectory("semantic-tokens"), "tokens.n")).AbsoluteUri;
+        var openMark = client.Mark();
+        await OpenAndAwaitAnalysisAsync(client, uri, SemanticTokensProbeSource);
+        // A line's keyword set comes from its GlobalEnv, which exists only after
+        // the types tree was built - so the server asks the client to re-query
+        // then.  Waiting for that request is both how a real client behaves and
+        // what makes this scenario deterministic instead of racing the build.
+        _ = await client.WaitForAsync(
+            LspTestClient.IsSemanticTokensRefresh,
+            openMark,
+            "the server's semantic tokens refresh request after the first types-tree build");
+        var tokens = await RequestSemanticTokensAsync(client, uri);
+        if (tokens.Length == 0)
+            throw new InvalidDataException("semanticTokens/full returned no tokens.");
+
+        // Plain keywords, literals and comments keep their obvious classification.
+        AssertToken(tokens, SemanticTokensProbeSource, "using", 1, "keyword", [], "the using keyword");
+        AssertToken(tokens, SemanticTokensProbeSource, "module", 1, "keyword", [], "the module keyword");
+        AssertToken(tokens, SemanticTokensProbeSource, "def", 1, "keyword", [], "the def keyword");
+        AssertToken(tokens, SemanticTokensProbeSource, "21", 1, "number", [], "an integer literal");
+        AssertToken(
+            tokens, SemanticTokensProbeSource, "// a line comment", 1, "comment", [], "a line comment");
+
+        // The differentiator: `surroundwith` is a keyword only because the using
+        // opened a namespace whose syntax macro defines it.
+        AssertToken(
+            tokens, SemanticTokensProbeSource, "surroundwith", 1, "macro", [],
+            "a keyword introduced by a syntax macro");
+
+        // Quasi-quotation: the delimiters and everything inside carry the
+        // quotation modifier, which is how a client can shade the quoted region.
+        AssertToken(
+            tokens, SemanticTokensProbeSource, "<[", 1, "operator", ["quotation"], "the <[ delimiter");
+        AssertToken(
+            tokens, SemanticTokensProbeSource, "1 + 2", 1, "number", ["quotation"],
+            "a literal inside a quotation");
+
+        // A string literal is one plain run plus an escape/splice run for `$value`.
+        var (stringLine, _) = LocateUtf16(SemanticTokensProbeSource, "$\"value = $value\"", 1);
+        if (!tokens.Any(t => t.Line == stringLine && t.Type == "string" && t.Modifiers.Length == 0))
+            throw new InvalidDataException($"no plain string token on line {stringLine + 1}.");
+        if (!tokens.Any(t => t.Line == stringLine && t.Type == "string" && t.Modifiers.Contains("escape")))
+            throw new InvalidDataException(
+                $"the $-splice inside the string literal on line {stringLine + 1} was not marked as an escape run.");
+
+        // Dynamic, not a hardcoded word list: drop the using and the very same
+        // word is just an identifier again.
+        var withoutUsing = SemanticTokensProbeSource.Replace(
+            "using Nemerle.Surround;", "// no macro import", StringComparison.Ordinal);
+        var mark = client.Mark();
+        await DidChangeAsync(client, uri, withoutUsing, 2);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2,
+            mark,
+            "analysis of the probe without the macro import");
+        _ = await client.WaitForAsync(
+            LspTestClient.IsSemanticTokensRefresh, mark, "the refresh request for the rebuilt buffer");
+        var afterTokens = await RequestSemanticTokensAsync(client, uri);
+        AssertToken(
+            afterTokens, withoutUsing, "surroundwith", 1, "variable", [],
+            "the same word with the macro import removed");
+        AssertToken(afterTokens, withoutUsing, "def", 1, "keyword", [], "a core keyword is unaffected");
+
+        // A real, large, macro-using source (654 lines) as a loose file: the whole
+        // document is colorized per request, so record what that costs and that it
+        // survives a file the compiler cannot fully resolve.
+        var sokoban = Sample("Sokoban", "Sokoban", "sokoban.n");
+        var sokobanUri = new Uri(sokoban).AbsoluteUri;
+        var sokobanMark = client.Mark();
+        await OpenAndAwaitAnalysisAsync(client, sokobanUri, await File.ReadAllTextAsync(sokoban));
+        _ = await client.WaitForAsync(
+            LspTestClient.IsSemanticTokensRefresh, sokobanMark, "the refresh request after opening sokoban.n");
+        _ = await RequestSemanticTokensAsync(client, sokobanUri);
+        var stopwatch = Stopwatch.StartNew();
+        var sokobanTokens = await RequestSemanticTokensAsync(client, sokobanUri);
+        stopwatch.Stop();
+        Console.WriteLine(
+            $"    warm semanticTokens/full round-trip on sokoban.n (654 lines): " +
+            $"{stopwatch.Elapsed.TotalMilliseconds:F0} ms, {sokobanTokens.Length} tokens");
+        if (sokobanTokens.Length == 0)
+            throw new InvalidDataException("semanticTokens/full returned no tokens for sokoban.n.");
+    }
+
+    /// <summary>
+    /// A client that never asks for tokens must be nudged more than once: on a
+    /// window reload the editor restores its documents while the server is still
+    /// starting, and the refresh that follows the startup build can arrive before
+    /// the client attached the document, where it is dropped rather than queued
+    /// (observed on WSL: the first paint kept grammar coloring until the file was
+    /// edited or the color theme switched).  This pins the retry: stay silent and
+    /// count the refreshes, then ask once and require that the retries stop.
+    /// </summary>
+    private static async Task SemanticTokensStartupRefreshRetryAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("semantic-tokens-refresh"), "quiet.n")).AbsoluteUri;
+
+        // A real client asks as soon as it registers the provider, which at
+        // startup is before the document reached the workspace and before the
+        // compiler initialized.  That answer is necessarily empty, and it must not
+        // be mistaken for "the client is served" - doing so silently disabled the
+        // nudging and left the first paint uncolored (WSL, 53-wp-o5-log.md).
+        var early = await RequestSemanticTokensAsync(client, uri);
+        if (early.Length != 0)
+            throw new InvalidDataException(
+                $"a request for a document that is not open returned {early.Length} tokens.");
+
+        var mark = client.Mark();
+        await OpenAndAwaitAnalysisAsync(client, uri, SemanticTokensProbeSource);
+
+        // Retry schedule is 1s/3s/8s after the build, so ~5 s of silence must
+        // produce the initial refresh plus at least the first two retries.
+        await client.DrainAsync(TimeSpan.FromSeconds(5));
+        var refreshesWhileSilent = client.CountMessages(LspTestClient.IsSemanticTokensRefresh, mark);
+        Console.WriteLine($"    refresh requests while the client stayed silent: {refreshesWhileSilent}");
+        if (refreshesWhileSilent < 2)
+            throw new InvalidDataException(
+                $"the server nudged a silent client only {refreshesWhileSilent} time(s); the startup retry is not working.");
+
+        // One request is enough to prove the client is attached: no more nudging
+        // (a client that keeps being told to re-query would re-render forever).
+        var tokens = await RequestSemanticTokensAsync(client, uri);
+        if (tokens.Length == 0)
+            throw new InvalidDataException("semanticTokens/full returned no tokens for the retry probe.");
+
+        await client.AssertQuietAsync(
+            LspTestClient.IsSemanticTokensRefresh,
+            client.Mark(),
+            TimeSpan.FromSeconds(6),
+            "semantic tokens refresh after the client asked once");
+    }
+
+    /// <summary>
+    /// The same feature, but with a keyword defined by a USER macro instead of one
+    /// that ships inside Nemerle.dll.  This is the path the differentiator actually
+    /// claims ("any keyword your own macros define") and it runs through different
+    /// plumbing: the keyword only exists because the engine loaded
+    /// samples/SyntaxMacro/SyntaxMacros.dll as a macro-only reference of the
+    /// consuming project (NemerleMacroReference -> GetMacroAssemblyReferences ->
+    /// LoadPluginsFrom), and the file opened that namespace.
+    /// </summary>
+    private static async Task SemanticTokensUserMacroKeywordAsync(LspTestClient client)
+    {
+        var project = Sample("SyntaxMacro", "SyntaxDemo", "SyntaxDemo.nproj");
+        AssertLoadedAndApplied(await LoadProjectAsync(client, project), expectedSources: 1);
+
+        var source = Sample("SyntaxMacro", "SyntaxDemo", "Program.n");
+        var uri = new Uri(source).AbsoluteUri;
+        var text = await File.ReadAllTextAsync(source);
+        await OpenAndAwaitAnalysisAsync(client, uri, text);
+
+        var tokens = await RequestSemanticTokensAsync(client, uri);
+        AssertToken(
+            tokens, text, "twice", 1, "macro", [],
+            "a keyword defined by a macro library of this project");
+        AssertToken(tokens, text, "mutable", 1, "keyword", [], "a core keyword in the same file");
+        AssertToken(tokens, text, "module", 1, "keyword", [], "another core keyword");
+
+        // Same proof of dynamism as the stdlib scenario, one level further out: the
+        // keyword disappears with the using, even though the macro reference stays.
+        var withoutUsing = text.Replace("using SyntaxMacro;", "// no macro import", StringComparison.Ordinal);
+        var mark = client.Mark();
+        await DidChangeAsync(client, uri, withoutUsing, 2);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2,
+            mark,
+            "analysis of the demo without the macro import");
+        var afterTokens = await RequestSemanticTokensAsync(client, uri);
+        AssertToken(
+            afterTokens, withoutUsing, "twice", 1, "variable", [],
+            "the same word once the macro namespace is not opened");
+
+        // Leave the fixture's source as it is on disk for the next scenarios.
+        await DidChangeAsync(client, uri, text, 3);
+        await DidCloseAsync(client, uri);
+    }
+
+    /// <summary>
+    /// The macro library on its own: a project whose only source is macro
+    /// definitions.  It is written against the compiler's own API and is mostly
+    /// quasi-quotation, so it exercises what no other fixture does - the
+    /// <c>quotation</c> modifier over a real <c>&lt;[ ... ]&gt;</c> body, and user
+    /// types resolved from Nemerle.Compiler.dll.
+    /// </summary>
+    private static async Task SemanticTokensMacroLibraryAsync(LspTestClient client)
+    {
+        var project = Sample("SyntaxMacro", "SyntaxMacros", "SyntaxMacros.nproj");
+        AssertLoadedAndApplied(await LoadProjectAsync(client, project), expectedSources: 1);
+
+        var source = Sample("SyntaxMacro", "SyntaxMacros", "macros.n");
+        var uri = new Uri(source).AbsoluteUri;
+        var text = await File.ReadAllTextAsync(source);
+        await OpenAndAwaitAnalysisAsync(client, uri, text);
+
+        var tokens = await RequestSemanticTokensAsync(client, uri);
+        if (tokens.Length == 0)
+            throw new InvalidDataException("a macro definition file produced no semantic tokens.");
+
+        // Needles that also occur in the file's prose comments would match there
+        // first, so anchor on the declaration itself.
+        AssertToken(tokens, text, "macro Twice", 1, "keyword", [], "the macro declaration keyword");
+        AssertToken(tokens, text, "<[", 1, "operator", ["quotation"], "the quotation delimiter");
+
+        // Everything between <[ and ]> is inside the quotation, including the
+        // splices; nothing outside it may carry the modifier.
+        var (quotationLine, _) = LocateUtf16(text, "<[", 1);
+        var inQuotation = tokens
+            .Where(t => t.Line == quotationLine && t.Modifiers.Contains("quotation"))
+            .ToArray();
+        if (inQuotation.Length < 3)
+            throw new InvalidDataException(
+                $"expected the quotation body to be marked, but line {quotationLine + 1} has only " +
+                $"{inQuotation.Length} quotation token(s).");
+        var (usingLine, _) = LocateUtf16(text, "using", 1);
+        if (tokens.Any(t => t.Line == usingLine && t.Modifiers.Contains("quotation")))
+            throw new InvalidDataException("a token outside any quotation carries the quotation modifier.");
+
+        // A type from the referenced compiler assembly: resolving it needs the
+        // types tree, so this also pins that user types are classified at all.
+        var pexpr = tokens.FirstOrDefault(t =>
+        {
+            var (line, character) = LocateUtf16(text, "PExpr)", 1);
+            return t.Line == line && t.Character == character;
+        });
+        Console.WriteLine($"    the PExpr parameter type classified as: {pexpr?.Type ?? "(no token)"}");
+        if (pexpr is null || pexpr.Type is not ("class" or "type" or "struct" or "interface" or "enum"))
+            throw new InvalidDataException(
+                $"the PExpr parameter type was classified as '{pexpr?.Type ?? "(none)"}' instead of a type.");
+
+        await DidCloseAsync(client, uri);
+    }
+
+    /// <summary>
+    /// The first paint after a window reload depends on a single request: the
+    /// client asks as soon as it registers the provider - before the compiler
+    /// initialized - and caches the answer.  Measured on WSL, an empty answer is
+    /// never re-queried (not even on workspace/semanticTokens/refresh), so that
+    /// one request must be answered with real tokens.  This pins it: open a
+    /// document and ask immediately, without waiting for any analysis.
+    /// </summary>
+    private static async Task SemanticTokensBeforeTheEngineIsReadyAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("semantic-tokens-cold"), "cold.n")).AbsoluteUri;
+        await DidOpenAsync(client, uri, SemanticTokensProbeSource, 1);
+
+        var stopwatch = Stopwatch.StartNew();
+        var tokens = await RequestSemanticTokensAsync(client, uri);
+        Console.WriteLine(
+            $"    cold semanticTokens/full (asked before any analysis): {stopwatch.Elapsed.TotalMilliseconds:F0} ms, {tokens.Length} tokens");
+        if (tokens.Length == 0)
+            throw new InvalidDataException(
+                "the first request answered with no tokens; the client caches that and the document stays uncolored.");
+
+        // Not just any tokens: the macro keyword needs the types tree, which is
+        // exactly what the request had to wait for.
+        AssertToken(
+            tokens, SemanticTokensProbeSource, "surroundwith", 1, "macro", [],
+            "a macro-introduced keyword in the very first answer");
+    }
+
+    private sealed record DecodedSemanticToken(int Line, int Character, int Length, string Type, string[] Modifiers);
+
+    private static (string[] Types, string[] Modifiers) ServerSemanticTokensLegend(LspTestClient client)
+    {
+        if (!client.InitializeResult.TryGetProperty("capabilities", out var capabilities) ||
+            !capabilities.TryGetProperty("semanticTokensProvider", out var provider) ||
+            !provider.TryGetProperty("legend", out var legend))
+            throw new InvalidDataException(
+                "the server did not advertise semanticTokensProvider with a legend: " + client.InitializeResult);
+
+        return (
+            legend.GetProperty("tokenTypes").EnumerateArray().Select(e => e.GetString() ?? "").ToArray(),
+            legend.GetProperty("tokenModifiers").EnumerateArray().Select(e => e.GetString() ?? "").ToArray());
+    }
+
+    /// <summary>
+    /// Requests <c>textDocument/semanticTokens/full</c> and decodes the flat
+    /// 5-tuple delta encoding (LSP 3.17 §textDocument/semanticTokens) back into
+    /// absolute positions and legend names.
+    /// </summary>
+    private static async Task<DecodedSemanticToken[]> RequestSemanticTokensAsync(LspTestClient client, string uri)
+    {
+        var response = await client.RequestAsync("textDocument/semanticTokens/full", new
+        {
+            textDocument = new { uri },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("semanticTokens/full request failed: " + error);
+        var result = response.GetProperty("result");
+        if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("data", out var data))
+            throw new InvalidDataException("semanticTokens/full returned no data: " + result);
+
+        var (legendTypes, legendModifiers) = ServerSemanticTokensLegend(client);
+        var tokens = new List<DecodedSemanticToken>();
+        var line = 0;
+        var character = 0;
+        var length = data.GetArrayLength();
+        if (length % 5 != 0)
+            throw new InvalidDataException($"semanticTokens/full data length {length} is not a multiple of 5.");
+
+        for (var i = 0; i < length; i += 5)
+        {
+            var deltaLine = data[i].GetInt32();
+            var deltaStart = data[i + 1].GetInt32();
+            line += deltaLine;
+            character = deltaLine == 0 ? character + deltaStart : deltaStart;
+
+            var typeIndex = data[i + 3].GetInt32();
+            if (typeIndex < 0 || typeIndex >= legendTypes.Length)
+                throw new InvalidDataException($"semantic token type index {typeIndex} is outside the legend.");
+
+            var bits = data[i + 4].GetInt32();
+            var modifiers = new List<string>();
+            for (var bit = 0; bit < legendModifiers.Length; bit++)
+            {
+                if ((bits & (1 << bit)) != 0)
+                    modifiers.Add(legendModifiers[bit]);
+            }
+
+            tokens.Add(new DecodedSemanticToken(
+                line, character, data[i + 2].GetInt32(), legendTypes[typeIndex], modifiers.ToArray()));
+        }
+
+        return tokens.ToArray();
+    }
+
+    private static void AssertToken(
+        DecodedSemanticToken[] tokens,
+        string source,
+        string needle,
+        int occurrence,
+        string expectedType,
+        string[] expectedModifiers,
+        string description)
+    {
+        var (line, character) = LocateUtf16(source, needle, occurrence);
+        var token = tokens.FirstOrDefault(t => t.Line == line && t.Character == character)
+            ?? throw new InvalidDataException(
+                $"{description}: no semantic token starts at {line + 1}:{character + 1} ('{needle}').");
+        if (token.Type != expectedType)
+            throw new InvalidDataException(
+                $"{description}: expected token type '{expectedType}' at {line + 1}:{character + 1} ('{needle}'), got '{token.Type}'.");
+        if (!token.Modifiers.OrderBy(m => m, StringComparer.Ordinal)
+                .SequenceEqual(expectedModifiers.OrderBy(m => m, StringComparer.Ordinal)))
+            throw new InvalidDataException(
+                $"{description}: expected modifiers [{string.Join(",", expectedModifiers)}] at " +
+                $"{line + 1}:{character + 1} ('{needle}'), got [{string.Join(",", token.Modifiers)}].");
+    }
+
     // ----- Incremental rebuild (relocation) scenarios (WP-M5) -----
 
     private const string IncrementalBaseSource = """
@@ -2544,6 +2944,9 @@ internal static class Program
                      Sample("PackageReference", "PackageReference.nproj"),
                      Sample("Sokoban", "Sokoban", "Sokoban.nproj"),
                      Sample("Warnings", "Warnings.nproj"),
+                     // Builds SyntaxMacros.dll too: the engine can only turn `twice`
+                     // into a keyword if the macro assembly exists on disk.
+                     Sample("SyntaxMacro", "SyntaxDemo", "SyntaxDemo.nproj"),
                  })
         {
             Console.WriteLine($"    building fixture {Path.GetFileName(project)}");

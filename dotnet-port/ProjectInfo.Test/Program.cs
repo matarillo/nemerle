@@ -11,6 +11,7 @@ internal static class Program
             WarningCodeTests();
             HoverMarkupTests();
             CompletionMappingTests();
+            SemanticTokenMappingTests();
             GotoMappingTests();
             IncrementalSyncTests();
             PathNormalizerTests();
@@ -262,6 +263,128 @@ internal static class Program
         Equal("(local) value : int\ndefined in M",
             HoverMarkup.ToPlainText("(local) value : int<lb/>defined in M"),
             "completion documentation reuses the hover markup stripper");
+    }
+
+    private static void SemanticTokenMappingTests()
+    {
+        // The legend is a wire contract shared with the VS Code manifest and the
+        // raw LSP scenario: keyword/macro lead the types, and the two custom
+        // modifiers keep their bit order.
+        Equal("keyword", SemanticTokenMapping.TokenTypes[0], "legend type 0");
+        Equal("macro", SemanticTokenMapping.TokenTypes[1], "legend type 1");
+        Equal(15, SemanticTokenMapping.TokenTypes.Length, "legend type count");
+        True(SemanticTokenMapping.TokenModifiers.SequenceEqual(["quotation", "escape"]), "legend modifiers");
+        Equal<string?>(null, SemanticTokenMapping.TypeName(NemerleSemanticTokenType.None), "None has no legend name");
+        Equal("event", SemanticTokenMapping.TypeName(NemerleSemanticTokenType.Event), "last legend name");
+        True(
+            SemanticTokenMapping.ModifierNames(
+                    NemerleSemanticTokenModifier.Escape | NemerleSemanticTokenModifier.Quotation)
+                .SequenceEqual(["quotation", "escape"]),
+            "modifier names come back in legend order");
+        Equal(0, SemanticTokenMapping.ModifierNames(NemerleSemanticTokenModifier.None).Length, "no modifiers");
+
+        // The feature's reason to exist: the same Keyword color classifies as
+        // `macro` when the caller determined the word only became a keyword
+        // because a syntax macro added it to the file's environment.
+        Equal(
+            (NemerleSemanticTokenType.Keyword, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.Keyword, macroKeyword: false),
+            "a core keyword");
+        Equal(
+            (NemerleSemanticTokenType.Macro, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.Keyword, macroKeyword: true),
+            "a macro-introduced keyword");
+        Equal(
+            (NemerleSemanticTokenType.Macro, NemerleSemanticTokenModifier.Quotation),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.QuotationKeyword, macroKeyword: true),
+            "a macro-introduced keyword inside a quotation");
+        // The preprocessor is not part of the extensible syntax, so macroKeyword
+        // must not leak into it.
+        Equal(
+            (NemerleSemanticTokenType.Keyword, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.Preprocessor, macroKeyword: true),
+            "a preprocessor directive is never a macro");
+
+        // String families: verbatim/recursive collapse onto `string`, and the *Ex
+        // variants (escape sequences and $-splices) add the escape modifier.
+        foreach (var plain in new[]
+                 {
+                     NemerleScanTokenColor.String, NemerleScanTokenColor.VerbatimString,
+                     NemerleScanTokenColor.RecursiveString,
+                 })
+            Equal(
+                (NemerleSemanticTokenType.String, NemerleSemanticTokenModifier.None),
+                SemanticTokenMapping.Classify(plain, macroKeyword: false),
+                $"{plain} is a plain string");
+        foreach (var ex in new[]
+                 {
+                     NemerleScanTokenColor.StringEx, NemerleScanTokenColor.VerbatimStringEx,
+                     NemerleScanTokenColor.RecursiveStringEx,
+                 })
+            Equal(
+                (NemerleSemanticTokenType.String, NemerleSemanticTokenModifier.Escape),
+                SemanticTokenMapping.Classify(ex, macroKeyword: false),
+                $"{ex} is an escape run");
+        Equal(
+            (NemerleSemanticTokenType.String,
+                NemerleSemanticTokenModifier.Quotation | NemerleSemanticTokenModifier.Escape),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.QuotationVerbatimStringEx, macroKeyword: false),
+            "an escape run inside a quotation carries both modifiers");
+
+        // Type colors keep the engine's distinctions where LSP has a type for them.
+        Equal(
+            (NemerleSemanticTokenType.Class, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.UserType, macroKeyword: false), "a user type");
+        Equal(
+            (NemerleSemanticTokenType.Interface, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.UserTypeInterface, macroKeyword: false), "an interface");
+        Equal(
+            (NemerleSemanticTokenType.Enum, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.UserTypeEnum, macroKeyword: false), "an enum");
+        Equal(
+            (NemerleSemanticTokenType.Struct, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.UserTypeValueType, macroKeyword: false), "a value type");
+        Equal(
+            (NemerleSemanticTokenType.Type, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.UserTypeDelegate, macroKeyword: false),
+            "a delegate falls back to the generic type");
+        Equal(
+            (NemerleSemanticTokenType.Class, NemerleSemanticTokenModifier.Quotation),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.QuotationUserType, macroKeyword: false),
+            "a user type inside a quotation");
+
+        // Members: LSP has no "field", so it shares `property`.
+        Equal(
+            (NemerleSemanticTokenType.Property, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.Field, macroKeyword: false), "a field");
+        Equal(
+            (NemerleSemanticTokenType.Method, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.Method, macroKeyword: false), "a method");
+
+        // Special comments deliberately fold into plain comments; whitespace, plain
+        // text and the hover-highlight overlays emit no token at all so the
+        // client's grammar keeps coloring those spans.
+        Equal(
+            (NemerleSemanticTokenType.Comment, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.CommentTODO, macroKeyword: false),
+            "a TODO comment is still a comment");
+        Equal(
+            (NemerleSemanticTokenType.Comment, NemerleSemanticTokenModifier.Quotation),
+            SemanticTokenMapping.Classify(NemerleScanTokenColor.QuotationCommentHACK, macroKeyword: false),
+            "a HACK comment inside a quotation");
+        foreach (var none in new[]
+                 {
+                     NemerleScanTokenColor.Text, NemerleScanTokenColor.QuotationText,
+                     NemerleScanTokenColor.HighlightOne, NemerleScanTokenColor.HighlightTwo,
+                 })
+            Equal(
+                (NemerleSemanticTokenType.None, NemerleSemanticTokenModifier.None),
+                SemanticTokenMapping.Classify(none, macroKeyword: false),
+                $"{none} emits no token");
+        Equal(
+            (NemerleSemanticTokenType.None, NemerleSemanticTokenModifier.None),
+            SemanticTokenMapping.Classify((NemerleScanTokenColor)9999, macroKeyword: false),
+            "an unmirrored engine color emits no token");
     }
 
     private static void GotoMappingTests()

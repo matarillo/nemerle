@@ -1,0 +1,13 @@
+using SyntaxMacro;
+
+module Program
+{
+  Main() : void
+  {
+    mutable count = 0;
+    // The keyword below exists only because of the using above: it comes from
+    // the macro library, not from the language.
+    twice count += 1;
+    System.Console.WriteLine($"count = $count");
+  }
+}

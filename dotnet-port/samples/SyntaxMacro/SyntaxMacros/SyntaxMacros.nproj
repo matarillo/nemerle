@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-O5a fixture: the macro half of the "a macro extends the syntax" demo.  Unlike
+    SokobanMacros (expression macros, invoked by name), this one declares a `syntax (...)`
+    extension, so opening its namespace adds a KEYWORD to the consuming file's grammar.
+    That is what the LSP semantic tokens feature reports as a `macro` token, and what a
+    TextMate grammar can never know; the raw LSP suite asserts it against this project so
+    the claim is covered by a user-written macro, not only by the ones inside Nemerle.dll.
+
+    NemerleMacroLibrary=true asks the targets for the compiler's own API
+    (Nemerle.Compiler.dll), which quasi-quotation needs at compile time - see
+    ..\..\Sokoban\SokobanMacros\SokobanMacros.nproj for the full explanation.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NemerleMacroLibrary>true</NemerleMacroLibrary>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="macros.n" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

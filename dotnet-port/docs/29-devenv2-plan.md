@@ -515,8 +515,9 @@ unit test では少なくとも次を固定する。
 
 ## 11. WP-M 完了後の優先順位
 
-1. semantic tokens(`ScanLexer` ベース。macro が拡張する keyword の動的彩色が
-   TextMate では原理的に不可能なため、価値は明確)
+1. ~~semantic tokens(`ScanLexer` ベース。macro が拡張する keyword の動的彩色が
+   TextMate では原理的に不可能なため、価値は明確)~~ → **実装済み(WP-O5a、2026-07-25、
+   `53-wp-o5-log.md`)。見立てどおり `ScanLexer` ベースで、engine 無改造で成立した**
 2. signatureHelp(`BeginGetMethodTipInfo`、bridge 流用で小さい)
 3. documentHighlight(`GetGotoInfo(UsagesInCurrentFile)` 流用)
 4. formatting(`Formatter` の検証コストが大きいため単独 WP)

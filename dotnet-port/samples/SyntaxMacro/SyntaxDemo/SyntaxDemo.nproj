@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WP-O5a fixture: consumes ..\SyntaxMacros as a macro-only ProjectReference (the
+    NemerleMacroReference wiring from WP-A4: build it first, feed ncc's "-macros:", do not
+    put its types in scope and do not copy its dll).  Its single source uses the keyword
+    that macro adds, which is what the raw LSP semantic tokens scenario asserts on.
+
+      dotnet build dotnet-port\samples\SyntaxMacro\SyntaxDemo\SyntaxDemo.nproj
+      dotnet exec dotnet-port\samples\SyntaxMacro\SyntaxDemo\bin\Debug\net10.0\SyntaxDemo.dll
+      -> count = 2
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NemerleCompile Include="Program.n" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SyntaxMacros\SyntaxMacros.nproj"
+                      OutputItemType="NemerleMacroReference"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\..\msbuild\Nemerle.Core.targets" />
+
+</Project>

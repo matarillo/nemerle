@@ -49,7 +49,7 @@ Nemerle の LSP(Language Server Protocol)サーバーを作るとして、改修
 | `GetGotoInfo(…, GotoKind)` / `GetInheritorsGotoInfo` | `definition` / `references` / `implementation` |
 | `BeginHighlightUsages` | `documentHighlight` |
 | コンパイラーメッセージ(`SetCompilerMessage*` コールバック) | `publishDiagnostics` |
-| `ScanLexer` / `ScanTokenColor` | `semanticTokens`(構文彩色) |
+| `ScanLexer` / `ScanTokenColor` | `semanticTokens`(構文彩色)— 実装済み: WP-O5a / `53-wp-o5-log.md` |
 | `RegionsHelper` / `RegionInfo` | `foldingRange` |
 | `Project.Refactoring.n`(rename 系) | `rename` |
 | `BeginFindUnimplementedMembers` / `FindMethodsToOverride` | `codeAction` |

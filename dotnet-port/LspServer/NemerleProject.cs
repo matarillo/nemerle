@@ -73,6 +73,31 @@ internal sealed record EngineGotoResult(IReadOnlyList<NemerleGotoLocation> Locat
 }
 
 /// <summary>
+/// One semantic token, already in LSP coordinates (0-based line and UTF-16
+/// character, length in UTF-16 code units) and classified into the legend of
+/// <see cref="SemanticTokenMapping"/>.  Tokens never span lines: the engine
+/// colorizer is line-based, which is also what LSP requires.
+/// </summary>
+internal sealed record EngineSemanticToken(
+    int Line,
+    int Character,
+    int Length,
+    NemerleSemanticTokenType Type,
+    NemerleSemanticTokenModifier Modifiers);
+
+/// <summary>
+/// A colorized document.  <see cref="FromTypesTree"/> is false when no line
+/// resolved a <c>GlobalEnv</c> - the engine had not built (or had not yet built)
+/// the types tree, so the colorizer fell back to the core environment: keywords,
+/// strings, comments and numbers are right, but **macro-introduced keywords and
+/// user types are not distinguished**.  The caller waits for a complete answer
+/// rather than handing that to a client which caches it.
+/// </summary>
+internal sealed record EngineSemanticTokens(
+    IReadOnlyList<EngineSemanticToken> Tokens,
+    bool FromTypesTree);
+
+/// <summary>
 /// IIdeProject adapter for the single engine workspace: all sources of the
 /// applied WP-L2 project snapshot (open LSP buffers override disk-backed text)
 /// plus any open loose files.  Without an applied snapshot it degrades to the
@@ -135,6 +160,14 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     }
 
     public event Action<IReadOnlyList<DocumentDiagnostics>>? DiagnosticsChanged;
+
+    /// <summary>
+    /// Raised after the engine (re)built the types tree.  Results that depend on
+    /// the tree rather than on the buffer alone - semantic tokens, whose keyword
+    /// set comes from each line's <c>GlobalEnv</c> - are only complete from this
+    /// point on, and the client has to be told to ask again (WP-O5a).
+    /// </summary>
+    public event Action? TypesTreeRebuilt;
 
     public void Open(string uri, string fileSystemPath, string text, int version)
     {
@@ -554,6 +587,208 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Colorizes a whole open document with the engine's <c>ScanLexer</c> and
+    /// returns LSP semantic tokens (WP-O5a).  Like definition/references this is a
+    /// synchronous engine API, so it runs directly under <c>_engineOperations</c>
+    /// (serialized with document changes and reloads).  Returns null when the
+    /// document is not open or the engine has no initialized compiler yet; the
+    /// client then keeps its TextMate coloring instead of being handed a
+    /// half-classified document.
+    /// </summary>
+    public EngineSemanticTokens? GetSemanticTokens(string uri)
+    {
+        lock (_engineOperations)
+        {
+            InMemoryNemerleSource source;
+            lock (_gate)
+            {
+                if (_disposed ||
+                    !_openUriToPath.TryGetValue(uri, out var path) ||
+                    !_documentsByPath.TryGetValue(path, out var state))
+                {
+                    _log.Log($"nemerle semantic tokens skipped: {uri} is not an open document");
+                    return null;
+                }
+
+                source = state.Source;
+            }
+
+            // ScanLexer takes its base keyword set from ManagerClass.CoreEnv (and
+            // asserts on it), which exists only once InitCompiler ran.  At startup
+            // the client asks before that, and the answer has to be "nothing yet"
+            // rather than a half-classified document (see the refresh retry in
+            // NemerleSemanticTokensHandler).
+            // No logging here: the handler polls this while it waits for the
+            // compiler, and it reports the wait once on its own.
+            if (!_engine.RequestOnInitEngine() ||
+                _engine is not ManagerClass manager ||
+                manager.CoreEnv is null)
+                return null;
+
+            try
+            {
+                return Tokenize(manager, source);
+            }
+            catch (Exception ex)
+            {
+                // A colorizer failure must not take out the request loop; the
+                // document simply falls back to grammar-based coloring.
+                _log.Warning($"nemerle semantic tokens failed for {source.Path}: {ex}");
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when the URI belongs to a document the client has open.  Lets the
+    /// semantic tokens handler tell "the compiler is not ready yet, waiting is
+    /// worth it" apart from "this document is not ours, answering now is right".
+    /// </summary>
+    public bool IsDocumentOpen(string uri)
+    {
+        lock (_gate) return !_disposed && _openUriToPath.ContainsKey(uri);
+    }
+
+    /// <summary>Caller must hold <c>_engineOperations</c>.</summary>
+    private EngineSemanticTokens Tokenize(ManagerClass manager, InMemoryNemerleSource source)
+    {
+        var text = source.GetText();
+        var coreKeywords = manager.CoreEnv.Keywords;
+        var lexer = new ScanLexer(manager);
+        lexer.SetFileName(source.Path);
+
+        var tokens = new List<EngineSemanticToken>();
+        // The colorizer carries multi-line constructs (block comments, verbatim
+        // and recursive strings, quotations) across lines in this state word, the
+        // same way the VS scanner threads it through IScanner.
+        var state = ScanState.None;
+        GlobalEnv? env = null;
+        TypeBuilder? typeBuilder = null;
+        // The line span the cached env/typeBuilder is valid for, as reported by
+        // GetActiveEnv itself: that keeps the declaration-tree walk to once per
+        // declaration instead of once per line.
+        var envFirstLine = 0;
+        var envLastLine = -1;
+        // Whether the types tree answered at all: without it the colorizer runs on
+        // CoreEnv, which cannot know macro-introduced keywords or user types.
+        var fromTypesTree = false;
+
+        var lineNumber = 0;
+        foreach (var line in SplitLines(text))
+        {
+            lineNumber++;
+            if (lineNumber < envFirstLine || lineNumber > envLastLine)
+            {
+                var active = _engine.GetActiveEnv(source.FileIndex, lineNumber);
+                // A null env means no types tree yet (or a line outside every
+                // declaration); keep the last known one, as the VS scanner does,
+                // and let SetLine fall back to CoreEnv when there is none at all.
+                if (active.Field0 is not null)
+                {
+                    env = active.Field0;
+                    typeBuilder = active.Field1;
+                    fromTypesTree = true;
+                }
+
+                envFirstLine = active.Field2;
+                envLastLine = active.Field3;
+            }
+
+            lexer.SetLine(lineNumber, line, 0, env, typeBuilder);
+
+            // The lexer reports end-of-line on the token that closes the line; the
+            // iteration cap is a safety net so a colorizer defect degrades the
+            // coloring instead of hanging the request loop.
+            var cap = line.Length + 2;
+            for (var i = 0; i < cap; i++)
+            {
+                var info = lexer.GetToken(state);
+                state = info.State;
+                AddSemanticToken(tokens, info, line, lineNumber, env, coreKeywords);
+                if (info.IsEndOfLine)
+                    break;
+            }
+        }
+
+        return new EngineSemanticTokens(tokens, fromTypesTree);
+    }
+
+    private static void AddSemanticToken(
+        List<EngineSemanticToken> tokens,
+        ScanTokenInfo info,
+        string line,
+        int lineNumber,
+        GlobalEnv? env,
+        Nemerle.Collections.Set<string> coreKeywords)
+    {
+        var location = info.Token.Location;
+        // Engine columns are 1-based with an exclusive end; the lexer can run the
+        // end past the line (skip_to_end), and pending tokens may be empty.
+        var start = location.Column - 1;
+        var length = location.EndColumn - location.Column;
+        if (start < 0 || start >= line.Length || length <= 0)
+            return;
+        if (start + length > line.Length)
+            length = line.Length - start;
+
+        var color = (NemerleScanTokenColor)(int)info.Color;
+        var (type, modifiers) = SemanticTokenMapping.Classify(
+            color,
+            IsMacroKeyword(color, line, start, length, env, coreKeywords));
+        if (type == NemerleSemanticTokenType.None)
+            return;
+
+        tokens.Add(new EngineSemanticToken(lineNumber - 1, start, length, type, modifiers));
+    }
+
+    /// <summary>
+    /// True when a keyword token is only a keyword because a syntax macro added it
+    /// to this line's <c>GlobalEnv</c> — that is, it is absent from the core
+    /// environment that every file gets.  This is the one classification a
+    /// TextMate grammar cannot make (the word does not exist until the compiler
+    /// loaded the macros named by the file's <c>using</c>s), so it is reported as
+    /// a distinct token type.
+    /// </summary>
+    private static bool IsMacroKeyword(
+        NemerleScanTokenColor color,
+        string line,
+        int start,
+        int length,
+        GlobalEnv? env,
+        Nemerle.Collections.Set<string> coreKeywords)
+    {
+        if (env is null ||
+            (color != NemerleScanTokenColor.Keyword && color != NemerleScanTokenColor.QuotationKeyword))
+            return false;
+
+        var word = line.Substring(start, length);
+        return env.Keywords.Contains(word) && !coreKeywords.Contains(word);
+    }
+
+    /// <summary>
+    /// Splits a document into lines, treating CRLF, CR and LF alike (the same
+    /// line model as <see cref="InMemoryNemerleSource.LineCount"/>), without
+    /// materializing the whole document a second time.
+    /// </summary>
+    private static IEnumerable<string> SplitLines(string text)
+    {
+        var start = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c is not ('\r' or '\n'))
+                continue;
+
+            yield return text[start..i];
+            if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n')
+                i++;
+            start = i + 1;
+        }
+
+        yield return text[start..];
+    }
+
     public IEnumerable<string> GetAssemblyReferences()
     {
         lock (_gate) return _appliedInputs?.AssemblyReferences.ToArray() ?? [];
@@ -678,6 +913,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             _log.Log(
                 $"nemerle engine rebuild finished after {Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F0} ms");
         RaiseDiagnosticsChanged();
+        TypesTreeRebuilt?.Invoke();
     }
 
     public async ValueTask DisposeAsync()

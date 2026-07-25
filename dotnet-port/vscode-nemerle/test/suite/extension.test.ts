@@ -217,7 +217,102 @@ suite('Nemerle extension', () => {
 
     await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
   });
+
+  // WP-O5a: the differentiator, seen from the real client. `surroundwith` is a
+  // keyword only because the buffer opened Nemerle.Surround, so no grammar could
+  // know it; the engine reports it as a `macro` token while `def` stays `keyword`.
+  test('colors a macro-introduced keyword through semantic tokens', async () => {
+    const serverPath = process.env.NEMERLE_TEST_SERVER_PATH;
+    assert.ok(serverPath, 'NEMERLE_TEST_SERVER_PATH was not supplied to the extension host');
+    await vscode.workspace
+      .getConfiguration('nemerle')
+      .update('server.path', serverPath, vscode.ConfigurationTarget.Global);
+
+    const uri = vscode.Uri.file(path.join(workspaceRoot(), 'Editing.n'));
+    const document = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(document);
+
+    const extension = vscode.extensions.getExtension<NemerleExtensionApi>(extensionId);
+    assert.ok(extension, `Extension ${extensionId} was not found`);
+    const api = await extension.activate();
+    await waitUntil(() => api.projectStatus?.state === 'applied', 'the single .nproj project snapshot to apply');
+
+    const probeLines = [
+      'using Nemerle.Surround;',
+      '',
+      'module Editing',
+      '{',
+      '  Run() : void',
+      '  {',
+      '    def value = 1;',
+      '    surroundwith (probe)',
+      '      System.Console.WriteLine(value);',
+      '  }',
+      '}',
+      '',
+    ];
+    await editor.edit((edit) => {
+      const all = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+      edit.replace(all, probeLines.join('\n'));
+    });
+
+    const legend = await vscode.commands.executeCommand<vscode.SemanticTokensLegend>(
+      'vscode.provideDocumentSemanticTokensLegend',
+      uri,
+    );
+    assert.ok(legend, 'the client registered a semantic tokens legend for the document');
+    assert.ok(legend.tokenTypes.includes('macro'), 'the legend carries the macro token type');
+    assert.ok(legend.tokenModifiers.includes('quotation'), 'the legend carries the Nemerle quotation modifier');
+
+    // Both words start at column 4 of their line (0-based).
+    const defKey = '6:4';
+    const macroKey = '7:4';
+    let types = new Map<string, string>();
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const tokens = await vscode.commands.executeCommand<vscode.SemanticTokens | undefined>(
+        'vscode.provideDocumentSemanticTokens',
+        uri,
+      );
+      types = decodeSemanticTokenTypes(tokens, legend);
+      if (types.get(macroKey) === 'macro') {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    assert.equal(types.get(macroKey), 'macro', 'surroundwith is colored as a macro-introduced keyword');
+    assert.equal(types.get(defKey), 'keyword', 'def stays a plain keyword');
+
+    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+  });
 });
+
+/**
+ * Decodes the LSP/VS Code semantic token delta encoding into a
+ * "line:character" -> token type name map (0-based positions).
+ */
+function decodeSemanticTokenTypes(
+  tokens: vscode.SemanticTokens | undefined,
+  legend: vscode.SemanticTokensLegend,
+): Map<string, string> {
+  const result = new Map<string, string>();
+  if (!tokens) {
+    return result;
+  }
+
+  let line = 0;
+  let character = 0;
+  for (let i = 0; i + 4 < tokens.data.length; i += 5) {
+    const deltaLine = tokens.data[i] ?? 0;
+    const deltaStart = tokens.data[i + 1] ?? 0;
+    line += deltaLine;
+    character = deltaLine === 0 ? character + deltaStart : deltaStart;
+    result.set(`${line}:${character}`, legend.tokenTypes[tokens.data[i + 3] ?? -1] ?? '');
+  }
+
+  return result;
+}
 
 function workspaceRoot(): string {
   const folder = vscode.workspace.workspaceFolders?.[0];

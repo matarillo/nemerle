@@ -66,8 +66,9 @@ C# パーサー未登録 8 件 / 共有フレームワーク外 BCL 面 6 件 / 
 D3 `.nproj` 必須[当面] / D5 版据え置き再パックの非伝播 / D6 Nemerle.Tool の 2 段起動 /
 D7 auto-ref 化後のレガシー rsp 整理未実施[以上、低]。
 
-**E. LSP/VS Code**: E1 未実装機能(semantic tokens / signatureHelp / documentHighlight /
-formatting / rename / codeAction — engine API は実在)[中] / E2 multi-root 非対応[中] /
+**E. LSP/VS Code**: E1 未実装機能(~~semantic tokens~~ / signatureHelp / documentHighlight /
+formatting / rename / codeAction — engine API は実在)[中。**semantic tokens は WP-O5a で実装済み
+(2026-07-25、`53-wp-o5-log.md`)**、残りは未着手]/ E2 multi-root 非対応[中] /
 **E7 hover の engine 特性の穴・E8 references が型宣言スコープ限定**[中 → WP-N2 で解消] /
 E3 incremental escape hatch が環境変数のみ / E4 relocation は単一 range change 限定 /
 E5 relocation 失敗経路の fault injection 未テスト / E9 completion/hover 表示の細部 /
@@ -541,8 +542,9 @@ WP-O(公開フェーズ)を最優先とし、その後は以下:
 1. 最小 CI の本格化(WP-N6 を no-go とした場合はここが起点)。testsuite ハーネス
    (`Nemerle.Compiler.Test.exe`、CLR4 実行ファイル)の core 移植もここ —
    Linux CI で testsuite 全数を回す前提(42 §8 の申し送り)。
-2. エディター機能第2弾: semantic tokens(マクロ拡張キーワードの動的彩色は TextMate では
-   原理的に不可能で価値明確)/ signatureHelp / documentHighlight / formatting(E1)。
+2. エディター機能第2弾: ~~semantic tokens(マクロ拡張キーワードの動的彩色は TextMate では
+   原理的に不可能で価値明確)~~ → **WP-O5a で実装済み(2026-07-25、`53-wp-o5-log.md`)** /
+   signatureHelp / documentHighlight / formatting(E1 の残り)。
 3. rename / codeAction(E1 の残り): WP-N2 の E8 解消を前提に、WorkspaceEdit 基盤を
    共有して rename → codeAction(未実装メンバー生成)の順で実装。
    engine 品質の残りは B6 マクロ定義本体内 hover(WP-N2 の調査結果次第で優先度を再評価)。
