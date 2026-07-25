@@ -94,6 +94,9 @@ From a user's point of view, the notable constraints are:
 
 ## Where things are documented
 
+- [`dotnet-port/samples/README.md`](dotnet-port/samples/README.md) — runnable samples, from
+  "hello world" to a macro that solves a maze at compile time (an unsolvable one is a compile
+  error). The shortest way to see what macros actually do.
 - [`dotnet-port/docs/00-PLAN.md`](dotnet-port/docs/00-PLAN.md) — the port's master plan, work
   package list and chronological work log. The numbered documents beside it
   (`dotnet-port/docs/NN-*.md`) are the per-work-package plans, implementation logs and
