@@ -1,0 +1,123 @@
+using System;
+
+namespace SyntaxTreeMacros
+{
+  public macro explain_macro(expr)
+    syntax ("explain", "(", expr, ")")
+  {
+    /*
+      Recursively traverse the syntax tree of the given expression
+      and insert logging immediately after each operation.
+    */
+    def instrument(e)
+    {
+      def source = e.ToString();
+
+      match (e)
+      {
+        /*
+          If the expression has the form "left + right"
+        */
+        | <[ $left + $right ]> =>
+          def tracedLeft  = instrument(left);
+          def tracedRight = instrument(right);
+
+          <[
+            {
+              def leftValue  = $tracedLeft;
+              def rightValue = $tracedRight;
+              def result     = leftValue + rightValue;
+
+              System.Console.WriteLine(
+                $(source : string)
+                + " = "
+                + result.ToString()
+              );
+
+              result
+            }
+          ]>
+
+        | <[ $left - $right ]> =>
+          def tracedLeft  = instrument(left);
+          def tracedRight = instrument(right);
+
+          <[
+            {
+              def leftValue  = $tracedLeft;
+              def rightValue = $tracedRight;
+              def result     = leftValue - rightValue;
+
+              System.Console.WriteLine(
+                $(source : string)
+                + " = "
+                + result.ToString()
+              );
+
+              result
+            }
+          ]>
+
+        | <[ $left * $right ]> =>
+          def tracedLeft  = instrument(left);
+          def tracedRight = instrument(right);
+
+          <[
+            {
+              def leftValue  = $tracedLeft;
+              def rightValue = $tracedRight;
+              def result     = leftValue * rightValue;
+
+              System.Console.WriteLine(
+                $(source : string)
+                + " = "
+                + result.ToString()
+              );
+
+              result
+            }
+          ]>
+
+        | <[ $left / $right ]> =>
+          def tracedLeft  = instrument(left);
+          def tracedRight = instrument(right);
+
+          <[
+            {
+              def leftValue  = $tracedLeft;
+              def rightValue = $tracedRight;
+              def result     = leftValue / rightValue;
+
+              System.Console.WriteLine(
+                $(source : string)
+                + " = "
+                + result.ToString()
+              );
+
+              result
+            }
+          ]>
+
+        /*
+          An expression that cannot be decomposed any further, such as a variable or a literal.
+        */
+        | _ =>
+          <[
+            {
+              def value = $e;
+
+              System.Console.WriteLine(
+                $(source : string)
+                + " = "
+                + value.ToString()
+              );
+
+              value
+            }
+          ]>
+      }
+    }
+
+    instrument(expr)
+  }
+}

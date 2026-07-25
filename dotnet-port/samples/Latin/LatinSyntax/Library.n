@@ -1,0 +1,24 @@
+using System;
+
+namespace LatinSyntax
+{
+  macro LatinIf(cond, true_expr, false_expr)
+  syntax ("si", cond, "tum", true_expr, "aliter", false_expr)
+  {
+    <[
+      if ($cond)
+        $true_expr
+      else
+        $false_expr
+    ]>
+  }
+
+  macro Revelare(expr)
+  syntax ("revelare", "(", expr, ")")
+  {
+    def exprString = expr.ToString();
+    <[
+      System.Console.WriteLine("[ Veritas ] {0} => {1}", $(exprString : string), $expr)
+    ]>
+  }
+}

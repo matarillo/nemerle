@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="LatinSyntax/LatinSyntax.nproj" Type="{00000000-0000-0000-0000-000000000000}" />
+  <Project Path="LatinDemo/LatinDemo.nproj" Type="{00000000-0000-0000-0000-000000000000}" />
+</Solution>

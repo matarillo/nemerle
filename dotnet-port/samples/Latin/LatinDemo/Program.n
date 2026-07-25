@@ -1,0 +1,27 @@
+using System;
+using System.Console;
+using LatinSyntax;
+
+module Program
+{
+  Main() : void
+  {
+    def gold = 100;
+
+    si (gold >= 50) tum
+    {
+      WriteLine("Alea iacta est! (The die is cast)");
+    }
+    aliter
+    {
+      WriteLine("Paupertas non est vitium... (Poverty is not a sin)");
+    }
+
+
+    def a = 15;
+    def b = 27;
+
+    revelare(a + b);
+    revelare(gold == 100);
+  }
+}

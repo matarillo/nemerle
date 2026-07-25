@@ -1,0 +1,16 @@
+using System;
+using System.Console;
+using SyntaxTreeMacros;
+
+module Program
+{
+  Main() : void
+  {
+    def x = 3;
+    def y = 5;
+
+    def answer = explain ((x + 2) * (y - 1));
+
+    WriteLine("answer = " + answer.ToString());
+  }
+}

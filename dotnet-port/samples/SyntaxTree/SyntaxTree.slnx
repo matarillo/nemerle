@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="SyntaxTreeMacros/SyntaxTreeMacros.nproj" Type="{00000000-0000-0000-0000-000000000000}" />
+  <Project Path="SyntaxTreeDemo/SyntaxTreeDemo.nproj" Type="{00000000-0000-0000-0000-000000000000}" />
+</Solution>
