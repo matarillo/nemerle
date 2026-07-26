@@ -150,6 +150,24 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     private readonly bool _incrementalEnabled;
     private readonly EngineRequestBridge _bridge = new();
 
+    // documentHighlight (WP-P2) comes back through a callback rather than on its
+    // request, so exactly one may be in flight: the gate is what makes an
+    // unkeyed IIdeProject.SetHighlights unambiguous.  See
+    // GetDocumentHighlightsAsync / AwaitHighlightAsync.
+    private readonly SemaphoreSlim _highlightGate = new(1, 1);
+    // The mailbox of that single in-flight request, or null.  Written by the LSP
+    // thread under _highlightGate, read by the AsyncWorker thread in SetHighlights.
+    private volatile HighlightDelivery? _highlightDelivery;
+    // The same ceiling EngineRequestBridge uses, so a wedged engine cannot hang
+    // an LSP request.
+    private static readonly TimeSpan HighlightTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan HighlightPollInterval = TimeSpan.FromMilliseconds(5);
+    // How long "completed" is allowed to precede "delivered".  The two are
+    // adjacent statements on the worker thread, so this only has to cover a
+    // scheduling hiccup, not any real work.
+    private static readonly TimeSpan HighlightSettle = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan HighlightSettlePollInterval = TimeSpan.FromMilliseconds(2);
+
     public NemerleProject(ServerLog log, ServerOptions options)
     {
         _log = log;
@@ -565,26 +583,229 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             if (infos is null || infos.Length == 0)
                 return EngineGotoResult.Empty;
 
-            var targets = new NemerleGotoTarget[infos.Length];
-            for (var i = 0; i < infos.Length; i++)
-            {
-                var info = infos[i];
-                targets[i] = new NemerleGotoTarget(
-                    info.FilePath,
-                    info.FileIndex,
-                    info.Line,
-                    info.Column,
-                    info.EndLine,
-                    info.EndColumn,
-                    info.UsageType == UsageType.Definition);
-            }
-
+            var targets = FlattenGotoInfos(infos);
             var locations = GotoMapping.ToLocations(targets, includeDeclaration);
             // The engine returned targets but none were navigable source
             // locations: the symbol resolved to a metadata / external member.
             var externalOnly = locations.Count == 0;
             return new EngineGotoResult(locations, externalOnly);
         }
+    }
+
+    /// <summary>
+    /// Computes <c>textDocument/documentHighlight</c> for an open document: every
+    /// occurrence of the symbol under the caret <em>inside that document</em>,
+    /// classified read/write.  Returns an empty list when the document is not
+    /// open, the caret is not on a symbol, or the request was
+    /// cancelled/superseded/stale.
+    ///
+    /// <para><b>Route: the engine's own highlighter</b> (WP-P2;
+    /// <c>56-wp-p-plan.md</c> §4 named <c>GetGotoInfo(..., Usages)</c> as its
+    /// first candidate).  That candidate is not available: <c>IIdeEngine</c>
+    /// (<c>Nemerle.Completion2/Engine/IEngine.n</c>) publishes only the
+    /// <em>synchronous</em> <c>GetGotoInfo</c>; the worker-resident
+    /// <c>BeginGetGotoInfo</c> lives on the <c>internal</c> <c>Engine</c> class.
+    /// And the synchronous form cannot be called from a worker work item, because
+    /// it is itself <c>BeginGetGotoInfo</c> + <c>AsyncWaitHandle.WaitOne()</c> -
+    /// the worker would be waiting on itself.  Publishing it would be a shared
+    /// source change (<c>56-wp-p-plan.md</c> §3-3).  <c>BeginHighlightUsages</c>
+    /// is on the interface, already runs on the worker, and is already
+    /// file-filtered, so it is the only route that honors the thread contract
+    /// without touching the engine.</para>
+    ///
+    /// <para><b>What that costs, and how it is paid.</b>  The result comes back
+    /// through the <c>IIdeProject.SetHighlights</c> callback, which the engine
+    /// invokes <em>after</em> <c>request.MarkAsCompleted()</c>
+    /// (<c>Engine-HighlightUsages.n</c>), so completion is not delivery, and the
+    /// callback carries only the <c>IIdeSource</c> - no key to tell two answers
+    /// apart.  Correlation is therefore structural rather than by key: this method
+    /// holds <c>_highlightGate</c> for the whole round trip, so exactly one
+    /// highlight request is ever in flight, and it does not release the gate until
+    /// that request has delivered or is known dead (see
+    /// <see cref="AwaitHighlightAsync"/>).  A cancelled request is drained, not
+    /// abandoned, precisely so its late callback cannot be handed to the next
+    /// caret position.</para>
+    ///
+    /// <para><b>Agreement with references/rename.</b>  Both routes end in the same
+    /// <c>Project.FindUsages</c>; the highlighter passes
+    /// <c>onlyThisFile = true</c>, which narrows only the <em>textual candidate
+    /// pre-scan</em> to this file and then post-filters by <c>FileIndex</c>
+    /// exactly as <c>GotoMapping.ToDocumentHighlights</c> would.  The integration
+    /// suite pins the two against each other (highlights == references restricted
+    /// to this document) rather than assuming it.</para>
+    ///
+    /// <para>The flattening runs on the worker for free here: <c>SetHighlights</c>
+    /// is called <em>by</em> the worker, so <c>GotoInfo.FilePath</c> - which reads
+    /// <c>Location</c>'s process-wide, unsynchronized file-name list - is read on
+    /// the only thread allowed to touch engine state.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<NemerleDocumentHighlight>> GetDocumentHighlightsAsync(
+        string uri,
+        int lspLine,
+        int lspCharacter,
+        CancellationToken token)
+    {
+        InMemoryNemerleSource source;
+        lock (_gate)
+        {
+            if (_disposed ||
+                !_openUriToPath.TryGetValue(uri, out var path) ||
+                !_documentsByPath.TryGetValue(path, out var state))
+            {
+                _log.Log($"nemerle document highlight skipped: {uri} is not an open document");
+                return [];
+            }
+
+            source = state.Source;
+        }
+
+        try
+        {
+            await _highlightGate.WaitAsync(token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return [];
+        }
+
+        try
+        {
+            var delivery = new HighlightDelivery(source);
+            _highlightDelivery = delivery;
+
+            AsyncRequest request;
+            int expectedVersion;
+            lock (_engineOperations)
+            {
+                lock (_gate)
+                {
+                    if (_disposed)
+                        return [];
+                    expectedVersion = source.CurrentVersion;
+                }
+
+                // Engine coordinates are 1-based; the LSP character is a UTF-16
+                // code unit offset, matching the source's .NET string indexing.
+                request = _engine.BeginHighlightUsages(source, lspLine + 1, lspCharacter + 1);
+            }
+
+            var (outcome, targets) = await AwaitHighlightAsync(request, delivery).ConfigureAwait(false);
+            if (outcome != EngineRequestBridge.RequestOutcome.Completed ||
+                token.IsCancellationRequested ||
+                source.CurrentVersion != expectedVersion)
+            {
+                var reason = token.IsCancellationRequested
+                    ? EngineRequestBridge.RequestOutcome.Cancelled
+                    : outcome == EngineRequestBridge.RequestOutcome.Completed
+                        ? EngineRequestBridge.RequestOutcome.Stale
+                        : outcome;
+                _log.Log(
+                    $"nemerle document highlight unavailable at {uri} {lspLine}:{lspCharacter} " +
+                    $"(engine request {reason})");
+                return [];
+            }
+
+            return targets is null or { Length: 0 }
+                ? []
+                : GotoMapping.ToDocumentHighlights(targets, source.FileIndex);
+        }
+        finally
+        {
+            _highlightDelivery = null;
+            _highlightGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The mailbox one <c>BeginHighlightUsages</c> round trip delivers into.
+    /// <see cref="Targets"/> stays null until <see cref="SetHighlights"/> runs, so
+    /// "not delivered yet" stays distinguishable from the perfectly ordinary
+    /// answer "no occurrences" (the caret is not on a symbol).
+    /// </summary>
+    private sealed class HighlightDelivery(IIdeSource source)
+    {
+        public IIdeSource Source { get; } = source;
+
+        public volatile NemerleGotoTarget[]? Targets;
+    }
+
+    /// <summary>
+    /// Waits for a highlight request to <em>deliver</em>, which is not the same as
+    /// waiting for it to complete: the engine calls <c>MarkAsCompleted()</c> and
+    /// only then invokes the callback (<c>Engine-HighlightUsages.n</c>).
+    ///
+    /// <para>So completion is treated as "the answer is one statement away on the
+    /// worker": after it is observed, this settles for a short window and, if
+    /// nothing arrived, concludes the request threw (the only path that completes
+    /// without calling back - <c>AsyncWorker.ThreadProc</c> completes a work item
+    /// that raised).  The LSP cancellation token is deliberately <em>not</em>
+    /// honored here: the caller has already decided to drop the answer, and
+    /// draining the request is what keeps its late callback from being handed to
+    /// the next caret position.  The wait is bounded by the same ceiling
+    /// <see cref="EngineRequestBridge"/> uses, and the worker is single-threaded
+    /// anyway, so a drained request delays nothing that was not already queued
+    /// behind it.</para>
+    /// </summary>
+    private static async Task<(EngineRequestBridge.RequestOutcome Outcome, NemerleGotoTarget[]? Targets)>
+        AwaitHighlightAsync(AsyncRequest request, HighlightDelivery delivery)
+    {
+        var deadline = DateTime.UtcNow + HighlightTimeout;
+
+        while (delivery.Targets is null && !request.IsCompleted)
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                request.Stop = true;
+                return (EngineRequestBridge.RequestOutcome.TimedOut, null);
+            }
+
+            await Task.Delay(HighlightPollInterval).ConfigureAwait(false);
+        }
+
+        var settle = DateTime.UtcNow + HighlightSettle;
+        while (delivery.Targets is null && DateTime.UtcNow < settle)
+            await Task.Delay(HighlightSettlePollInterval).ConfigureAwait(false);
+
+        if (delivery.Targets is null)
+            return (EngineRequestBridge.RequestOutcome.Cancelled, null);
+
+        // The worker sets Stop before completing a request it forced out (only
+        // CloseProject can force this kind out), so a set flag means the answer
+        // was superseded rather than produced.
+        return request.Stop
+            ? (EngineRequestBridge.RequestOutcome.Cancelled, null)
+            : (EngineRequestBridge.RequestOutcome.Completed, delivery.Targets);
+    }
+
+    /// <summary>
+    /// Reads the engine's <c>GotoInfo</c>s into the engine-independent
+    /// <see cref="NemerleGotoTarget"/> that <see cref="GotoMapping"/> consumes.
+    ///
+    /// <para>Shared by the highlight callback - where it runs on the worker, as it
+    /// should, because <c>GotoInfo.FilePath</c> reads the compiler's process-wide
+    /// file-name list - and by the still-synchronous definition/references path,
+    /// where it does not.  Keeping one flattening means WP-P3, whose first step is
+    /// moving <see cref="GetGoto"/> onto the worker
+    /// (<c>56-wp-p-plan.md</c> §3-1), only has to change where the call is made
+    /// from; see that WP's note about <c>BeginGetGotoInfo</c> not being on
+    /// <c>IIdeEngine</c>.</para>
+    /// </summary>
+    private static NemerleGotoTarget[] FlattenGotoInfos(IEnumerable<GotoInfo> infos)
+    {
+        var targets = new List<NemerleGotoTarget>();
+        foreach (var info in infos)
+        {
+            targets.Add(new NemerleGotoTarget(
+                info.FilePath,
+                info.FileIndex,
+                info.Line,
+                info.Column,
+                info.EndLine,
+                info.EndColumn,
+                (NemerleUsageType)(int)info.UsageType));
+        }
+
+        return [.. targets];
     }
 
     /// <summary>
@@ -1187,7 +1408,38 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         }
     }
     public GotoInfo[] LookupLocationsFromDebugInformation(GotoInfo info) => [];
-    public void SetHighlights(IIdeSource source, IEnumerable<GotoInfo> highlights) { }
+    /// <summary>
+    /// The engine's delivery point for <c>BeginHighlightUsages</c> (WP-P2).  Runs
+    /// on the AsyncWorker thread, immediately after the request was marked
+    /// completed, which is why the flattening - including
+    /// <c>GotoInfo.FilePath</c>, a read of the compiler's process-wide file-name
+    /// list - is done right here rather than handed to the LSP thread.
+    ///
+    /// <para>At most one highlight request is in flight
+    /// (<see cref="GetDocumentHighlightsAsync"/> holds a gate for its whole round
+    /// trip), so the mailbox is unambiguous even though the callback carries no
+    /// request identity.  A callback with no mailbox installed is the engine
+    /// answering a request whose caller already gave up and drained; dropping it
+    /// is correct.</para>
+    /// </summary>
+    public void SetHighlights(IIdeSource source, IEnumerable<GotoInfo> highlights)
+    {
+        var delivery = _highlightDelivery;
+        if (delivery is null || !ReferenceEquals(delivery.Source, source))
+            return;
+
+        try
+        {
+            delivery.Targets = FlattenGotoInfos(highlights);
+        }
+        catch (Exception ex)
+        {
+            // A malformed usage list must not take the worker loop down; the
+            // request answers "no highlights" (and says so in the Output).
+            _log.Warning($"nemerle document highlight failed: {ex.GetType().Name}: {ex.Message}");
+            delivery.Targets = [];
+        }
+    }
     public void AddUnimplementedMembers(
         IIdeSource source,
         TypeBuilder type,
@@ -1227,6 +1479,9 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         try { await _responsePump.ConfigureAwait(false); }
         catch (OperationCanceledException) { }
         _pumpCancellation.Dispose();
+        // _highlightGate is deliberately not disposed: an in-flight highlight
+        // request would then fault on Release, and a SemaphoreSlim whose
+        // AvailableWaitHandle was never taken holds nothing to release.
     }
 
     /// <summary>Caller must hold <c>_engineOperations</c>.</summary>

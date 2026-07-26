@@ -504,7 +504,7 @@ internal static class Program
 
         // An in-workspace source target (FileIndex > 0) converts from 1-based
         // engine coordinates to a 0-based UTF-16 LSP range.
-        var def = new NemerleGotoTarget(file, FileIndex: 3, Line: 5, Column: 7, EndLine: 5, EndColumn: 12, IsDefinition: true);
+        var def = new NemerleGotoTarget(file, FileIndex: 3, Line: 5, Column: 7, EndLine: 5, EndColumn: 12, NemerleUsageType.Definition);
         var one = GotoMapping.ToLocations([def], includeDeclaration: true);
         Equal(1, one.Count, "an in-workspace source target yields one location");
         Equal(4, one[0].StartLine, "line is converted to 0-based");
@@ -515,16 +515,16 @@ internal static class Program
 
         // A metadata / external member (FileIndex 0, no source path) is dropped so
         // definition on a BCL/NuGet symbol yields an empty result (acceptance 4).
-        var external = new NemerleGotoTarget(null, FileIndex: 0, Line: 0, Column: 0, EndLine: 0, EndColumn: 0, IsDefinition: true);
+        var external = new NemerleGotoTarget(null, FileIndex: 0, Line: 0, Column: 0, EndLine: 0, EndColumn: 0, NemerleUsageType.Definition);
         Equal(0, GotoMapping.ToLocations([external], includeDeclaration: true).Count,
             "a metadata/external target is not navigable");
         // A target with a FileIndex but no end position is not navigable either.
-        var noRange = new NemerleGotoTarget(file, FileIndex: 3, Line: 5, Column: 7, EndLine: 0, EndColumn: 0, IsDefinition: false);
+        var noRange = new NemerleGotoTarget(file, FileIndex: 3, Line: 5, Column: 7, EndLine: 0, EndColumn: 0, NemerleUsageType.Usage);
         Equal(0, GotoMapping.ToLocations([noRange], includeDeclaration: true).Count,
             "a target without an end position is not navigable");
 
         // includeDeclaration drops/keeps the declaration entries (references).
-        var usage = new NemerleGotoTarget(file, FileIndex: 3, Line: 9, Column: 3, EndLine: 9, EndColumn: 8, IsDefinition: false);
+        var usage = new NemerleGotoTarget(file, FileIndex: 3, Line: 9, Column: 3, EndLine: 9, EndColumn: 8, NemerleUsageType.Usage);
         var withDecl = GotoMapping.ToLocations([def, usage], includeDeclaration: true);
         Equal(2, withDecl.Count, "includeDeclaration=true keeps the declaration alongside the usage");
         var withoutDecl = GotoMapping.ToLocations([def, usage], includeDeclaration: false);
@@ -541,6 +541,61 @@ internal static class Program
             True(uri.StartsWith("file:///C:/", StringComparison.Ordinal), $"URI has an upper-cased drive letter and file scheme: {uri}");
             True(uri.EndsWith("/Program.n", StringComparison.Ordinal), $"URI ends with the source file: {uri}");
         }
+
+        // --- documentHighlight (WP-P2): the same collection, one file, kinds ---
+
+        var otherFile = OperatingSystem.IsWindows() ? @"C:\repo\App\Other.n" : "/repo/App/Other.n";
+        var elsewhere = new NemerleGotoTarget(otherFile, FileIndex: 4, Line: 2, Column: 1, EndLine: 2, EndColumn: 6, NemerleUsageType.Usage);
+        var highlights = GotoMapping.ToDocumentHighlights([def, usage, elsewhere], fileIndex: 3);
+        Equal(2, highlights.Count, "highlights keep only the entries from the requested file");
+        Equal(NemerleDocumentHighlightKind.Write, highlights[0].Kind, "the declaration is a Write highlight");
+        Equal(4, highlights[0].StartLine, "the declaration highlight is 0-based");
+        Equal(6, highlights[0].StartCharacter, "the declaration highlight column is 0-based");
+        Equal(11, highlights[0].EndCharacter, "the declaration highlight end column is 0-based");
+        Equal(NemerleDocumentHighlightKind.Read, highlights[1].Kind, "a use is a Read highlight");
+        Equal(8, highlights[1].StartLine, "the use highlight is the second entry");
+
+        // Cross-file entries are excluded by FileIndex, not by path: an entry from
+        // another source can never be a highlight of the document being edited.
+        Equal(1, GotoMapping.ToDocumentHighlights([elsewhere], fileIndex: 4).Count,
+            "the same entry is a highlight when its own file is the one requested");
+
+        // External-assembly members are dropped explicitly (they also have no
+        // in-workspace FileIndex, but the kind is what states the intent).
+        var externalUse = new NemerleGotoTarget(file, FileIndex: 3, Line: 5, Column: 7, EndLine: 5, EndColumn: 12, NemerleUsageType.ExternalUsage);
+        Equal(0, GotoMapping.ToDocumentHighlights([externalUse], fileIndex: 3).Count,
+            "an external-assembly entry is never a highlight");
+
+        // Generated definitions/usages classify like their plain counterparts.
+        var generatedDef = new NemerleGotoTarget(file, FileIndex: 3, Line: 20, Column: 1, EndLine: 20, EndColumn: 4, NemerleUsageType.GeneratedDefinition);
+        var generatedUse = new NemerleGotoTarget(file, FileIndex: 3, Line: 21, Column: 1, EndLine: 21, EndColumn: 4, NemerleUsageType.GeneratedUsage);
+        var generated = GotoMapping.ToDocumentHighlights([generatedDef, generatedUse], fileIndex: 3);
+        Equal(NemerleDocumentHighlightKind.Write, generated[0].Kind, "a generated definition is still a Write");
+        Equal(NemerleDocumentHighlightKind.Read, generated[1].Kind, "a generated usage is still a Read");
+
+        // A duplicate range collapses, and the declaration's Write survives
+        // regardless of which order the engine reported the two in.
+        var sameAsDef = new NemerleGotoTarget(file, FileIndex: 3, Line: 5, Column: 7, EndLine: 5, EndColumn: 12, NemerleUsageType.Usage);
+        var collapsedReadFirst = GotoMapping.ToDocumentHighlights([sameAsDef, def], fileIndex: 3);
+        Equal(1, collapsedReadFirst.Count, "a duplicate range collapses to one highlight");
+        Equal(NemerleDocumentHighlightKind.Write, collapsedReadFirst[0].Kind, "Write wins when the use was seen first");
+        var collapsedWriteFirst = GotoMapping.ToDocumentHighlights([def, sameAsDef], fileIndex: 3);
+        Equal(1, collapsedWriteFirst.Count, "a duplicate range collapses in the other order too");
+        Equal(NemerleDocumentHighlightKind.Write, collapsedWriteFirst[0].Kind, "Write is not downgraded by a later Read");
+
+        // A document with no engine source index has no highlights.
+        Equal(0, GotoMapping.ToDocumentHighlights([def, usage], fileIndex: 0).Count,
+            "a document with no compiler file index yields no highlights");
+
+        // The kind values are the protocol's own numbering, so the handler can
+        // cast straight to DocumentHighlightKind.
+        Equal(2, (int)NemerleDocumentHighlightKind.Read, "Read is the LSP value 2");
+        Equal(3, (int)NemerleDocumentHighlightKind.Write, "Write is the LSP value 3");
+
+        // The mirror must keep the engine's ordinals (the server casts across).
+        Equal(0, (int)NemerleUsageType.Definition, "UsageType.Definition mirrors ordinal 0");
+        Equal(1, (int)NemerleUsageType.Usage, "UsageType.Usage mirrors ordinal 1");
+        Equal(5, (int)NemerleUsageType.ExternalUsage, "UsageType.ExternalUsage mirrors ordinal 5");
     }
 
     private static void IncrementalSyncTests()

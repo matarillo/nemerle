@@ -98,6 +98,15 @@ internal static class Program
             await RunScenarioAsync("Definition: CRLF + non-BMP position", DefinitionCrlfNonBmpAsync);
             await RunScenarioAsync("References: cross-source usages and includeDeclaration toggle", ReferencesAsync);
             await RunScenarioAsync(
+                "Document highlight: a local and a method, declaration write vs use reads, and agreement with references",
+                DocumentHighlightLocalAsync);
+            await RunScenarioAsync(
+                "Document highlight: a cross-source type is highlighted only where it occurs in this file",
+                DocumentHighlightCrossFileAsync);
+            await RunScenarioAsync(
+                "Document highlight: a non-symbol position answers null and logs it; warm timing",
+                DocumentHighlightEmptyAndTimingAsync);
+            await RunScenarioAsync(
                 "Signature help: overloads, active signature/parameter, label parameter offsets",
                 SignatureHelpOverloadsAsync);
             await RunScenarioAsync(
@@ -2168,6 +2177,295 @@ internal static class Program
             throw new InvalidDataException(
                 $"includeDeclaration=false should drop exactly the declaration (with={withDecl.Length}, without={withoutDecl.Length}).");
     }
+
+    // ----- Document highlight (WP-P2) -----
+
+    // A local declared once and read twice, a module method declared once and
+    // called once, and a parameter used twice - three symbol kinds whose
+    // declaration/use split is exactly what the read/write mapping renders.
+    private const string DocumentHighlightProbeSource = """
+        module Highlights
+        {
+          Twice(value : int) : int
+          {
+            value + value
+          }
+
+          Run() : void
+          {
+            def counter = 1;
+            System.Console.WriteLine(counter);
+            System.Console.WriteLine(Twice(counter));
+          }
+        }
+
+        // nothing is declared on this line
+        """;
+
+    /// <summary>
+    /// The core of the feature: every occurrence of the symbol under the caret in
+    /// this document, the declaration reported as a write and the uses as reads,
+    /// the ranges addressing exactly the identifier - and the whole set identical
+    /// to what <c>textDocument/references</c> returns for the same position.  That
+    /// last check is what makes "whatever lights up is what a rename will touch"
+    /// (WP-P3) a measured property rather than an assumption, because the two
+    /// answers come from different engine entry points
+    /// (<c>BeginHighlightUsages</c> vs <c>GetGotoInfo</c>).
+    /// </summary>
+    private static async Task DocumentHighlightLocalAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("document-highlight"), "highlights.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, DocumentHighlightProbeSource);
+
+        var (declLine, declChar) = LocateUtf16(DocumentHighlightProbeSource, "counter", 1);
+        var (useLine, useChar) = LocateUtf16(DocumentHighlightProbeSource, "counter", 2);
+
+        var fromUse = await DocumentHighlightsAsync(client, uri, useLine, useChar);
+        Console.WriteLine($"    HIGHLIGHT counter from a use: {DescribeHighlights(fromUse)}");
+        if (fromUse.Length == 0)
+            throw new InvalidDataException("documentHighlight returned nothing for a local variable.");
+
+        // Every range must cover exactly the identifier text.
+        foreach (var highlight in fromUse)
+        {
+            var (line, character, endLine, endCharacter, _) = HighlightAt(highlight);
+            if (endLine != line)
+                throw new InvalidDataException($"a highlight range spanned lines: {line}..{endLine}");
+            if (endCharacter - character != "counter".Length)
+                throw new InvalidDataException(
+                    $"a highlight range was {endCharacter - character} wide, not {"counter".Length} " +
+                    $"(at {line}:{character}).");
+        }
+
+        // The declaration is the Write; every use is a Read.  LSP has no
+        // "definition" kind, so the declaring occurrence is mapped to Write - the
+        // kind editors style as the distinguished one.
+        var declaration = fromUse.Where(h =>
+        {
+            var (line, character, _, _, _) = HighlightAt(h);
+            return line == declLine && character == declChar;
+        }).ToArray();
+        if (declaration.Length != 1)
+            throw new InvalidDataException(
+                $"expected the declaration of 'counter' among the highlights exactly once, got {declaration.Length}.");
+        if (HighlightAt(declaration[0]).Kind != LspHighlightWrite)
+            throw new InvalidDataException(
+                $"the declaration of 'counter' was reported as kind {HighlightAt(declaration[0]).Kind}, not Write.");
+        foreach (var highlight in fromUse)
+        {
+            var (line, character, _, _, kind) = HighlightAt(highlight);
+            if ((line == declLine && character == declChar) || kind == LspHighlightRead)
+                continue;
+            throw new InvalidDataException($"a use at {line}:{character} was reported as kind {kind}, not Read.");
+        }
+
+        // The declaration origin and the use origin answer with the same set.
+        var fromDeclaration = await DocumentHighlightsAsync(client, uri, declLine, declChar);
+        if (!HighlightSet(fromDeclaration).SetEquals(HighlightSet(fromUse)))
+            throw new InvalidDataException(
+                "documentHighlight from the declaration and from a use returned different sets: " +
+                $"{DescribeHighlights(fromDeclaration)} vs {DescribeHighlights(fromUse)}");
+
+        // Cross-route agreement: the same set references reports for this file.
+        var references = await ReferencesAtAsync(client, uri, useLine, useChar, includeDeclaration: true);
+        var referenceRanges = references.Select(r =>
+        {
+            var (_, line, character) = LocationAt(r);
+            return (line, character);
+        }).ToHashSet();
+        var highlightStarts = fromUse.Select(h =>
+        {
+            var (line, character, _, _, _) = HighlightAt(h);
+            return (line, character);
+        }).ToHashSet();
+        if (!referenceRanges.SetEquals(highlightStarts))
+            throw new InvalidDataException(
+                "documentHighlight and references disagreed on the local's occurrences: " +
+                $"references={string.Join(",", referenceRanges)} highlights={string.Join(",", highlightStarts)}");
+
+        // A module method: the declaration is a Write, the call site a Read.
+        var (methodDeclLine, methodDeclChar) = LocateUtf16(DocumentHighlightProbeSource, "Twice", 1);
+        var (callLine, callChar) = LocateUtf16(DocumentHighlightProbeSource, "Twice", 2);
+        var method = await DocumentHighlightsAsync(client, uri, callLine, callChar);
+        Console.WriteLine($"    HIGHLIGHT Twice from the call site: {DescribeHighlights(method)}");
+        var methodStarts = method.Select(h =>
+        {
+            var (line, character, _, _, kind) = HighlightAt(h);
+            return (line, character, kind);
+        }).ToHashSet();
+        if (!methodStarts.Contains((methodDeclLine, methodDeclChar, LspHighlightWrite)))
+            throw new InvalidDataException(
+                $"the declaration of 'Twice' was not highlighted as a Write: {DescribeHighlights(method)}");
+        if (!methodStarts.Contains((callLine, callChar, LspHighlightRead)))
+            throw new InvalidDataException(
+                $"the call site of 'Twice' was not highlighted as a Read: {DescribeHighlights(method)}");
+    }
+
+    /// <summary>
+    /// The file filter, measured against a symbol that genuinely lives in five
+    /// sources: Sokoban's <c>SMap</c> has 55 occurrences project-wide (pinned by
+    /// the WP-N2 references probe), and documentHighlight must return exactly the
+    /// <c>sokoban.n</c> subset of them - no more (cross-file occurrences are not
+    /// highlights of this document) and no fewer (the file filter must not also
+    /// drop in-file occurrences).
+    /// </summary>
+    private static async Task DocumentHighlightCrossFileAsync(LspTestClient client)
+    {
+        var sokobanProject = Sample("Sokoban", "Sokoban", "Sokoban.nproj");
+        var sokobanSource = Sample("Sokoban", "Sokoban", "sokoban.n");
+        var sokobanUri = new Uri(sokobanSource).AbsoluteUri;
+        var sokobanText = await File.ReadAllTextAsync(sokobanSource);
+
+        var mark = client.Mark();
+        var result = await LoadProjectAsync(client, sokobanProject);
+        AssertLoadedAndApplied(result, expectedSources: 5);
+        await DidOpenAsync(client, sokobanUri, sokobanText, 1);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, sokobanUri, out var p) && VersionOf(p) == 1 && !HasError(p),
+            mark,
+            "error-free sokoban.n before highlighting a cross-source type");
+
+        // The SMap class declaration (occurrence 5 - the same origin the WP-N2
+        // references probe uses).
+        var (declLine, declChar) = LocateUtf16(sokobanText, "SMap", 5);
+
+        var references = await ReferencesAtAsync(client, sokobanUri, declLine, declChar, includeDeclaration: true);
+        var inThisFile = references.Where(r => AreEquivalentDocumentUris(LocationAt(r).Uri, sokobanUri)).ToArray();
+        var elsewhere = references.Length - inThisFile.Length;
+        Console.WriteLine(
+            $"    REFERENCES SMap: {references.Length} total, {inThisFile.Length} in sokoban.n, {elsewhere} elsewhere");
+
+        var highlights = await DocumentHighlightsAsync(client, sokobanUri, declLine, declChar);
+        Console.WriteLine($"    HIGHLIGHT SMap in sokoban.n: {highlights.Length} occurrence(s)");
+
+        if (elsewhere == 0)
+            throw new InvalidDataException(
+                "SMap no longer has usages outside sokoban.n, so this scenario cannot prove the file filter.");
+
+        var expected = inThisFile.Select(r =>
+        {
+            var (_, line, character) = LocationAt(r);
+            return (line, character);
+        }).ToHashSet();
+        var actual = highlights.Select(h =>
+        {
+            var (line, character, _, _, _) = HighlightAt(h);
+            return (line, character);
+        }).ToHashSet();
+        if (!expected.SetEquals(actual))
+            throw new InvalidDataException(
+                $"documentHighlight for SMap did not match the sokoban.n subset of references " +
+                $"(expected {expected.Count}, got {actual.Count}; " +
+                $"missing={string.Join(",", expected.Except(actual))} extra={string.Join(",", actual.Except(expected))}).");
+
+        // The class declaration itself is the Write among them.
+        var declarationKinds = highlights.Where(h =>
+        {
+            var (line, character, _, _, _) = HighlightAt(h);
+            return line == declLine && character == declChar;
+        }).Select(h => HighlightAt(h).Kind).ToArray();
+        if (declarationKinds is not [LspHighlightWrite])
+            throw new InvalidDataException(
+                $"the SMap class declaration was not the single Write highlight (got [{string.Join(",", declarationKinds)}]).");
+    }
+
+    /// <summary>
+    /// The negative half plus the response-time measurement.  A position that is
+    /// not over a symbol answers <c>null</c>, not an empty array, and says so in
+    /// the Output - a silent empty answer is indistinguishable from "the client
+    /// never asked" (WP-P1 §設計-4).
+    /// </summary>
+    private static async Task DocumentHighlightEmptyAndTimingAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("document-highlight-empty"), "highlights.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, DocumentHighlightProbeSource);
+
+        // Warm the engine, then measure a round trip.
+        var (useLine, useChar) = LocateUtf16(DocumentHighlightProbeSource, "counter", 2);
+        _ = await DocumentHighlightsAsync(client, uri, useLine, useChar);
+        var stopwatch = Stopwatch.StartNew();
+        var warm = await DocumentHighlightsAsync(client, uri, useLine, useChar);
+        stopwatch.Stop();
+        Console.WriteLine(
+            $"    warm documentHighlight round trip: {stopwatch.Elapsed.TotalMilliseconds:F0} ms " +
+            $"({warm.Length} occurrence(s))");
+        if (warm.Length == 0)
+            throw new InvalidDataException("the warm documentHighlight request returned nothing.");
+
+        // The trailing comment line is outside every declaration.  Anywhere
+        // *inside* one is not an empty answer even off an identifier: the engine
+        // resolves such a position to the enclosing declaration, so a caret on the
+        // module's brace or on a blank line between members highlights the module
+        // name.  That is the engine's behavior for definition/references too, and
+        // it is a reasonable answer rather than a bug, so the empty case is pinned
+        // where it is genuinely empty.
+        var (commentLine, commentCharacter) =
+            LocateUtf16(DocumentHighlightProbeSource, "// nothing is declared", 1);
+        var mark = client.Mark();
+        var response = await client.RequestAsync("textDocument/documentHighlight", new
+        {
+            textDocument = new { uri },
+            position = new { line = commentLine, character = commentCharacter },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("documentHighlight request failed: " + error);
+        if (response.GetProperty("result").ValueKind != JsonValueKind.Null)
+            throw new InvalidDataException(
+                "documentHighlight over a non-symbol position returned a container rather than null: " +
+                response.GetProperty("result"));
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "nemerle document highlight empty", out _),
+            mark,
+            "the 'document highlight empty' log line for a non-symbol position");
+    }
+
+    private const int LspHighlightRead = 2;
+    private const int LspHighlightWrite = 3;
+
+    private static async Task<JsonElement[]> DocumentHighlightsAsync(
+        LspTestClient client, string uri, int line, int character)
+    {
+        var response = await client.RequestAsync("textDocument/documentHighlight", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("documentHighlight request failed: " + error);
+        var result = response.GetProperty("result");
+        return result.ValueKind == JsonValueKind.Array ? result.EnumerateArray().ToArray() : [];
+    }
+
+    private static (int Line, int Character, int EndLine, int EndCharacter, int Kind) HighlightAt(
+        JsonElement highlight)
+    {
+        var range = highlight.GetProperty("range");
+        var start = range.GetProperty("start");
+        var end = range.GetProperty("end");
+        var kind = highlight.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.Number
+            ? k.GetInt32()
+            : 0;
+        return (
+            start.GetProperty("line").GetInt32(),
+            start.GetProperty("character").GetInt32(),
+            end.GetProperty("line").GetInt32(),
+            end.GetProperty("character").GetInt32(),
+            kind);
+    }
+
+    private static HashSet<(int, int, int, int, int)> HighlightSet(JsonElement[] highlights) =>
+        highlights.Select(h => HighlightAt(h)).Select(h => (h.Line, h.Character, h.EndLine, h.EndCharacter, h.Kind))
+            .ToHashSet();
+
+    private static string DescribeHighlights(JsonElement[] highlights) =>
+        highlights.Length == 0
+            ? "(none)"
+            : string.Join(", ", highlights.Select(h =>
+            {
+                var (line, character, _, endCharacter, kind) = HighlightAt(h);
+                var name = kind switch { LspHighlightWrite => "W", LspHighlightRead => "R", _ => "T" };
+                return $"{line + 1}:{character + 1}-{endCharacter + 1}{name}";
+            }));
 
     // ----- Signature help (WP-P1) -----
 

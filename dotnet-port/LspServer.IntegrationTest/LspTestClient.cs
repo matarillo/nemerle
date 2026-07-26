@@ -98,6 +98,9 @@ internal sealed class LspTestClient : IAsyncDisposable
                             activeParameterSupport = true,
                         },
                     },
+                    // Advertise document highlight so that handler registers
+                    // (WP-P2).
+                    documentHighlight = new { },
                     // Advertise semantic tokens so that handler registers
                     // (WP-O5a).  The legend advertised here is the client's
                     // vocabulary; the server answers with its own legend in the
