@@ -67,6 +67,12 @@ internal sealed class LspTestClient : IAsyncDisposable
         {
             processId = Environment.ProcessId,
             rootUri = new Uri(rootDirectory).AbsoluteUri,
+            // The server only emits its per-request lines (hover / signature help /
+            // document highlight / code actions - one per caret move) when the
+            // client asked for tracing, which is what a user diagnosing a feature
+            // does with nemerle.server.trace.  Scenarios assert on those lines, so
+            // the suite runs traced.
+            trace = "verbose",
             capabilities = new
             {
                 textDocument = new

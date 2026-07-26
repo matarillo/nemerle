@@ -145,7 +145,7 @@
           ],
           "default": "off",
           "scope": "window",
-          "description": "Controls LSP protocol tracing in the Nemerle Language Server output channel.",
+          "markdownDescription": "Controls tracing in the Nemerle Language Server output channel: LSP protocol messages, and the server's own per-request lines (hover, signature help, document highlight, code actions - one per caret move), which are suppressed while this is `off`. Refusals, unexpected empty answers and failures are always logged. Takes effect immediately, without restarting the server.",
           "order": 20
         },
         "nemerle.dotnet.path": {

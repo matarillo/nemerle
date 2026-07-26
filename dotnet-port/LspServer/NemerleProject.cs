@@ -684,7 +684,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
                 !_openUriToPath.TryGetValue(uri, out var path) ||
                 !_documentsByPath.TryGetValue(path, out var state))
             {
-                _log.Log($"nemerle document highlight skipped: {uri} is not an open document");
+                _log.Trace($"nemerle document highlight skipped: {uri} is not an open document");
                 return [];
             }
 
@@ -731,7 +731,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
                     : outcome == EngineRequestBridge.RequestOutcome.Completed
                         ? EngineRequestBridge.RequestOutcome.Stale
                         : outcome;
-                _log.Log(
+                _log.Trace(
                     $"nemerle document highlight unavailable at {uri} {lspLine}:{lspCharacter} " +
                     $"(engine request {reason})");
                 return [];
@@ -1161,7 +1161,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
                 !_openUriToPath.TryGetValue(uri, out var path) ||
                 !_documentsByPath.TryGetValue(path, out var state))
             {
-                _log.Log($"nemerle code action skipped: {uri} is not an open document");
+                _log.Trace($"nemerle code action skipped: {uri} is not an open document");
                 return [];
             }
 
@@ -1288,7 +1288,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             var generated = await pending.ConfigureAwait(false);
             if (!generated.IsUsable)
             {
-                _log.Log(
+                _log.Trace(
                     $"nemerle code action: member generation did not complete ({generated.Outcome})");
                 return null;
             }
@@ -1666,7 +1666,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
                     !_openUriToPath.TryGetValue(uri, out var path) ||
                     !_documentsByPath.TryGetValue(path, out var state))
                 {
-                    _log.Log($"nemerle signature help skipped: {uri} is not an open document");
+                    _log.Trace($"nemerle signature help skipped: {uri} is not an open document");
                     return null;
                 }
 
@@ -1689,7 +1689,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         var result = await pending.ConfigureAwait(false);
         if (!result.IsUsable)
         {
-            _log.Log(
+            _log.Trace(
                 $"nemerle signature help unavailable at {uri} {lspLine}:{lspCharacter} (engine request {result.Outcome})");
             return null;
         }
@@ -1721,7 +1721,7 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         var described = await describing.ConfigureAwait(false);
         if (!described.IsUsable)
         {
-            _log.Log(
+            _log.Trace(
                 $"nemerle signature help unavailable at {uri} {lspLine}:{lspCharacter} (description request {described.Outcome})");
             return null;
         }

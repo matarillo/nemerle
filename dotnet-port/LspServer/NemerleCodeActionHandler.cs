@@ -55,13 +55,13 @@ internal sealed class NemerleCodeActionHandler : CodeActionHandlerBase
 
         if (actions.Count == 0)
         {
-            _log.Log(
+            _log.Trace(
                 $"nemerle code actions: none at {uri} {position.Line}:{position.Character} " +
                 $"({stopwatch.Elapsed.TotalMilliseconds:F0} ms)");
             return new CommandOrCodeActionContainer();
         }
 
-        _log.Log(
+        _log.Trace(
             $"nemerle code actions computed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms at " +
             $"{uri} {position.Line}:{position.Character}: " +
             string.Join(", ", actions.Select(action => $"'{action.Title}'")));

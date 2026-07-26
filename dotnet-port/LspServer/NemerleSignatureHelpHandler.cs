@@ -56,13 +56,13 @@ internal sealed class NemerleSignatureHelpHandler : SignatureHelpHandlerBase
             // A silent null is indistinguishable from "the client never asked"
             // in the Output pane, which is the only view a user has of this
             // feature (WP-O5a §設計-3).
-            _log.Log(
+            _log.Trace(
                 $"nemerle signature help empty at {uri} {position.Line}:{position.Character} " +
                 $"({stopwatch.Elapsed.TotalMilliseconds:F0} ms)");
             return null;
         }
 
-        _log.Log(
+        _log.Trace(
             $"nemerle signature help computed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms at " +
             $"{uri} {position.Line}:{position.Character} ({help.Signatures.Count} signature(s), " +
             $"active {help.ActiveSignature}/{help.ActiveParameter})");

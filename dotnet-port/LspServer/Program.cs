@@ -8,6 +8,14 @@ namespace Nemerle.LanguageServer;
 
 internal static class Program
 {
+    /// <summary>
+    /// True unless the client asked for no tracing.  Compared as text because
+    /// OmniSharp models the trace value as its own type, whose equality is not
+    /// necessarily value equality.
+    /// </summary>
+    private static bool IsTracing(object? trace) =>
+        trace is not null && !string.Equals(trace.ToString(), "off", StringComparison.OrdinalIgnoreCase);
+
     public static async Task Main()
     {
         // Trace goes to window/logMessage once the facade is attached below; until
@@ -33,6 +41,19 @@ internal static class Program
                 services.AddSingleton(projectInfo);
                 services.AddSingleton(log);
                 services.AddSingleton(serverOptions);
+            })
+            // Per-request chatter (hover/signature help/highlight/code actions,
+            // one line per caret move) is only sent when the client asked for
+            // tracing - see ServerLog.Trace.  The client's choice arrives with
+            // initialize and can change later through $/setTrace.
+            .OnInitialize((_, request, _) =>
+            {
+                log.SetTraceEnabled(IsTracing(request.Trace));
+                return Task.CompletedTask;
+            })
+            .OnNotification<SetTraceParams>("$/setTrace", parameters =>
+            {
+                log.SetTraceEnabled(IsTracing(parameters.Value));
             })
             .WithHandler<NemerleTextDocumentSyncHandler>()
             .WithHandler<NemerleProjectInfoHandler>()

@@ -23,6 +23,7 @@ internal sealed class ServerLog
     private readonly List<LogMessageParams> _buffered = [];
     private readonly List<ShowMessageParams> _bufferedShow = [];
     private ILanguageServerFacade? _server;
+    private bool _traceEnabled;
 
     /// <summary>Connects the log to the server facade and replays anything that
     /// was buffered before the facade existed.</summary>
@@ -50,6 +51,38 @@ internal sealed class ServerLog
 
     /// <summary>Verbose/measurement trace (query and rebuild timings).</summary>
     public void Log(string message) => Send(MessageType.Log, message);
+
+    /// <summary>
+    /// Per-request chatter: one line every time the editor polls hover, signature
+    /// help, document highlight or code actions - which is on every caret move and
+    /// every mouse rest.  Suppressed unless the client asked for tracing
+    /// (<c>nemerle.server.trace</c> other than <c>off</c>).
+    ///
+    /// <para><b>Why this needs its own level.</b>  <c>MessageType.Log</c> is
+    /// already the protocol's lowest, but vscode-languageclient renders it in the
+    /// Output channel as <c>[info]</c> all the same, so "quieter" can only mean
+    /// "not sent".  Left on, these lines make the Output channel unreadable for
+    /// the diagnosis it exists for, and every one of them appends to the Output
+    /// editor while the user is typing - which is the leading suspect for word
+    /// highlights being dropped when the panel is open (58 追記2).</para>
+    ///
+    /// <para>The paths that report something <em>unexpected</em> - refusals, empty
+    /// answers that should not be empty, engine failures - keep using
+    /// <see cref="Log"/> / <see cref="Warning"/>, so a silent failure is still
+    /// visible without turning tracing on.</para>
+    /// </summary>
+    public void Trace(string message)
+    {
+        if (Volatile.Read(ref _traceEnabled))
+            Send(MessageType.Log, message);
+    }
+
+    /// <summary>
+    /// Turns <see cref="Trace"/> on or off.  Set from the client's
+    /// <c>initialize</c> trace value and from <c>$/setTrace</c>, so the
+    /// <c>nemerle.server.trace</c> setting takes effect without a restart.
+    /// </summary>
+    public void SetTraceEnabled(bool enabled) => Volatile.Write(ref _traceEnabled, enabled);
 
     /// <summary>Recoverable anomalies (unreadable source, unsupported option).</summary>
     public void Warning(string message) => Send(MessageType.Warning, message);

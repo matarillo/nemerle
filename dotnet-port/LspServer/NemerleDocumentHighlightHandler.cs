@@ -54,14 +54,14 @@ internal sealed class NemerleDocumentHighlightHandler : DocumentHighlightHandler
             // A silent empty answer is indistinguishable from "the client never
             // asked" in the Output pane, which is the only view a user has of
             // this feature (WP-O5a §設計-3, WP-P1 §設計-4).
-            _log.Log(
+            _log.Trace(
                 $"nemerle document highlight empty at {uri} {position.Line}:{position.Character} " +
                 $"({stopwatch.Elapsed.TotalMilliseconds:F0} ms)");
             return null;
         }
 
         var writes = highlights.Count(h => h.Kind == NemerleDocumentHighlightKind.Write);
-        _log.Log(
+        _log.Trace(
             $"nemerle document highlight computed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms at " +
             $"{uri} {position.Line}:{position.Character} ({highlights.Count} occurrence(s), " +
             $"{writes} write / {highlights.Count - writes} read)");

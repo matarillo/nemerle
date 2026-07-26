@@ -48,7 +48,7 @@ internal sealed class NemerleHoverHandler : HoverHandlerBase
         // Warm-hover response time (WP-M2 acceptance criterion 6): surfaced via
         // window/logMessage so the extension Output Channel and integration test
         // can record it without stderr.
-        _log.Log(
+        _log.Trace(
             $"nemerle hover computed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms at {uri} {position.Line}:{position.Character}");
 
         // Declaration hovers carry a trailing "declared at file:line:col:..."
