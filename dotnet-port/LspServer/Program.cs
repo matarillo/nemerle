@@ -40,6 +40,7 @@ internal static class Program
             .WithHandler<NemerleCompletionHandler>()
             .WithHandler<NemerleDefinitionHandler>()
             .WithHandler<NemerleReferencesHandler>()
+            .WithHandler<NemerleSignatureHelpHandler>()
             .WithHandler<NemerleSemanticTokensHandler>()).ConfigureAwait(false);
 
         log.Attach(server);

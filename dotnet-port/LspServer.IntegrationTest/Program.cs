@@ -98,6 +98,15 @@ internal static class Program
             await RunScenarioAsync("Definition: CRLF + non-BMP position", DefinitionCrlfNonBmpAsync);
             await RunScenarioAsync("References: cross-source usages and includeDeclaration toggle", ReferencesAsync);
             await RunScenarioAsync(
+                "Signature help: overloads, active signature/parameter, label parameter offsets",
+                SignatureHelpOverloadsAsync);
+            await RunScenarioAsync(
+                "Signature help: constructor call, and a position outside any call answers null",
+                SignatureHelpConstructorAndNullAsync);
+            await RunScenarioAsync(
+                "Signature help: XmlDoc summary and parameter docs from a PackageReference assembly",
+                SignatureHelpXmlDocAsync);
+            await RunScenarioAsync(
                 "Semantic tokens: macro-introduced keyword, quotation/escape modifiers, dynamic on using removal",
                 SemanticTokensAsync);
             await RunScenarioAsync(
@@ -2158,6 +2167,329 @@ internal static class Program
         if (withoutDecl.Length != withDecl.Length - 1)
             throw new InvalidDataException(
                 $"includeDeclaration=false should drop exactly the declaration (with={withDecl.Length}, without={withoutDecl.Length}).");
+    }
+
+    // ----- Signature help (WP-P1) -----
+
+    // Two overloads of the same name with different arities, so the engine has
+    // something to disambiguate, plus a call site whose argument list the caret
+    // walks through.
+    private const string SignatureHelpProbeSource = """
+        using System;
+
+        module SignatureProbe
+        {
+          Combine(first : int, second : int) : int
+          {
+            first + second
+          }
+
+          Combine(first : string, second : string, third : string) : string
+          {
+            first + second + third
+          }
+
+          Nothing() : void
+          {
+          }
+
+          Run() : void
+          {
+            def total = Combine(1, 2);
+            Nothing();
+            Console.WriteLine(total);
+          }
+        }
+        """;
+
+    /// <summary>
+    /// The core of the feature: an overloaded call yields one
+    /// <c>SignatureInformation</c> per overload, the label is composed in
+    /// Nemerle notation, every <c>ParameterInformation</c> carries an explicit
+    /// <c>[start, end)</c> range that actually addresses its own text inside
+    /// that label, and <c>activeParameter</c> advances when the caret moves past
+    /// a comma.  A zero-parameter call still answers (with no parameters).
+    /// </summary>
+    private static async Task SignatureHelpOverloadsAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("signature-help"), "signatures.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, SignatureHelpProbeSource);
+
+        // Caret just after the '(' of `Combine(1, 2)`, i.e. on the first argument.
+        var (line, character) = LocateUtf16(SignatureHelpProbeSource, "Combine(1, 2)", 1);
+        var firstArgument = character + "Combine(".Length;
+        var help = await SignatureHelpAsync(client, uri, line, firstArgument);
+        if (help.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("signatureHelp returned null inside a call's argument list.");
+
+        var labels = SignatureLabels(help);
+        if (labels.Length != 2)
+            throw new InvalidDataException(
+                $"expected both Combine overloads, got {labels.Length}: {string.Join(" | ", labels)}");
+        // The label is composed by the server (the engine has no rendered
+        // signature string): Name(name : type, ...) : ReturnType.
+        AssertHasSignature(labels, "Combine(first : int, second : int) : int");
+        AssertHasSignature(labels, "Combine(first : string, second : string, third : string) : string");
+
+        // The engine resolved the call to the two-argument overload, so that is
+        // the one the popup opens on.
+        var activeSignature = help.GetProperty("activeSignature").GetInt32();
+        if (labels[activeSignature] != "Combine(first : int, second : int) : int")
+            throw new InvalidDataException(
+                $"activeSignature pointed at '{labels[activeSignature]}' rather than the int overload.");
+        if (help.GetProperty("activeParameter").GetInt32() != 0)
+            throw new InvalidDataException("the caret on the first argument did not report activeParameter 0.");
+
+        // Parameter labels are offsets, not substrings: each pair must address
+        // exactly its own text inside the signature label.  This is what makes
+        // an editor bold the right parameter when two of them share a type.
+        AssertParameterOffsets(help);
+
+        // Past the comma: the same call now highlights the second parameter.
+        var secondArgument = character + "Combine(1, ".Length;
+        var advanced = await SignatureHelpAsync(client, uri, line, secondArgument);
+        if (advanced.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("signatureHelp returned null on the second argument.");
+        if (advanced.GetProperty("activeParameter").GetInt32() != 1)
+            throw new InvalidDataException(
+                "activeParameter did not advance to 1 after the comma: " +
+                advanced.GetProperty("activeParameter").GetInt32());
+
+        // A call that takes no arguments still produces a signature (with an
+        // empty parameter list), so the popup shows the return type.
+        var (nothingLine, nothingChar) = LocateUtf16(SignatureHelpProbeSource, "Nothing();", 1);
+        var nothing = await SignatureHelpAsync(client, uri, nothingLine, nothingChar + "Nothing(".Length);
+        if (nothing.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("signatureHelp returned null for a zero-parameter call.");
+        AssertHasSignature(SignatureLabels(nothing), "Nothing() : void");
+        var nothingParameters = nothing.GetProperty("signatures")[0].GetProperty("parameters");
+        if (nothingParameters.ValueKind == JsonValueKind.Array && nothingParameters.GetArrayLength() != 0)
+            throw new InvalidDataException("a zero-parameter signature reported parameters.");
+
+        // Warm round-trip.  Signature help costs two hops through the engine's
+        // AsyncWorker queue (the tip, then the flattening that must not read
+        // engine state off that thread), so record what that actually costs.
+        var stopwatch = Stopwatch.StartNew();
+        _ = await SignatureHelpAsync(client, uri, line, firstArgument);
+        stopwatch.Stop();
+        Console.WriteLine(
+            $"    warm textDocument/signatureHelp round-trip: {stopwatch.Elapsed.TotalMilliseconds:F0} ms");
+    }
+
+    /// <summary>
+    /// A constructor call is a different engine path (the tip's name comes from
+    /// the declaring type, not the method), and it exercises overload sets from
+    /// an external assembly.  The second half pins the null path: a caret that is
+    /// not inside any argument list must answer null - not an empty container,
+    /// which would leave an empty popup on screen - and must say so in the log.
+    /// </summary>
+    private static async Task SignatureHelpConstructorAndNullAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("signature-help-ctor"), "ctor.n")).AbsoluteUri;
+        const string source = """
+            using System.Text;
+
+            module CtorProbe
+            {
+              Run() : void
+              {
+                def builder = StringBuilder("start");
+                _ = builder;
+              }
+            }
+            """;
+        await OpenAndAwaitAnalysisAsync(client, uri, source);
+
+        var (line, character) = LocateUtf16(source, "StringBuilder(\"start\")", 1);
+        var help = await SignatureHelpAsync(client, uri, line, character + "StringBuilder(".Length);
+        if (help.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("signatureHelp returned null inside a constructor call.");
+
+        var labels = SignatureLabels(help);
+        // Every overload is named after the type, not after ".ctor".
+        foreach (var label in labels)
+        {
+            if (!label.StartsWith("StringBuilder(", StringComparison.Ordinal))
+                throw new InvalidDataException($"a constructor overload was not named after its type: {label}");
+        }
+
+        // The engine resolved the string overload, which is the one the popup
+        // must open on out of the whole StringBuilder constructor set.
+        var activeLabel = labels[help.GetProperty("activeSignature").GetInt32()];
+        if (!activeLabel.Contains(": string", StringComparison.Ordinal))
+            throw new InvalidDataException(
+                $"activeSignature for StringBuilder(\"start\") was '{activeLabel}', not the string overload.");
+        AssertParameterOffsets(help);
+        Console.WriteLine($"    StringBuilder constructor overloads offered: {labels.Length}");
+
+        // Outside any call: `def builder` is a declaration, not an argument list.
+        var mark = client.Mark();
+        var (defLine, defChar) = LocateUtf16(source, "def builder", 1);
+        var none = await SignatureHelpAsync(client, uri, defLine, defChar + 2);
+        if (none.ValueKind != JsonValueKind.Null)
+            throw new InvalidDataException(
+                "signatureHelp outside a call did not answer null: " + none);
+        // The empty answer is logged: a silent null is indistinguishable from a
+        // client that never asked when reading the Output pane.
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "nemerle signature help empty", out _),
+            mark,
+            "the window/logMessage line for an empty signature help answer");
+    }
+
+    /// <summary>
+    /// Documentation: the engine only reads XmlDoc for members whose declaring
+    /// assembly ships a .xml file next to it, so this uses the Newtonsoft.Json
+    /// package the PackageReference sample already resolves.  It also pins the
+    /// normalization - the summary arrives with the source file's line breaks and
+    /// indentation, and a signature popup needs one line.
+    /// </summary>
+    private static async Task SignatureHelpXmlDocAsync(LspTestClient client)
+    {
+        var packageProject = Sample("PackageReference", "PackageReference.nproj");
+        var uri = new Uri(Sample("PackageReference", "PackageSample.n")).AbsoluteUri;
+        const string source = """
+            using Newtonsoft.Json;
+
+            namespace PackageReferenceSample
+            {
+              public module Marker
+              {
+                public Run() : void
+                {
+                  _ = JsonConvert.SerializeObject(42);
+                }
+              }
+            }
+            """;
+        var mark = client.Mark();
+        AssertLoadedAndApplied(await LoadProjectAsync(client, packageProject), expectedSources: 1);
+        await DidOpenAsync(client, uri, source, 1);
+        await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1,
+            mark, "analysis of the signature-help XmlDoc buffer");
+
+        var (line, character) = LocateUtf16(source, "SerializeObject(42)", 1);
+        var help = await SignatureHelpAsync(client, uri, line, character + "SerializeObject(".Length);
+        if (help.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("signatureHelp returned null inside JsonConvert.SerializeObject(.");
+
+        var signatures = help.GetProperty("signatures");
+        var documented = 0;
+        var documentedParameters = 0;
+        var totalParameters = 0;
+        for (var i = 0; i < signatures.GetArrayLength(); i++)
+        {
+            AssertOneLineDocumentation(DocumentationText(signatures[i]), ref documented);
+            if (!signatures[i].TryGetProperty("parameters", out var parameters) ||
+                parameters.ValueKind != JsonValueKind.Array)
+                continue;
+            foreach (var parameter in parameters.EnumerateArray())
+            {
+                totalParameters++;
+                AssertOneLineDocumentation(DocumentationText(parameter), ref documentedParameters);
+            }
+        }
+
+        if (documented == 0)
+            throw new InvalidDataException(
+                "no SerializeObject overload carried an XmlDoc summary; the documentation path is not reaching the client.");
+        if (documentedParameters == 0)
+            throw new InvalidDataException(
+                "no SerializeObject parameter carried its <param> documentation.");
+        Console.WriteLine(
+            $"    SerializeObject overloads with an XmlDoc summary: {documented}/{signatures.GetArrayLength()}, " +
+            $"parameters with <param> docs: {documentedParameters}/{totalParameters}");
+        AssertParameterOffsets(help);
+    }
+
+    private static async Task<JsonElement> SignatureHelpAsync(
+        LspTestClient client, string uri, int line, int character)
+    {
+        var response = await client.RequestAsync("textDocument/signatureHelp", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("signatureHelp request failed: " + error);
+        return response.GetProperty("result");
+    }
+
+    private static string[] SignatureLabels(JsonElement help) =>
+        [.. help.GetProperty("signatures").EnumerateArray()
+            .Select(signature => signature.GetProperty("label").GetString() ?? "")];
+
+    private static void AssertHasSignature(string[] labels, string expected)
+    {
+        if (!labels.Contains(expected, StringComparer.Ordinal))
+            throw new InvalidDataException(
+                $"signature help did not offer '{expected}'. Got: {string.Join(" | ", labels)}");
+    }
+
+    /// <summary>
+    /// Every parameter label must be the <c>[start, end)</c> offset form (the
+    /// client advertised <c>labelOffsetSupport</c>) and must address text inside
+    /// its own signature label.  Substring-based labels cannot be checked this
+    /// way, which is the whole reason the server composes offsets.
+    /// </summary>
+    private static void AssertParameterOffsets(JsonElement help)
+    {
+        foreach (var signature in help.GetProperty("signatures").EnumerateArray())
+        {
+            var label = signature.GetProperty("label").GetString() ?? "";
+            if (!signature.TryGetProperty("parameters", out var parameters) ||
+                parameters.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var parameter in parameters.EnumerateArray())
+            {
+                var parameterLabel = parameter.GetProperty("label");
+                if (parameterLabel.ValueKind != JsonValueKind.Array)
+                    throw new InvalidDataException(
+                        $"parameter label was not an [start, end) pair but {parameterLabel.ValueKind}: {parameterLabel}");
+                var start = parameterLabel[0].GetInt32();
+                var end = parameterLabel[1].GetInt32();
+                if (start < 0 || end > label.Length || start >= end)
+                    throw new InvalidDataException(
+                        $"parameter label range [{start}, {end}) does not fit the signature label '{label}'.");
+                var slice = label[start..end];
+                // The composed label puts each parameter's own "name : type"
+                // there, so the slice must not spill into the separators.
+                if (slice.Contains(',') || slice.StartsWith(' ') || slice.EndsWith(' ') ||
+                    slice.Contains('(') || slice.Contains(')'))
+                    throw new InvalidDataException(
+                        $"parameter label range [{start}, {end}) addressed '{slice}' inside '{label}'.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Counts a present documentation string and pins the normalization: a
+    /// signature popup shows one line, and the XmlDoc text arrives with the
+    /// declaring source file's line breaks and indentation still in it.
+    /// </summary>
+    private static void AssertOneLineDocumentation(string? documentation, ref int documented)
+    {
+        if (documentation is null)
+            return;
+        documented++;
+        if (documentation.Contains('\n') || documentation.Contains('\r'))
+            throw new InvalidDataException($"documentation kept its line breaks: {documentation}");
+        if (documentation.Contains("  ", StringComparison.Ordinal))
+            throw new InvalidDataException($"documentation kept run-on whitespace: {documentation}");
+    }
+
+    private static string? DocumentationText(JsonElement signature)
+    {
+        if (!signature.TryGetProperty("documentation", out var documentation))
+            return null;
+        return documentation.ValueKind switch
+        {
+            JsonValueKind.String => documentation.GetString(),
+            JsonValueKind.Object => documentation.TryGetProperty("value", out var value) ? value.GetString() : null,
+            _ => null,
+        };
     }
 
     // ----- Semantic tokens (WP-O5a) -----

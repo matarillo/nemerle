@@ -85,6 +85,19 @@ internal sealed class LspTestClient : IAsyncDisposable
                     // (WP-M4).
                     definition = new { linkSupport = false },
                     references = new { },
+                    // Advertise signature help with labelOffsetSupport so the
+                    // handler emits [start, end) parameter labels (WP-P1); the
+                    // string fallback is the path a client without it takes.
+                    signatureHelp = new
+                    {
+                        contextSupport = true,
+                        signatureInformation = new
+                        {
+                            documentationFormat = new[] { "plaintext", "markdown" },
+                            parameterInformation = new { labelOffsetSupport = true },
+                            activeParameterSupport = true,
+                        },
+                    },
                     // Advertise semantic tokens so that handler registers
                     // (WP-O5a).  The legend advertised here is the client's
                     // vocabulary; the server answers with its own legend in the

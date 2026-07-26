@@ -12,6 +12,7 @@ internal static class Program
             HoverMarkupTests();
             CompletionMappingTests();
             SemanticTokenMappingTests();
+            SignatureHelpMappingTests();
             GotoMappingTests();
             IncrementalSyncTests();
             PathNormalizerTests();
@@ -385,6 +386,114 @@ internal static class Program
             (NemerleSemanticTokenType.None, NemerleSemanticTokenModifier.None),
             SemanticTokenMapping.Classify((NemerleScanTokenColor)9999, macroKeyword: false),
             "an unmirrored engine color emits no token");
+    }
+
+    private static void SignatureHelpMappingTests()
+    {
+        // Nothing to show is null, not an empty container: an empty
+        // SignatureHelp leaves an empty popup open in VS Code.
+        True(SignatureHelpMapping.ToSignatureHelp(null) is null, "no tip maps to null");
+        True(SignatureHelpMapping.ToSignatureHelp(new NemerleMethodTip([], 0, 0)) is null,
+            "a tip with no overloads maps to null");
+
+        // The label is composed here, in Nemerle notation, from the pieces the
+        // engine exposes (name, per-parameter "name : type", return type).
+        var twoParameters = new NemerleTipSignature(
+            "Combine", "int", null,
+            [
+                new NemerleTipParameter("first", "first : int", null),
+                new NemerleTipParameter("second", "second : int", "the addend"),
+            ]);
+        var help = SignatureHelpMapping.ToSignatureHelp(new NemerleMethodTip([twoParameters], 0, 1));
+        True(help is not null, "a tip with one overload maps to signature help");
+        var signature = help!.Signatures[0];
+        Equal("Combine(first : int, second : int) : int", signature.Label, "composed signature label");
+
+        // The parameter ranges are half-open [start, end) offsets that address
+        // exactly their own text - the property substring matching cannot give
+        // when two parameters share a type, which is the common case.
+        Equal(2, signature.Parameters.Count, "parameter count");
+        Equal("first : int", signature.Label[signature.Parameters[0].Start..signature.Parameters[0].End],
+            "first parameter range addresses its own text");
+        Equal("second : int", signature.Label[signature.Parameters[1].Start..signature.Parameters[1].End],
+            "second parameter range addresses its own text");
+        True(signature.Parameters[0].End < signature.Parameters[1].Start, "parameter ranges do not overlap");
+        Equal("the addend", signature.Parameters[1].Documentation, "parameter documentation");
+        Equal<string?>(null, signature.Parameters[0].Documentation, "an undocumented parameter has no documentation");
+        Equal(1, help.ActiveParameter, "activeParameter comes from ParameterIndex");
+
+        // A member with no parameters still renders (the popup then shows only
+        // the return type), and a member whose return type the engine could not
+        // name drops the " : " tail instead of printing an empty type.
+        Equal(
+            "Nothing() : void",
+            SignatureHelpMapping.ToSignatureHelp(
+                new NemerleMethodTip([new NemerleTipSignature("Nothing", "void", null, [])], 0, 0))!
+                .Signatures[0].Label,
+            "a zero-parameter signature");
+        Equal(
+            "Nothing()",
+            SignatureHelpMapping.ToSignatureHelp(
+                new NemerleMethodTip([new NemerleTipSignature("Nothing", "  ", null, [])], 0, 0))!
+                .Signatures[0].Label,
+            "an unnamed return type drops the trailing colon");
+
+        // DefaultMethod is -1 when the engine could not resolve the call to one
+        // overload (List.FindIndex missed); an out-of-range activeSignature is a
+        // protocol error, so it falls back to the first (smallest-arity) one.
+        var overloads = new NemerleMethodTip(
+            [twoParameters, twoParameters with { ReturnType = "string" }], -1, 0);
+        Equal(0, SignatureHelpMapping.ToSignatureHelp(overloads)!.ActiveSignature,
+            "an unresolved DefaultMethod falls back to the first overload");
+        Equal(1, SignatureHelpMapping.ToSignatureHelp(overloads with { DefaultSignature = 1 })!.ActiveSignature,
+            "a resolved DefaultMethod is passed through");
+        Equal(0, SignatureHelpMapping.ToSignatureHelp(overloads with { DefaultSignature = 7 })!.ActiveSignature,
+            "an out-of-range DefaultMethod falls back to the first overload");
+
+        // activeParameter is deliberately NOT clamped to the parameter count:
+        // LSP renders an out-of-range index as "no parameter highlighted", which
+        // is right for a call with more arguments than the overload takes.
+        Equal(5, SignatureHelpMapping.ToSignatureHelp(overloads with { ParameterIndex = 5 })!.ActiveParameter,
+            "an argument past the last parameter keeps its index");
+        Equal(0, SignatureHelpMapping.ToSignatureHelp(overloads with { ParameterIndex = -3 })!.ActiveParameter,
+            "a negative parameter index is corrected");
+
+        // XmlDoc summaries arrive with the source file's line breaks and
+        // indentation; a signature popup needs one line, and a multi-line label
+        // would also make the parameter offsets address text the editor renders
+        // differently.
+        var documented = SignatureHelpMapping.ToSignatureHelp(new NemerleMethodTip(
+            [
+                new NemerleTipSignature(
+                    " Serialize ", "string", "\n   Converts the value\n   to JSON.\n  ",
+                    [new NemerleTipParameter("value", " value\n : object ", "   the\tvalue  ")]),
+            ], 0, 0))!;
+        Equal("Converts the value to JSON.", documented.Signatures[0].Documentation,
+            "a multi-line XmlDoc summary is collapsed to one line");
+        Equal("Serialize(value : object) : string", documented.Signatures[0].Label,
+            "whitespace inside the engine's strings is collapsed too");
+        Equal("the value", documented.Signatures[0].Parameters[0].Documentation,
+            "parameter documentation is collapsed as well");
+        Equal<string?>(null,
+            SignatureHelpMapping.ToSignatureHelp(new NemerleMethodTip(
+                [new NemerleTipSignature("X", "int", "   \n ", [])], 0, 0))!.Signatures[0].Documentation,
+            "a whitespace-only summary is no documentation at all");
+
+        // A parameter the engine could not render still gets a non-empty span,
+        // so the offsets stay well-formed.
+        var degenerate = SignatureHelpMapping.ToSignatureHelp(new NemerleMethodTip(
+            [
+                new NemerleTipSignature("F", "int", null,
+                [
+                    new NemerleTipParameter("only", "", null),
+                    new NemerleTipParameter("", "", null),
+                ]),
+            ], 0, 0))!.Signatures[0];
+        Equal("F(only, _) : int", degenerate.Label, "empty displays fall back to the name, then to a placeholder");
+        Equal("only", degenerate.Label[degenerate.Parameters[0].Start..degenerate.Parameters[0].End],
+            "the name fallback is still addressed by its range");
+        Equal("_", degenerate.Label[degenerate.Parameters[1].Start..degenerate.Parameters[1].End],
+            "the placeholder is still addressed by its range");
     }
 
     private static void GotoMappingTests()

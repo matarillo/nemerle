@@ -588,6 +588,198 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     }
 
     /// <summary>
+    /// Computes the method tip (signature help) for an open document at an LSP
+    /// position (0-based line/character, UTF-16 code units), flattened into the
+    /// engine-independent <see cref="NemerleMethodTip"/> that
+    /// <see cref="SignatureHelpMapping"/> maps to LSP shapes.  Returns null when
+    /// the document is not open, the caret is not inside a call's argument list,
+    /// or the request was cancelled/superseded/stale.
+    ///
+    /// <para><b>Two worker round trips, on purpose.</b>  The engine's
+    /// <c>BeginGetMethodTipInfo</c> already runs on the AsyncWorker thread, so
+    /// computing the tip honors the single-thread contract (see
+    /// <see cref="GetSemanticTokensAsync"/> for what happens when it is broken).
+    /// But the resulting <c>MethodTipInfo</c> is a lazy view over the engine's
+    /// members: <c>GetDescription</c> / <c>GetParameterInfo</c> call
+    /// <c>XmlDocReader.GetInfo</c>, whose cache is plain unsynchronized mutable
+    /// state (a module-level <c>Map</c> reassigned on every miss, and an
+    /// <c>XmlDocFile</c> that reloads itself in place when the .xml file's
+    /// timestamp moved).  Reading it from the LSP thread while the worker reads
+    /// it too is a data race on engine state, so the flattening is posted back
+    /// to the worker as a second request instead.  The cost is one extra queue
+    /// hop; the alternative is the class of bug WP-O5a spent a WP finding.</para>
+    /// </summary>
+    public async Task<NemerleMethodTip?> GetSignatureHelpAsync(
+        string uri,
+        int lspLine,
+        int lspCharacter,
+        CancellationToken token)
+    {
+        InMemoryNemerleSource source;
+        Task<EngineRequestBridge.RequestResult<MethodTipInfo?>> pending;
+        lock (_engineOperations)
+        {
+            int expectedVersion;
+            lock (_gate)
+            {
+                if (_disposed ||
+                    !_openUriToPath.TryGetValue(uri, out var path) ||
+                    !_documentsByPath.TryGetValue(path, out var state))
+                {
+                    _log.Log($"nemerle signature help skipped: {uri} is not an open document");
+                    return null;
+                }
+
+                source = state.Source;
+                expectedVersion = source.CurrentVersion;
+            }
+
+            // Engine coordinates are 1-based; the LSP character is a UTF-16 code
+            // unit offset, matching the source's .NET string indexing.
+            var line = lspLine + 1;
+            var column = lspCharacter + 1;
+            pending = _bridge.RunAsync<MethodTipInfo?>(
+                () => _engine.BeginGetMethodTipInfo(source, line, column),
+                () => source.CurrentVersion,
+                expectedVersion,
+                static request => ((MethodTipInfoAsyncRequest)request).MethodTipInfo,
+                token);
+        }
+
+        var result = await pending.ConfigureAwait(false);
+        if (!result.IsUsable)
+        {
+            _log.Log(
+                $"nemerle signature help unavailable at {uri} {lspLine}:{lspCharacter} (engine request {result.Outcome})");
+            return null;
+        }
+
+        // HasTip is a plain Location read on the tip itself; the members behind
+        // it are only touched by the worker-side flattening below.
+        if (result.Value is not { } tip || !tip.HasTip)
+            return null;
+
+        Task<EngineRequestBridge.RequestResult<NemerleMethodTip?>> describing;
+        lock (_engineOperations)
+        {
+            int expectedVersion;
+            lock (_gate)
+            {
+                if (_disposed)
+                    return null;
+                expectedVersion = source.CurrentVersion;
+            }
+
+            describing = _bridge.RunAsync<NemerleMethodTip?>(
+                () => BeginDescribeMethodTip(source, tip),
+                () => source.CurrentVersion,
+                expectedVersion,
+                static request => ((MethodTipDescriptionRequest)request).Description,
+                token);
+        }
+
+        var described = await describing.ConfigureAwait(false);
+        if (!described.IsUsable)
+        {
+            _log.Log(
+                $"nemerle signature help unavailable at {uri} {lspLine}:{lspCharacter} (description request {described.Outcome})");
+            return null;
+        }
+
+        return described.Value;
+    }
+
+    /// <summary>
+    /// The work item that flattens a <c>MethodTipInfo</c> into plain data on the
+    /// engine's worker thread.  Like <see cref="ColorizeRequest"/> it borrows
+    /// <c>AsyncRequestType.EmptyRequest</c> rather than adding a request kind to
+    /// the shared <c>AsyncRequestType</c> enum, and is therefore never forced out
+    /// by anything but <c>CloseProject</c>.
+    /// </summary>
+    private sealed class MethodTipDescriptionRequest(
+        IIdeEngine engine,
+        IIdeSource source,
+        MethodTipInfo tip,
+        Action<AsyncRequest> work)
+        : AsyncRequest(AsyncRequestType.EmptyRequest, engine, source, work)
+    {
+        public MethodTipInfo Tip { get; } = tip;
+
+        public NemerleMethodTip? Description { get; set; }
+    }
+
+    /// <summary>
+    /// Enqueues the flattening pass.  Runs synchronously up to the enqueue, so
+    /// the caller may hold <c>_engineOperations</c> here.
+    /// </summary>
+    private AsyncRequest BeginDescribeMethodTip(InMemoryNemerleSource source, MethodTipInfo tip)
+    {
+        var request = new MethodTipDescriptionRequest(_engine, source, tip, RunDescribeMethodTip);
+        AsyncWorker.AddWork(request);
+        return request;
+    }
+
+    /// <summary>Runs on the AsyncWorker thread.</summary>
+    private void RunDescribeMethodTip(AsyncRequest request)
+    {
+        var describe = (MethodTipDescriptionRequest)request;
+        try
+        {
+            if (request.Stop || _disposed)
+                return;
+
+            describe.Description = DescribeMethodTip(describe.Tip);
+        }
+        catch (Exception ex)
+        {
+            // A malformed tip must not take the worker loop down; the request
+            // simply answers "no signature help" (and says so in the Output).
+            _log.Warning($"nemerle signature help failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            // The worker only completes a request itself when the work threw
+            // (AsyncWorker.ThreadProc), so the success path must complete it.
+            request.MarkAsCompleted();
+        }
+    }
+
+    /// <summary>
+    /// Reads every overload out of the engine's tip.  Runs on the AsyncWorker
+    /// thread (see <see cref="GetSignatureHelpAsync"/>).
+    /// </summary>
+    private static NemerleMethodTip? DescribeMethodTip(MethodTipInfo tip)
+    {
+        var count = tip.GetCount();
+        if (count <= 0)
+            return null;
+
+        var signatures = new List<NemerleTipSignature>(count);
+        for (var index = 0; index < count; index++)
+        {
+            var parameterCount = tip.GetParameterCount(index);
+            var parameters = new List<NemerleTipParameter>(Math.Max(0, parameterCount));
+            for (var parameter = 0; parameter < parameterCount; parameter++)
+            {
+                // The engine returns a Nemerle tuple (name, display, doc).
+                var info = tip.GetParameterInfo(index, parameter);
+                parameters.Add(new NemerleTipParameter(
+                    info.Field0 ?? string.Empty,
+                    info.Field1 ?? string.Empty,
+                    info.Field2));
+            }
+
+            signatures.Add(new NemerleTipSignature(
+                tip.GetName(index) ?? string.Empty,
+                tip.GetType(index) ?? string.Empty,
+                tip.GetDescription(index),
+                parameters));
+        }
+
+        return new NemerleMethodTip(signatures, tip.DefaultMethod, tip.ParameterIndex);
+    }
+
+    /// <summary>
     /// Colorizes a whole open document with the engine's <c>ScanLexer</c> and
     /// returns LSP semantic tokens (WP-O5a).  Returns null when the document is not
     /// open, the engine has no initialized compiler yet, or the answer no longer
