@@ -16,6 +16,7 @@ internal static class Program
             GotoMappingTests();
             RenameMappingTests();
             CodeActionMappingTests();
+            FormattingMappingTests();
             IncrementalSyncTests();
             PathNormalizerTests();
             ToolchainProvenanceTests();
@@ -838,6 +839,62 @@ internal static class Program
             "  ",
             "Implement {0} ({1} {2})") is null,
             "an empty generation offers no action");
+    }
+
+    /// <summary>
+    /// WP-P4.  The engine formatter reports one result per line it wants to
+    /// reindent, including the lines that are already correct, so the filtering
+    /// here decides whether Format Document marks a clean file dirty.
+    /// </summary>
+    private static void FormattingMappingTests()
+    {
+        var file = OperatingSystem.IsWindows() ? @"C:\repo\App\Program.n" : "/repo/App/Program.n";
+        var uri = GotoMapping.ToUri(file);
+        var text = "module M\n{\nRun() : void\n  {\n  }\n}\n";
+
+        // 1-based, end-exclusive engine coordinates become 0-based LSP ranges.
+        var reindent = new NemerleFormatterResult(3, 1, 3, 1, "  ");
+        var edit = FormattingMapping.ToTextEdits(uri, [reindent], text);
+        True(edit.IsUsable, "a single reindent converts");
+        Equal(1, edit.Edit!.EditCount, "one result becomes one edit");
+        var only = edit.Edit!.Documents[0].Edits[0];
+        Equal(2, only.StartLine, "the line is converted to 0-based");
+        Equal(0, only.StartCharacter, "the column is converted to 0-based");
+        Equal("  ", only.NewText, "the replacement is the new indentation");
+
+        // A result that replaces a span with exactly what is already there is
+        // dropped: line 4 already starts with two spaces.
+        var noop = new NemerleFormatterResult(4, 1, 4, 3, "  ");
+        Equal(0, FormattingMapping.ToTextEdits(uri, [noop], text).Edit!.EditCount,
+            "a result that changes nothing is not emitted");
+
+        // ... but the same span with different text is kept.
+        var changed = new NemerleFormatterResult(4, 1, 4, 3, "    ");
+        Equal(1, FormattingMapping.ToTextEdits(uri, [changed], text).Edit!.EditCount,
+            "a result that widens the indentation is emitted");
+
+        // Degenerate results are ignored rather than turned into bad ranges.
+        Equal(0, FormattingMapping.ToTextEdits(uri, [new NemerleFormatterResult(0, 1, 0, 1, "x")], text).Edit!.EditCount,
+            "a result without a line is dropped");
+        Equal(0, FormattingMapping.ToTextEdits(uri, [new NemerleFormatterResult(4, 5, 4, 2, "x")], text).Edit!.EditCount,
+            "a result whose end precedes its start is dropped");
+
+        // Overlapping results are refused as a set: LSP applies a document's
+        // edits against its original text.
+        var overlapping = FormattingMapping.ToTextEdits(
+            uri,
+            [new NemerleFormatterResult(3, 1, 3, 5, "  "), new NemerleFormatterResult(3, 3, 3, 7, "    ")],
+            text);
+        True(!overlapping.IsUsable, "overlapping formatter results are refused");
+
+        // Apply is the client's algorithm: against the original text, last first.
+        var applied = FormattingMapping.Apply(text,
+        [
+            new NemerleTextEdit(uri, 2, 0, 2, 0, "  "),
+            new NemerleTextEdit(uri, 5, 0, 5, 0, ""),
+        ]);
+        True(applied.Contains("\n  Run() : void\n", StringComparison.Ordinal),
+            $"the edit was applied at the right place: {applied}");
     }
 
     private static void IncrementalSyncTests()

@@ -3,6 +3,7 @@ using Nemerle.Compiler;
 using Nemerle.Compiler.Parsetree;
 using Nemerle.Compiler.Utils.Async;
 using Nemerle.Completion2;
+using Nemerle.Completion2.CodeFormatting;
 using Nemerle.Completion2.Factories;
 using Nemerle.ProjectInfo;
 
@@ -1486,6 +1487,136 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Runs the engine's code formatter over a whole open document and returns
+    /// the resulting LSP edits (WP-P4).
+    ///
+    /// <para>The formatter (<c>Nemerle.Completion2.CodeFormatting.Formatter</c>)
+    /// walks the parse tree and the token stream, so it runs on the AsyncWorker
+    /// like every other engine entry point here; only plain records cross back.
+    /// Its own <c>BeginFormat</c> would do the queueing, but it formats a region -
+    /// whole-document formatting is the synchronous <c>FormatDocument</c>, so it
+    /// is wrapped in a work item the same way the other engine reads are.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<NemerleFormatterResult>?> GetFormattingResultsAsync(
+        string uri,
+        bool insertTabs,
+        int indentSize,
+        int tabSize,
+        CancellationToken token)
+    {
+        Task<EngineRequestBridge.RequestResult<List<NemerleFormatterResult>?>> pending;
+        lock (_engineOperations)
+        {
+            InMemoryNemerleSource source;
+            int expectedVersion;
+            lock (_gate)
+            {
+                if (_disposed ||
+                    !_openUriToPath.TryGetValue(uri, out var path) ||
+                    !_documentsByPath.TryGetValue(path, out var state))
+                {
+                    _log.Log($"nemerle formatting skipped: {uri} is not an open document");
+                    return null;
+                }
+
+                source = state.Source;
+                expectedVersion = source.CurrentVersion;
+            }
+
+            var indent = new IndentInfo(insertTabs, indentSize, tabSize);
+            pending = _bridge.RunAsync<List<NemerleFormatterResult>?>(
+                () => BeginFormatDocument(source, indent),
+                () => source.CurrentVersion,
+                expectedVersion,
+                static request => ((FormatDocumentRequest)request).Results,
+                token);
+        }
+
+        var result = await pending.ConfigureAwait(false);
+        if (!result.IsUsable)
+        {
+            _log.Log($"nemerle formatting unavailable for {uri} (engine request {result.Outcome})");
+            return null;
+        }
+
+        return result.Value;
+    }
+
+    /// <summary>
+    /// The current text of an open document, or null when it is not open.  Reads
+    /// the document's own text state, not engine state, so it needs no worker hop.
+    /// </summary>
+    public string? GetDocumentText(string uri)
+    {
+        lock (_gate)
+        {
+            if (_disposed ||
+                !_openUriToPath.TryGetValue(uri, out var path) ||
+                !_documentsByPath.TryGetValue(path, out var state))
+                return null;
+
+            return state.Source.GetText();
+        }
+    }
+
+    private sealed class FormatDocumentRequest(
+        IIdeEngine engine,
+        IIdeSource source,
+        IndentInfo indent,
+        Action<AsyncRequest> work)
+        : AsyncRequest(AsyncRequestType.EmptyRequest, engine, source, work)
+    {
+        public IndentInfo Indent { get; } = indent;
+
+        public List<NemerleFormatterResult>? Results { get; set; }
+    }
+
+    private AsyncRequest BeginFormatDocument(InMemoryNemerleSource source, IndentInfo indent)
+    {
+        var request = new FormatDocumentRequest(_engine, source, indent, RunFormatDocument);
+        AsyncWorker.AddWork(request);
+        return request;
+    }
+
+    /// <summary>Runs on the AsyncWorker thread.</summary>
+    private void RunFormatDocument(AsyncRequest request)
+    {
+        var format = (FormatDocumentRequest)request;
+        try
+        {
+            if (request.Stop || _disposed)
+                return;
+
+            var results = Formatter.FormatDocument(_engine, request.Source, format.Indent);
+            var flattened = new List<NemerleFormatterResult>(results.Count);
+            foreach (var result in results)
+            {
+                flattened.Add(new NemerleFormatterResult(
+                    result.StartLine,
+                    result.StartCol,
+                    result.EndLine,
+                    result.EndCol,
+                    result.ReplacementString ?? string.Empty));
+            }
+
+            format.Results = flattened;
+        }
+        catch (Exception ex)
+        {
+            // The formatter is legacy code that throws TokenNotFoundException on
+            // shapes it does not understand; a failure must not take the worker
+            // loop down, and the document simply is not formatted.
+            _log.Warning($"nemerle formatting failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            // The worker only completes a request itself when the work threw
+            // (AsyncWorker.ThreadProc), so the success path must complete it.
+            request.MarkAsCompleted();
+        }
     }
 
     /// <summary>

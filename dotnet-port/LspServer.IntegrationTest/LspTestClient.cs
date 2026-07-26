@@ -105,6 +105,9 @@ internal sealed class LspTestClient : IAsyncDisposable
                     // register and the server is asked before the editor would
                     // open its input box (WP-P3).
                     rename = new { prepareSupport = true },
+                    // Advertise document formatting so that handler registers
+                    // (WP-P4).
+                    formatting = new { },
                     // Advertise code actions so that handler registers (WP-P5).
                     codeAction = new
                     {

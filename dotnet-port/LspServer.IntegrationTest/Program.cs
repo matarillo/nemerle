@@ -17,6 +17,7 @@ internal static class Program
         _repoRoot = FindRepositoryRoot();
         var probeOnly = args.Contains("--wp-n2-probe", StringComparer.Ordinal);
         var macroSampleProbe = args.Contains("--macro-sample-probe", StringComparer.Ordinal);
+        var formattingEval = args.Contains("--formatting-eval", StringComparer.Ordinal);
         var serverArgument = args.FirstOrDefault(argument => !argument.StartsWith("--", StringComparison.Ordinal));
         _serverDll = serverArgument is not null
             ? Path.GetFullPath(serverArgument)
@@ -63,6 +64,13 @@ internal static class Program
                 return 0;
             }
 
+            if (formattingEval)
+            {
+                await RunScenarioAsync("Formatting evaluation (WP-P4)", FormattingEvaluationAsync);
+                Console.WriteLine("PASS formatting evaluation probe");
+                return 0;
+            }
+
             if (probeOnly)
             {
                 EnsureWpN2FixturesBuilt();
@@ -106,6 +114,15 @@ internal static class Program
             await RunScenarioAsync(
                 "Document highlight: a non-symbol position answers null and logs it; warm timing",
                 DocumentHighlightEmptyAndTimingAsync);
+            await RunScenarioAsync(
+                "Formatting: a badly indented document is renested and still compiles",
+                FormattingReindentsAsync);
+            await RunScenarioAsync(
+                "Formatting: already-formatted documents come back with no edits",
+                FormattingLeavesFormattedCodeAloneAsync);
+            await RunScenarioAsync(
+                "Formatting: the engine formatter's conflict on sokoban.n yields no edits, not a broken file",
+                FormattingFailsSafelyAsync);
             await RunScenarioAsync(
                 "Code action: implement an interface's missing members, and the error is gone after applying",
                 CodeActionImplementInterfaceAsync);
@@ -2484,6 +2501,371 @@ internal static class Program
                 var name = kind switch { LspHighlightWrite => "W", LspHighlightRead => "R", _ => "T" };
                 return $"{line + 1}:{character + 1}-{endCharacter + 1}{name}";
             }));
+
+    // ----- Formatting (WP-P4) -----
+
+    /// <summary>
+    /// The feature, on the case it exists for: a badly indented file is
+    /// reindented, and the result still compiles.  The "still compiles" half is
+    /// the assertion that matters - a formatter that produces plausible-looking
+    /// text which no longer parses is worse than no formatter.
+    /// </summary>
+    private static async Task FormattingReindentsAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("formatting"), "misindented.n")).AbsoluteUri;
+        var source = MisindentedSource.Replace("\r\n", "\n");
+        await OpenAndAwaitAnalysisAsync(client, uri, source);
+
+        var edits = await FormattingEditsAsync(client, uri);
+        Console.WriteLine($"    FORMATTING misindented.n: {edits.Length} edit(s)");
+        if (edits.Length == 0)
+            throw new InvalidDataException("formatting a badly indented file produced no edits.");
+
+        var formatted = ApplyFormattingEdits(source, edits);
+        var formattedLines = formatted.Split('\n');
+
+        // The member and its body are nested under the module, and the body of
+        // the `when` under the `when`.
+        var runLine = Array.FindIndex(formattedLines, line => line.TrimStart().StartsWith("Run()", StringComparison.Ordinal));
+        var defLine = Array.FindIndex(formattedLines, line => line.TrimStart().StartsWith("def total", StringComparison.Ordinal));
+        var writeLine = Array.FindIndex(formattedLines, line => line.TrimStart().StartsWith("Console.WriteLine(total)", StringComparison.Ordinal));
+        if (runLine < 0 || defLine < 0 || writeLine < 0)
+            throw new InvalidDataException("the formatted document lost one of its lines:\n" + formatted);
+
+        var runIndent = IndentWidth(formattedLines[runLine]);
+        var defIndent = IndentWidth(formattedLines[defLine]);
+        var writeIndent = IndentWidth(formattedLines[writeLine]);
+        Console.WriteLine($"    indents: Run={runIndent}, def={defIndent}, WriteLine={writeIndent}");
+        if (runIndent <= 0 || defIndent <= runIndent || writeIndent <= defIndent)
+            throw new InvalidDataException(
+                $"the formatted document is not progressively nested (Run={runIndent}, def={defIndent}, " +
+                $"WriteLine={writeIndent}):\n{formatted}");
+
+        // And it still compiles.
+        var mark = client.Mark();
+        await client.NotifyAsync("textDocument/didChange", new
+        {
+            textDocument = new { uri, version = 2 },
+            contentChanges = new object[] { new { text = formatted } },
+        });
+        var published = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2,
+            mark,
+            "diagnostics after formatting");
+        var errors = ErrorMessagesOf(published);
+        if (errors.Length != 0)
+            throw new InvalidDataException(
+                "the formatted document no longer compiles:\n" + string.Join("\n", errors) + "\n" + formatted);
+    }
+
+    /// <summary>
+    /// The other half of "is this safe to offer": an already-formatted file must
+    /// come back with no edits at all, so Format Document (or format-on-save)
+    /// never marks a clean file dirty.  The engine formatter re-emits a line's
+    /// indentation even when it is already correct, so this is the no-op filter in
+    /// <c>FormattingMapping</c> being load-bearing, not a tautology.
+    /// </summary>
+    private static async Task FormattingLeavesFormattedCodeAloneAsync(LspTestClient client)
+    {
+        foreach (var (label, path) in new[]
+                 {
+                     ("HelloCore/hello.n", Sample("HelloCore", "hello.n")),
+                     ("SyntaxMacro/macros.n (quotations)", Sample("SyntaxMacro", "SyntaxMacros", "macros.n")),
+                 })
+        {
+            var text = (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n");
+            var uri = new Uri(path).AbsoluteUri;
+            await OpenAndAwaitAnalysisAsync(client, uri, text);
+
+            var edits = await FormattingEditsAsync(client, uri);
+            Console.WriteLine($"    FORMATTING {label}: {edits.Length} edit(s)");
+            if (edits.Length != 0)
+                throw new InvalidDataException(
+                    $"formatting the already-formatted {label} produced {edits.Length} edit(s): " +
+                    string.Join(", ", edits.Select(e => $"{e.Line + 1}:{e.Character + 1}='{e.NewText}'")));
+
+            await DidCloseAsync(client, uri);
+        }
+    }
+
+    /// <summary>
+    /// The known failure, pinned so it stays a <em>safe</em> one.  The engine
+    /// formatter throws <c>FormatterException</c> on <c>samples/Sokoban</c>'s
+    /// <c>sokoban.n</c> ("Change ... conflicts with existing change ..." - it
+    /// produces two different indentations for one span and detects that itself).
+    /// The server must answer with no edits and say so in the Output, never with a
+    /// half-applied set.
+    ///
+    /// <para>If the formatter is ever fixed (it lives in the shared VsIntegration
+    /// sources), this scenario is the thing that will notice, and it should then
+    /// be changed to assert the successful path.</para>
+    /// </summary>
+    private static async Task FormattingFailsSafelyAsync(LspTestClient client)
+    {
+        var path = Sample("Sokoban", "Sokoban", "sokoban.n");
+        var text = (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n");
+        var uri = new Uri(path).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, text);
+
+        var mark = client.Mark();
+        var response = await client.RequestAsync("textDocument/formatting", new
+        {
+            textDocument = new { uri },
+            options = new { tabSize = 2, insertSpaces = true },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException(
+                "the formatter's internal failure surfaced as a request error rather than as no edits: " + error);
+
+        var result = response.GetProperty("result");
+        if (result.ValueKind == JsonValueKind.Array && result.GetArrayLength() > 0)
+            throw new InvalidDataException(
+                $"sokoban.n now formats ({result.GetArrayLength()} edits); the engine formatter's " +
+                "conflict bug appears to be fixed, so this scenario should assert the successful path instead.");
+
+        var log = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "nemerle formatting failed", out _),
+            mark,
+            "the 'formatting failed' log line");
+        var message = log.GetProperty("params").GetProperty("message").GetString() ?? "";
+        Console.WriteLine($"    FORMATTING sokoban.n refused safely: {message}");
+        if (!message.Contains("conflicts with existing change", StringComparison.Ordinal))
+            throw new InvalidDataException($"the failure was not the known conflict: {message}");
+    }
+
+    private static int IndentWidth(string line) => line.Length - line.TrimStart().Length;
+
+    private static async Task<(int Line, int Character, int EndLine, int EndCharacter, string NewText)[]>
+        FormattingEditsAsync(LspTestClient client, string uri)
+    {
+        var response = await client.RequestAsync("textDocument/formatting", new
+        {
+            textDocument = new { uri },
+            options = new { tabSize = 2, insertSpaces = true },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("formatting request failed: " + error);
+
+        var result = response.GetProperty("result");
+        if (result.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return result.EnumerateArray().Select(edit =>
+        {
+            var range = edit.GetProperty("range");
+            var start = range.GetProperty("start");
+            var end = range.GetProperty("end");
+            return (
+                Line: start.GetProperty("line").GetInt32(),
+                Character: start.GetProperty("character").GetInt32(),
+                EndLine: end.GetProperty("line").GetInt32(),
+                EndCharacter: end.GetProperty("character").GetInt32(),
+                NewText: edit.GetProperty("newText").GetString() ?? "");
+        }).ToArray();
+    }
+
+    // ----- Formatting evaluation (WP-P4) -----
+
+    /// <summary>
+    /// WP-P4 is evaluation-first (56 §4 formatting): the engine's formatter is the
+    /// VS2010-era <c>CodeIndentationStage2</c> and nobody has ever looked at what
+    /// it does to real code.  This probe answers the three questions the plan
+    /// asks, on real sources, and prints the evidence rather than asserting: does
+    /// it break the syntax (diagnostics after formatting), does it leave
+    /// already-formatted code alone, and does it survive quotations and syntax
+    /// macros.
+    ///
+    /// <para>Run it with <c>--formatting-eval</c>; it is not part of the suite.</para>
+    /// </summary>
+    private static async Task FormattingEvaluationAsync(LspTestClient client)
+    {
+        EnsureFixturesBuilt();
+
+        // A deliberately misindented file, written to a temp directory: the real
+        // samples are already formatted, so they can only answer "does it damage
+        // good code", not "does it fix bad code".
+        var scratch = Path.Combine(CreateTempDirectory("formatting-eval"), "misindented.n");
+        await File.WriteAllTextAsync(scratch, MisindentedSource.Replace("\r\n", "\n"));
+
+        // Every .n under samples/, so the failure rate is measured rather than
+        // guessed, with the synthetic file first.
+        var samplesRoot = Path.Combine(_repoRoot, "dotnet-port", "samples");
+        var subjects = new List<(string Label, string Path)>
+        {
+            ("misindented.n (synthetic, badly indented)", scratch),
+        };
+        subjects.AddRange(Directory
+            .EnumerateFiles(samplesRoot, "*.n", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(path => (Label: Path.GetRelativePath(samplesRoot, path).Replace('\\', '/'), Path: path)));
+
+        foreach (var (label, path) in subjects)
+        {
+            if (!File.Exists(path))
+            {
+                Console.WriteLine($"    SKIP {label}: {path} not found");
+                continue;
+            }
+
+            var original = (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n");
+            var uri = new Uri(path).AbsoluteUri;
+            var mark = client.Mark();
+            await DidOpenAsync(client, uri, original, 1);
+            var before = await client.WaitForAsync(
+                message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 1,
+                mark,
+                $"diagnostics for {label}");
+            var errorsBefore = ErrorMessagesOf(before);
+
+            var stopwatch = Stopwatch.StartNew();
+            var response = await client.RequestAsync("textDocument/formatting", new
+            {
+                textDocument = new { uri },
+                options = new { tabSize = 2, insertSpaces = true },
+            });
+            stopwatch.Stop();
+
+            // The server's own account of what it did arrives asynchronously;
+            // without draining, the Output side of the evidence is invisible.
+            await client.DrainAsync(TimeSpan.FromMilliseconds(300));
+            foreach (var (_, message) in client.LogMessages(mark)
+                         .Where(entry => entry.Message.Contains("formatting", StringComparison.Ordinal)))
+                Console.WriteLine($"      LOG {message}");
+
+            if (response.TryGetProperty("error", out var error))
+            {
+                Console.WriteLine($"    {label}: formatting FAILED: {error}");
+                await DidCloseAsync(client, uri);
+                continue;
+            }
+
+            var result = response.GetProperty("result");
+            if (result.ValueKind != JsonValueKind.Array)
+            {
+                Console.WriteLine(
+                    $"    {label}: no edits (result {result.ValueKind}) in " +
+                    $"{stopwatch.Elapsed.TotalMilliseconds:F0} ms");
+                await DidCloseAsync(client, uri);
+                continue;
+            }
+
+            var edits = result.EnumerateArray().Select(edit =>
+            {
+                var range = edit.GetProperty("range");
+                var start = range.GetProperty("start");
+                var end = range.GetProperty("end");
+                return (
+                    Line: start.GetProperty("line").GetInt32(),
+                    Character: start.GetProperty("character").GetInt32(),
+                    EndLine: end.GetProperty("line").GetInt32(),
+                    EndCharacter: end.GetProperty("character").GetInt32(),
+                    NewText: edit.GetProperty("newText").GetString() ?? "");
+            }).ToArray();
+
+            var formatted = ApplyFormattingEdits(original, edits);
+            var originalLines = original.Split('\n');
+            var formattedLines = formatted.Split('\n');
+            var changedLines = 0;
+            for (var i = 0; i < Math.Max(originalLines.Length, formattedLines.Length); i++)
+            {
+                var left = i < originalLines.Length ? originalLines[i] : null;
+                var right = i < formattedLines.Length ? formattedLines[i] : null;
+                if (!string.Equals(left, right, StringComparison.Ordinal))
+                    changedLines++;
+            }
+
+            Console.WriteLine(
+                $"    {label}: {edits.Length} edit(s), {changedLines}/{originalLines.Length} line(s) changed, " +
+                $"{stopwatch.Elapsed.TotalMilliseconds:F0} ms");
+
+            // Show the first few differences so the judgement is on evidence.
+            var shown = 0;
+            for (var i = 0; i < Math.Max(originalLines.Length, formattedLines.Length) && shown < 8; i++)
+            {
+                var left = i < originalLines.Length ? originalLines[i] : "(missing)";
+                var right = i < formattedLines.Length ? formattedLines[i] : "(missing)";
+                if (string.Equals(left, right, StringComparison.Ordinal))
+                    continue;
+                Console.WriteLine($"      L{i + 1} -|{left}");
+                Console.WriteLine($"      L{i + 1} +|{right}");
+                shown++;
+            }
+
+            // Feed the formatted text back and see whether the compiler still
+            // accepts it: this is the question that decides go / no-go.
+            if (formatted != original)
+            {
+                var afterMark = client.Mark();
+                await client.NotifyAsync("textDocument/didChange", new
+                {
+                    textDocument = new { uri, version = 2 },
+                    contentChanges = new object[] { new { text = formatted } },
+                });
+                var after = await client.WaitForAsync(
+                    message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2,
+                    afterMark,
+                    $"diagnostics after formatting {label}");
+                var errorsAfter = ErrorMessagesOf(after);
+                Console.WriteLine(
+                    $"      errors before: {errorsBefore.Length}, after: {errorsAfter.Length}");
+                foreach (var message in errorsAfter.Except(errorsBefore).Take(5))
+                    Console.WriteLine($"        NEW ERROR: {message}");
+            }
+            else
+            {
+                Console.WriteLine("      unchanged (idempotent on this file)");
+            }
+
+            await DidCloseAsync(client, uri);
+        }
+    }
+
+    private const string MisindentedSource = """
+        using System;
+
+        module Misindented
+        {
+        Run() : void
+        {
+        def total = 1 + 2;
+                    when (total > 0)
+        {
+        Console.WriteLine(total);
+        }
+              foreach (i in [1, 2, 3])
+                        Console.WriteLine(i);
+        }
+        }
+        """;
+
+    private static string[] ErrorMessagesOf(JsonElement publish) =>
+        publish.GetProperty("params").GetProperty("diagnostics").EnumerateArray()
+            .Where(d => d.TryGetProperty("severity", out var severity) && severity.GetInt32() == 1)
+            .Select(d => d.GetProperty("message").GetString() ?? "")
+            .ToArray();
+
+    /// <summary>Applies LSP edits against the original text, last first.</summary>
+    private static string ApplyFormattingEdits(
+        string text,
+        (int Line, int Character, int EndLine, int EndCharacter, string NewText)[] edits)
+    {
+        var lines = new List<string>(text.Split('\n'));
+        foreach (var edit in edits.OrderByDescending(e => e.Line).ThenByDescending(e => e.Character))
+        {
+            if (edit.Line >= lines.Count || edit.EndLine >= lines.Count)
+                continue;
+
+            var start = lines[edit.Line];
+            var end = lines[edit.EndLine];
+            var startCharacter = Math.Min(edit.Character, start.Length);
+            var endCharacter = Math.Min(edit.EndCharacter, end.Length);
+            var replaced = start[..startCharacter] + edit.NewText.Replace("\r\n", "\n") + end[endCharacter..];
+            lines.RemoveRange(edit.Line, edit.EndLine - edit.Line + 1);
+            lines.InsertRange(edit.Line, replaced.Split('\n'));
+        }
+
+        return string.Join("\n", lines);
+    }
 
     // ----- Code actions (WP-P5) -----
 
