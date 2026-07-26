@@ -44,6 +44,7 @@ internal static class Program
             .WithHandler<NemerleDocumentHighlightHandler>()
             .WithHandler<NemerleRenameHandler>()
             .WithHandler<NemerlePrepareRenameHandler>()
+            .WithHandler<NemerleCodeActionHandler>()
             .WithHandler<NemerleSemanticTokensHandler>()).ConfigureAwait(false);
 
         log.Attach(server);

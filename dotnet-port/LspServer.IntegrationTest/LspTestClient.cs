@@ -105,6 +105,14 @@ internal sealed class LspTestClient : IAsyncDisposable
                     // register and the server is asked before the editor would
                     // open its input box (WP-P3).
                     rename = new { prepareSupport = true },
+                    // Advertise code actions so that handler registers (WP-P5).
+                    codeAction = new
+                    {
+                        codeActionLiteralSupport = new
+                        {
+                            codeActionKind = new { valueSet = new[] { "quickfix" } },
+                        },
+                    },
                     // Advertise semantic tokens so that handler registers
                     // (WP-O5a).  The legend advertised here is the client's
                     // vocabulary; the server answers with its own legend in the

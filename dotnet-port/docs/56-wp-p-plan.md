@@ -218,7 +218,9 @@ WP-P5 と共有する。
 - 実装: `dotnet-port/LspServer/Nemerle*Handler.cs`(新規 5 本前後)、`NemerleProject.cs`、
   `Program.cs`、`ProjectInfo/*Mapping.cs`(純関数 + unit test)。
 - テスト: raw LSP シナリオ(各機能 2〜4 本)、`ProjectInfo.Test` の unit、拡張 unit / 実 VS Code。
-- 文書: 本書 + 実装ログ `57`(P1)/ `58`(P2)/ `59`(P3)/ `60`(P4)/ `61`(P5)。
+- 文書: 本書 + 実装ログ。**番号は作成順**(WP 番号順ではない): `57`(P1)/ `58`(P2)/
+  `59`(P3)/ `60`(**P5 codeAction**)/ `61`(**P4 formatting**)。§5 の順序どおり formatting を
+  最後に回したため、P4 と P5 の番号が入れ替わっている。
   完了時に `00-PLAN.md` の WP 表・作業ログと `36-*` §2.2 の E1 記述を更新(**PO 合意後**)。
 
 ## 7. 参照文書

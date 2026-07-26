@@ -15,6 +15,7 @@ internal static class Program
             SignatureHelpMappingTests();
             GotoMappingTests();
             RenameMappingTests();
+            CodeActionMappingTests();
             IncrementalSyncTests();
             PathNormalizerTests();
             ToolchainProvenanceTests();
@@ -755,6 +756,88 @@ internal static class Program
             ]);
         True(touching.IsUsable, "touching ranges and insertions at one point are not overlaps");
         Equal(4, touching.Edit!.EditCount, "all four edits survive");
+    }
+
+    /// <summary>
+    /// WP-P5.  The engine generates members flush left (its <c>_indentSize</c>
+    /// starts at 0 and is protected), so what the user actually gets in their file
+    /// is decided here.
+    /// </summary>
+    private static void CodeActionMappingTests()
+    {
+        var file = OperatingSystem.IsWindows() ? @"C:\repo\App\Program.n" : "/repo/App/Program.n";
+        var uri = GotoMapping.ToUri(file);
+
+        // Indentation: one step deeper than the line the insertion lands on, in
+        // that line's own whitespace style.
+        Equal("  ", CodeActionMapping.IndentFor(""), "a flush-left closing brace indents members by one step");
+        Equal("    ", CodeActionMapping.IndentFor("  "), "a two-space brace indents members by four");
+        Equal("\t\t", CodeActionMapping.IndentFor("\t"), "a tab-indented brace stays tabbed");
+
+        // Re-indentation keeps relative structure, normalizes line endings, and
+        // does not leave trailing whitespace on blank lines.
+        var generated = "public Draw() : void{ throw System.NotImplementedException() }\r\n\r\n";
+        var reindented = CodeActionMapping.Reindent(generated, "  ");
+        Equal("  public Draw() : void{ throw System.NotImplementedException() }\n", reindented,
+            "generated source is indented and its trailing blank line dropped");
+        Equal(string.Empty, CodeActionMapping.Reindent("   \n\n", "  "), "whitespace-only generation yields nothing");
+
+        var multi = CodeActionMapping.Reindent("a\n  b\n", "\t");
+        Equal("\ta\n\t  b\n", multi, "relative indentation inside a member is preserved");
+
+        // The common case: the insertion point is just before a closing brace
+        // that sits at the start of its line.
+        var atLineStart = new NemerleInsertionPoint(uri, 9, 0, "");
+        var action = CodeActionMapping.ToCodeAction(
+            new NemerleMemberGeneration("IWidget", 2, "public Draw() : void{ }\npublic Stop() : void{ }\n"),
+            atLineStart,
+            "  ",
+            "Implement {0} ({1} {2})");
+        True(action is not null, "a non-empty generation becomes an action");
+        Equal("Implement IWidget (2 members)", action!.Title, "the title names the interface and the count");
+        Equal(9, action.Edit.StartLine, "the edit is at the insertion line");
+        Equal(action.Edit.StartLine, action.Edit.EndLine, "the edit is an insertion");
+        Equal(action.Edit.StartCharacter, action.Edit.EndCharacter, "the edit has an empty range");
+        Equal("  public Draw() : void{ }\n  public Stop() : void{ }\n", action.Edit.NewText,
+            "both members are inserted, indented, with the brace left at column 0");
+
+        // One member: the title reads naturally.
+        var single = CodeActionMapping.ToCodeAction(
+            new NemerleMemberGeneration("IWidget", 1, "public Draw() : void{ }\n"),
+            atLineStart,
+            "  ",
+            "Implement {0} ({1} {2})");
+        Equal("Implement IWidget (1 member)", single!.Title, "a single member is not pluralized");
+
+        // A one-line `class Foo { }`: the insertion point is mid-line, so the
+        // members have to start on a fresh line, and the text that preceded them
+        // is put back so the brace keeps its place.
+        var midLine = new NemerleInsertionPoint(uri, 3, 12, "class Foo { ");
+        var wrapped = CodeActionMapping.ToCodeAction(
+            new NemerleMemberGeneration("IWidget", 1, "public Draw() : void{ }\n"),
+            midLine,
+            "  ",
+            "Implement {0} ({1} {2})");
+        Equal("\n  public Draw() : void{ }\nclass Foo { ", wrapped!.Edit.NewText,
+            "a mid-line insertion opens with a newline and restores what preceded it");
+
+        // An indented brace: its own indentation is restored after the members.
+        var indentedBrace = new NemerleInsertionPoint(uri, 7, 2, "  ");
+        var nested = CodeActionMapping.ToCodeAction(
+            new NemerleMemberGeneration("IWidget", 1, "public Draw() : void{ }\n"),
+            indentedBrace,
+            "    ",
+            "Implement {0} ({1} {2})");
+        Equal("    public Draw() : void{ }\n  ", nested!.Edit.NewText,
+            "the nested brace's indentation is put back after the members");
+
+        // Nothing to insert is not an action.
+        True(CodeActionMapping.ToCodeAction(
+            new NemerleMemberGeneration("IWidget", 0, "   "),
+            atLineStart,
+            "  ",
+            "Implement {0} ({1} {2})") is null,
+            "an empty generation offers no action");
     }
 
     private static void IncrementalSyncTests()

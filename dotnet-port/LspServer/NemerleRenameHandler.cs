@@ -36,6 +36,9 @@ internal sealed class NemerleRenameHandler : RenameHandlerBase
     internal static readonly TextDocumentSelector Selector =
         TextDocumentSelector.ForLanguage("nemerle");
 
+    /// <summary>JSON-RPC <c>InvalidParams</c>.</summary>
+    private const int InvalidParams = -32602;
+
     private readonly NemerleProject _project;
     private readonly ServerLog _log;
 
@@ -65,8 +68,12 @@ internal sealed class NemerleRenameHandler : RenameHandlerBase
                 $"-> '{request.NewName}': {reason}");
 
             // A rename the server will not perform must say so: returning an
-            // empty edit would look like a successful no-op.
-            throw new OmniSharp.Extensions.JsonRpc.RpcErrorException(-32602, null, reason);
+            // empty edit would look like a successful no-op.  InvalidParams with
+            // the reason as the message - RequestFailedException flattens it to
+            // "Request Cancelled" on the wire (measured), and the message is the
+            // only thing the editor shows.  `data` is non-nullable in the
+            // signature but optional on the wire.
+            throw new OmniSharp.Extensions.JsonRpc.RpcErrorException(InvalidParams, null!, reason);
         }
 
         _log.Log(

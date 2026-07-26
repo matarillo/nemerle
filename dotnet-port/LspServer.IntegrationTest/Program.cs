@@ -107,6 +107,12 @@ internal static class Program
                 "Document highlight: a non-symbol position answers null and logs it; warm timing",
                 DocumentHighlightEmptyAndTimingAsync);
             await RunScenarioAsync(
+                "Code action: implement an interface's missing members, and the error is gone after applying",
+                CodeActionImplementInterfaceAsync);
+            await RunScenarioAsync(
+                "Code action: nothing to offer where nothing is missing",
+                CodeActionNoneAsync);
+            await RunScenarioAsync(
                 "Rename: a local, prepareRename's range, and edits equal to the references set",
                 RenameLocalAsync);
             await RunScenarioAsync(
@@ -2478,6 +2484,217 @@ internal static class Program
                 var name = kind switch { LspHighlightWrite => "W", LspHighlightRead => "R", _ => "T" };
                 return $"{line + 1}:{character + 1}-{endCharacter + 1}{name}";
             }));
+
+    // ----- Code actions (WP-P5) -----
+
+    private const string CodeActionProbeSource = """
+        interface IWidget
+        {
+          Draw() : void;
+          Name : string { get; }
+        }
+
+        class Widget : IWidget
+        {
+        }
+
+        module CodeActionProbe
+        {
+          Main() : void
+          {
+            def widget = Widget();
+            _ = widget;
+          }
+        }
+        """;
+
+    /// <summary>
+    /// The whole point of the feature, measured end to end: a class that does not
+    /// implement its interface yet is offered an action, and <b>applying that
+    /// action's edit makes the error go away</b>.  Anything less (asserting on the
+    /// generated text alone) would pass while emitting source that does not
+    /// compile.
+    ///
+    /// <para>It is also the measurement that decided this WP was possible at all:
+    /// <c>Engine-FindUnimplementedMembers.n</c> runs <c>assert(false)</c> right
+    /// after queueing its answer, so if the response did not survive that, there
+    /// would be nothing to offer without changing the shared engine.</para>
+    /// </summary>
+    private static async Task CodeActionImplementInterfaceAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("code-action"), "widget.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, CodeActionProbeSource);
+
+        // The class body: the engine resolves the enclosing type from here.
+        var (classLine, classCharacter) = LocateUtf16(CodeActionProbeSource, "class Widget", 1);
+
+        var actions = await CodeActionsAsync(client, uri, classLine, classCharacter);
+        Console.WriteLine(
+            $"    CODE ACTIONS at the class declaration: " +
+            (actions.Length == 0 ? "(none)" : string.Join(", ", actions.Select(a => $"'{a.Title}'"))));
+        if (actions.Length == 0)
+            throw new InvalidDataException(
+                "no code action was offered for a class that does not implement its interface " +
+                "(if the engine's assert(false) swallowed the response, this is where it shows).");
+
+        var implement = actions.FirstOrDefault(a => a.Title.Contains("IWidget", StringComparison.Ordinal));
+        if (implement.Title is null)
+            throw new InvalidDataException(
+                $"no action mentioned the unimplemented interface: {string.Join(", ", actions.Select(a => a.Title))}");
+        if (!implement.Title.Contains('2'))
+            throw new InvalidDataException(
+                $"the action did not report the two missing members: '{implement.Title}'");
+
+        // The generated members are the engine's own rendering.
+        Console.WriteLine("    GENERATED:");
+        foreach (var line in implement.NewText.Replace("\r\n", "\n").Split('\n'))
+            Console.WriteLine($"      |{line}");
+        foreach (var required in new[] { "public Draw() : void", "public Name : string", "NotImplementedException" })
+        {
+            if (!implement.NewText.Contains(required, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"the generated source did not contain '{required}':\n{implement.NewText}");
+        }
+
+        // Apply the edit and let the server re-analyze: the interface error must
+        // be gone, and no new error may take its place.
+        var patched = ApplyEdit(CodeActionProbeSource, implement);
+        var mark = client.Mark();
+        await client.NotifyAsync("textDocument/didChange", new
+        {
+            textDocument = new { uri, version = 2 },
+            contentChanges = new object[] { new { text = patched } },
+        });
+        var published = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2,
+            mark,
+            "diagnostics after applying the implement-members edit");
+
+        var diagnostics = published.GetProperty("params").GetProperty("diagnostics");
+        var errors = diagnostics.EnumerateArray()
+            .Where(d => d.TryGetProperty("severity", out var severity) && severity.GetInt32() == 1)
+            .Select(d => d.GetProperty("message").GetString() ?? "")
+            .ToArray();
+        Console.WriteLine($"    AFTER APPLYING: {errors.Length} error(s)");
+        foreach (var error in errors)
+            Console.WriteLine($"      {error}");
+        if (errors.Length != 0)
+            throw new InvalidDataException(
+                "the document still has errors after applying the generated implementation:\n" +
+                string.Join("\n", errors) + "\n--- patched source ---\n" + patched);
+    }
+
+    /// <summary>
+    /// The negative half: a position with nothing to fix offers nothing (and says
+    /// so in the Output), and a class that already implements its interface is not
+    /// offered the action a second time.
+    /// </summary>
+    private static async Task CodeActionNoneAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("code-action-none"), "widget.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, CodeActionProbeSource);
+
+        // Inside the module's method: no type here is missing members.
+        var (methodLine, methodCharacter) = LocateUtf16(CodeActionProbeSource, "def widget", 1);
+        var mark = client.Mark();
+        var none = await CodeActionsAsync(client, uri, methodLine, methodCharacter);
+        if (none.Length != 0)
+            throw new InvalidDataException(
+                $"a position with nothing to implement offered {none.Length} action(s): " +
+                string.Join(", ", none.Select(a => a.Title)));
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "nemerle code actions: none", out _),
+            mark,
+            "the 'no code actions' log line");
+
+        // Now a document where the interface is already implemented.
+        var implemented = CodeActionProbeSource.Replace(
+            "class Widget : IWidget\r\n{\r\n}",
+            "class Widget : IWidget\r\n{\r\n  public Draw() : void { }\r\n  public Name : string { get { \"w\" } }\r\n}")
+            .Replace(
+            "class Widget : IWidget\n{\n}",
+            "class Widget : IWidget\n{\n  public Draw() : void { }\n  public Name : string { get { \"w\" } }\n}");
+        if (implemented == CodeActionProbeSource)
+            throw new InvalidDataException("the fixture's empty class body was not replaced.");
+
+        await client.NotifyAsync("textDocument/didChange", new
+        {
+            textDocument = new { uri, version = 2 },
+            contentChanges = new object[] { new { text = implemented } },
+        });
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2,
+            client.Mark(),
+            "diagnostics for the fully implemented class");
+
+        var (implementedLine, implementedCharacter) = LocateUtf16(implemented, "class Widget", 1);
+        var stillOffered = await CodeActionsAsync(client, uri, implementedLine, implementedCharacter);
+        var implementActions = stillOffered
+            .Where(a => a.Title.StartsWith("Implement", StringComparison.Ordinal)).ToArray();
+        if (implementActions.Length != 0)
+            throw new InvalidDataException(
+                "an already-implemented interface was still offered: " +
+                string.Join(", ", implementActions.Select(a => a.Title)));
+    }
+
+    private readonly record struct CodeActionOffer(string Title, string Uri, string NewText, int Line, int Character);
+
+    private static async Task<CodeActionOffer[]> CodeActionsAsync(
+        LspTestClient client, string uri, int line, int character)
+    {
+        var response = await client.RequestAsync("textDocument/codeAction", new
+        {
+            textDocument = new { uri },
+            range = new
+            {
+                start = new { line, character },
+                end = new { line, character },
+            },
+            context = new { diagnostics = Array.Empty<object>() },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("codeAction request failed: " + error);
+
+        var result = response.GetProperty("result");
+        if (result.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var offers = new List<CodeActionOffer>();
+        foreach (var action in result.EnumerateArray())
+        {
+            var title = action.GetProperty("title").GetString() ?? "";
+            var changes = action.GetProperty("edit").GetProperty("changes");
+            foreach (var document in changes.EnumerateObject())
+            {
+                foreach (var edit in document.Value.EnumerateArray())
+                {
+                    var start = edit.GetProperty("range").GetProperty("start");
+                    offers.Add(new CodeActionOffer(
+                        title,
+                        document.Name,
+                        edit.GetProperty("newText").GetString() ?? "",
+                        start.GetProperty("line").GetInt32(),
+                        start.GetProperty("character").GetInt32()));
+                }
+            }
+        }
+
+        return [.. offers];
+    }
+
+    /// <summary>Applies one insertion to a document, the way a client would.</summary>
+    private static string ApplyEdit(string text, CodeActionOffer offer)
+    {
+        var normalized = text.Replace("\r\n", "\n");
+        var lines = normalized.Split('\n');
+        if (offer.Line >= lines.Length)
+            throw new InvalidDataException($"the edit addresses line {offer.Line}, past the document.");
+
+        var line = lines[offer.Line];
+        var character = Math.Min(offer.Character, line.Length);
+        lines[offer.Line] = line[..character] + offer.NewText.Replace("\r\n", "\n") + line[character..];
+        return string.Join("\n", lines);
+    }
 
     // ----- Rename (WP-P3) -----
 

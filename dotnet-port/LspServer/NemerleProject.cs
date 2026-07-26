@@ -186,6 +186,16 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     private static readonly TimeSpan HighlightSettle = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan HighlightSettlePollInterval = TimeSpan.FromMilliseconds(2);
 
+    // The same single-in-flight arrangement for the member-suggestion callbacks
+    // (WP-P5).  See GetCodeActionsAsync / AwaitMemberDeliveryAsync.
+    private readonly SemaphoreSlim _memberSuggestionGate = new(1, 1);
+    private volatile MemberSuggestionDelivery? _memberSuggestion;
+    private static readonly TimeSpan MemberSuggestionTimeout = TimeSpan.FromSeconds(10);
+    // Longer than the highlight settle on purpose: those callbacks are invoked by
+    // the worker itself, these are queued to the response queue and dispatched by
+    // this class's pump, which polls every 10 ms.
+    private static readonly TimeSpan MemberSuggestionSettle = TimeSpan.FromMilliseconds(750);
+
     public NemerleProject(ServerLog log, ServerOptions options)
     {
         _log = log;
@@ -1116,6 +1126,369 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     }
 
     /// <summary>
+    /// Offers the "implement missing members" / "override inherited members" code
+    /// actions for a position (WP-P5).
+    ///
+    /// <para><b>Both engine entry points answer through a callback, and both
+    /// throw right after queueing it.</b>  <c>Engine-FindUnimplementedMembers.n</c>
+    /// runs <c>AsyncWorker.AddResponse(...)</c> and then <c>assert(false)</c>
+    /// (upstream leftover); <c>AsyncWorker.ThreadProc</c> catches that and marks
+    /// the request completed, so the response survives - measured, not assumed
+    /// (see the log for this WP).  The response is dispatched on this class's
+    /// response pump, not on the worker, so the callback only <em>stores</em> the
+    /// engine objects; nothing is read off them there.  Enumerating the grouping
+    /// would already be engine work: its key is a <c>FixedType.Class</c>, whose
+    /// equality goes through the type solver.</para>
+    ///
+    /// <para>The reading and the source generation therefore happen in a second
+    /// work item on the worker, the same two-hop shape WP-P1 uses, and only plain
+    /// strings cross back.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<NemerleCodeAction>> GetCodeActionsAsync(
+        string uri,
+        int lspLine,
+        int lspCharacter,
+        CancellationToken token)
+    {
+        InMemoryNemerleSource source;
+        lock (_gate)
+        {
+            if (_disposed ||
+                !_openUriToPath.TryGetValue(uri, out var path) ||
+                !_documentsByPath.TryGetValue(path, out var state))
+            {
+                _log.Log($"nemerle code action skipped: {uri} is not an open document");
+                return [];
+            }
+
+            source = state.Source;
+        }
+
+        var actions = new List<NemerleCodeAction>();
+        var implement = await SuggestMembersAsync(source, lspLine, lspCharacter, token)
+            .ConfigureAwait(false);
+        AppendActions(actions, source, implement, "Implement {0} ({1} {2})");
+
+        return actions;
+    }
+
+    /// <summary>
+    /// Turns one worker-side generation into an offered action, reading the
+    /// insertion line's own indentation from the buffer (document text, not
+    /// engine state) so the inserted members line up with the type's body.
+    /// </summary>
+    private void AppendActions(
+        List<NemerleCodeAction> actions,
+        InMemoryNemerleSource source,
+        MemberSuggestion? suggestion,
+        string titleFormat)
+    {
+        if (suggestion is null || suggestion.Generations.Count == 0)
+            return;
+
+        // The engine's location is 1-based and its end column is exclusive, so
+        // the closing brace of the type body sits at EndColumn - 1.
+        var engineLine = suggestion.InsertionLine;
+        var engineColumn = Math.Max(1, suggestion.InsertionColumn - 1);
+        string linePrefix;
+        try
+        {
+            linePrefix = engineColumn > 1
+                ? source.GetRegion(engineLine, 1, engineLine, engineColumn)
+                : string.Empty;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            _log.Warning(
+                $"nemerle code action: the insertion point {engineLine}:{engineColumn} is outside the buffer");
+            return;
+        }
+
+        var insertion = new NemerleInsertionPoint(
+            GotoMapping.ToUri(source.Path),
+            engineLine - 1,
+            engineColumn - 1,
+            linePrefix);
+        var indent = CodeActionMapping.IndentFor(linePrefix);
+
+        foreach (var generation in suggestion.Generations)
+        {
+            var action = CodeActionMapping.ToCodeAction(generation, insertion, indent, titleFormat);
+            if (action is not null)
+                actions.Add(action);
+        }
+    }
+
+    /// <summary>
+    /// One round trip: ask the engine for the missing members at a position, wait
+    /// for the callback, then generate their source on the worker.
+    /// </summary>
+    private async Task<MemberSuggestion?> SuggestMembersAsync(
+        InMemoryNemerleSource source,
+        int lspLine,
+        int lspCharacter,
+        CancellationToken token)
+    {
+        try
+        {
+            await _memberSuggestionGate.WaitAsync(token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+
+        try
+        {
+            var delivery = new MemberSuggestionDelivery(source);
+            _memberSuggestion = delivery;
+
+            AsyncRequest request;
+            int expectedVersion;
+            lock (_engineOperations)
+            {
+                lock (_gate)
+                {
+                    if (_disposed)
+                        return null;
+                    expectedVersion = source.CurrentVersion;
+                }
+
+                // Engine coordinates are 1-based; the LSP character is a UTF-16
+                // code unit offset, matching the source's .NET string indexing.
+                request = _engine.BeginFindUnimplementedMembers(source, lspLine + 1, lspCharacter + 1);
+            }
+
+            if (!await AwaitMemberDeliveryAsync(request, delivery).ConfigureAwait(false))
+                return null;
+
+            if (token.IsCancellationRequested || source.CurrentVersion != expectedVersion)
+                return null;
+
+            Task<EngineRequestBridge.RequestResult<MemberSuggestion?>> pending;
+            lock (_engineOperations)
+            {
+                pending = _bridge.RunAsync<MemberSuggestion?>(
+                    () => BeginGenerateMembers(source, delivery),
+                    () => source.CurrentVersion,
+                    expectedVersion,
+                    static request => ((GenerateMembersRequest)request).Suggestion,
+                    token);
+            }
+
+            var generated = await pending.ConfigureAwait(false);
+            if (!generated.IsUsable)
+            {
+                _log.Log(
+                    $"nemerle code action: member generation did not complete ({generated.Outcome})");
+                return null;
+            }
+
+            return generated.Value;
+        }
+        finally
+        {
+            _memberSuggestion = null;
+            _memberSuggestionGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Waits for one <c>AddUnimplementedMembers</c> / <c>AddOverrideMembers</c>
+    /// callback.  Like the highlight mailbox (WP-P2) the correlation is
+    /// structural - the gate keeps exactly one request in flight - but the settle
+    /// window has to be longer here: the engine hands its answer to the
+    /// <em>response</em> queue, which this class's pump drains every 10 ms, so
+    /// delivery necessarily lands after completion.
+    /// </summary>
+    private static async Task<bool> AwaitMemberDeliveryAsync(
+        AsyncRequest request,
+        MemberSuggestionDelivery delivery)
+    {
+        var deadline = DateTime.UtcNow + MemberSuggestionTimeout;
+        while (!delivery.Delivered && !request.IsCompleted)
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                request.Stop = true;
+                return false;
+            }
+
+            await Task.Delay(HighlightPollInterval).ConfigureAwait(false);
+        }
+
+        var settle = DateTime.UtcNow + MemberSuggestionSettle;
+        while (!delivery.Delivered && DateTime.UtcNow < settle)
+            await Task.Delay(HighlightSettlePollInterval).ConfigureAwait(false);
+
+        return delivery.Delivered && !request.Stop;
+    }
+
+    /// <summary>
+    /// The mailbox one member-suggestion round trip delivers into.  The engine
+    /// objects are stored untouched: they are read on the worker
+    /// (<see cref="RunGenerateMembers"/>), never on the response pump.
+    /// </summary>
+    private sealed class MemberSuggestionDelivery(IIdeSource source)
+    {
+        public IIdeSource Source { get; } = source;
+
+        public volatile TypeBuilder? Type;
+
+        public volatile IEnumerable<IGrouping<FixedType.Class, IMember>>? Unimplemented;
+
+        public volatile bool Delivered;
+    }
+
+    /// <summary>Generated members plus where they go, in engine coordinates.</summary>
+    internal sealed record MemberSuggestion(
+        IReadOnlyList<NemerleMemberGeneration> Generations,
+        int InsertionLine,
+        int InsertionColumn);
+
+    private sealed class GenerateMembersRequest(
+        IIdeEngine engine,
+        IIdeSource source,
+        MemberSuggestionDelivery delivery,
+        Action<AsyncRequest> work)
+        : AsyncRequest(AsyncRequestType.EmptyRequest, engine, source, work)
+    {
+        public MemberSuggestionDelivery Delivery { get; } = delivery;
+
+        public MemberSuggestion? Suggestion { get; set; }
+    }
+
+    private AsyncRequest BeginGenerateMembers(
+        InMemoryNemerleSource source,
+        MemberSuggestionDelivery delivery)
+    {
+        var request = new GenerateMembersRequest(_engine, source, delivery, RunGenerateMembers);
+        AsyncWorker.AddWork(request);
+        return request;
+    }
+
+    /// <summary>Runs on the AsyncWorker thread.</summary>
+    private void RunGenerateMembers(AsyncRequest request)
+    {
+        var generate = (GenerateMembersRequest)request;
+        try
+        {
+            if (request.Stop || _disposed || generate.Delivery.Type is not { } type)
+                return;
+
+            var source = (InMemoryNemerleSource)request.Source;
+            var fileIndex = source.FileIndex;
+
+            // A type can be partial: insert into the part declared in this file.
+            Location? part = null;
+            foreach (var ast in type.AstParts)
+            {
+                if (ast.Location.FileIndex == fileIndex)
+                {
+                    part = ast.Location;
+                    break;
+                }
+            }
+
+            if (part is not { } body)
+                return;
+
+            var generations = GenerateImplementations(fileIndex, generate.Delivery.Unimplemented);
+
+            if (generations.Count > 0)
+                generate.Suggestion = new MemberSuggestion(generations, body.EndLine, body.EndColumn);
+        }
+        catch (Exception ex)
+        {
+            // A generator failure must not take the worker loop down; the caret
+            // simply gets no code action (and the Output says why).
+            _log.Warning($"nemerle code action generation failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            // The worker only completes a request itself when the work threw
+            // (AsyncWorker.ThreadProc), so the success path must complete it.
+            request.MarkAsCompleted();
+        }
+    }
+
+    /// <summary>
+    /// Runs on the AsyncWorker thread: one generation per interface, in the
+    /// engine's own <c>InterfaceMemberImplSourceGenerator</c> rendering (via the
+    /// public <c>Utils.GenerateMemberImplementation</c> helper, which is what the
+    /// legacy VS "implement members" dialog uses).
+    /// </summary>
+    private static List<NemerleMemberGeneration> GenerateImplementations(
+        int fileIndex,
+        IEnumerable<IGrouping<FixedType.Class, IMember>>? groups)
+    {
+        var generations = new List<NemerleMemberGeneration>();
+        if (groups is null)
+            return generations;
+
+        foreach (var group in groups)
+        {
+            var writer = new StringWriter();
+            var count = 0;
+            var interfaceMembers = group.Key.tycon.GetMembers();
+            var writtenProperties = new HashSet<IProperty>();
+
+            foreach (var member in group)
+            {
+                // The compiler tracks an unimplemented property as its accessor
+                // methods, so generating them as-is would emit `get_Name() :
+                // string` - which compiles but does not implement the property,
+                // leaving the very error the action promised to fix.  Map each
+                // accessor back to its property and emit the property once.
+                var property = FindOwningProperty(interfaceMembers, member);
+                var target = member;
+                if (property is not null)
+                {
+                    if (!writtenProperties.Add(property))
+                        continue;
+                    target = property;
+                }
+
+                Nemerle.Compiler.Utils.Utils.GenerateMemberImplementation(
+                    // Positional: the engine's parameter is named `explicit`,
+                    // which C# cannot use as an argument name.  Order is
+                    // (writer, fileIndex, type, member, explicit, accessMods,
+                    // implName, generateXmlDoc).
+                    writer, fileIndex, group.Key, target, false, "public", null, false);
+                count++;
+            }
+
+            if (count > 0)
+                generations.Add(new NemerleMemberGeneration(group.Key.ToString(), count, writer.ToString()));
+        }
+
+        return generations;
+    }
+
+    /// <summary>
+    /// The property whose getter or setter <paramref name="member"/> is, or null
+    /// when it is an ordinary method.  Matched by identity against the declaring
+    /// interface's own members rather than by stripping a <c>get_</c> prefix off
+    /// the name, so a method that merely looks like an accessor is not mistaken
+    /// for one.  Runs on the AsyncWorker thread.
+    /// </summary>
+    private static IProperty? FindOwningProperty(IEnumerable<IMember> interfaceMembers, IMember member)
+    {
+        if (member is not IMethod method)
+            return null;
+
+        foreach (var candidate in interfaceMembers)
+        {
+            if (candidate is not IProperty property)
+                continue;
+            if (ReferenceEquals(property.GetGetter(), method) || ReferenceEquals(property.GetSetter(), method))
+                return property;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Computes the method tip (signature help) for an open document at an LSP
     /// position (0-based line/character, UTF-16 code units), flattened into the
     /// engine-independent <see cref="NemerleMethodTip"/> that
@@ -1747,10 +2120,41 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             delivery.Targets = [];
         }
     }
+    /// <summary>
+    /// The engine's answer to <c>BeginFindUnimplementedMembers</c> (WP-P5).
+    ///
+    /// <para><b>Runs on the response pump, not on the worker</b>
+    /// (<c>Engine-FindUnimplementedMembers.n</c> hands it to
+    /// <c>AsyncWorker.AddResponse</c>).  So it stores the engine objects and
+    /// touches nothing: even enumerating <paramref name="unimplementedMembers"/>
+    /// would be engine work, because the grouping's key is a
+    /// <c>FixedType.Class</c> and comparing those goes through the type solver.
+    /// Reading and generating happens on the worker in
+    /// <see cref="RunGenerateMembers"/>.</para>
+    /// </summary>
     public void AddUnimplementedMembers(
         IIdeSource source,
         TypeBuilder type,
-        IEnumerable<IGrouping<FixedType.Class, IMember>> unimplementedMembers) { }
+        IEnumerable<IGrouping<FixedType.Class, IMember>> unimplementedMembers)
+    {
+        var delivery = _memberSuggestion;
+        if (delivery is null || !ReferenceEquals(delivery.Source, source))
+            return;
+
+        delivery.Type = type;
+        delivery.Unimplemented = unimplementedMembers;
+        delivery.Delivered = true;
+    }
+
+    /// <summary>
+    /// The engine's answer to <c>BeginFindMethodsToOverride</c>.  Nothing asks for
+    /// it: WP-P5 ships the implement-members action only, because the engine
+    /// returns overrides as one flat list that at a plain class is four
+    /// <c>System.Object</c> virtuals (measured), and offering "override 4 members
+    /// of Object" on every class declaration is noise.  Doing it properly means
+    /// one action per member, with its own fixture - deferred rather than shipped
+    /// untested.
+    /// </summary>
     public void AddOverrideMembers(IIdeSource source, TypeBuilder type, IEnumerable<IMember> notOverridden) { }
 
     public void TypesTreeCreated()
