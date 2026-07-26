@@ -196,6 +196,9 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     // the worker itself, these are queued to the response queue and dispatched by
     // this class's pump, which polls every 10 ms.
     private static readonly TimeSpan MemberSuggestionSettle = TimeSpan.FromMilliseconds(750);
+    // The engine's way of saying "nothing to implement here" (it takes a
+    // ShowMessage branch instead of the callback).  See ShowMessage.
+    private const string EngineNoMembersMessage = "No unimplemented methods found.";
 
     public NemerleProject(ServerLog log, ServerOptions options)
     {
@@ -1263,6 +1266,11 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
             if (!await AwaitMemberDeliveryAsync(request, delivery).ConfigureAwait(false))
                 return null;
 
+            // Delivered, but with nothing in it: the engine answered "no members
+            // are missing" through ShowMessage.  Skip the generation hop.
+            if (delivery.Type is null)
+                return null;
+
             if (token.IsCancellationRequested || source.CurrentVersion != expectedVersion)
                 return null;
 
@@ -2210,6 +2218,23 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     public void SetStatusText(string text) => Trace.WriteLine(text);
     public void ShowMessage(string message, MessageType messageType)
     {
+        // The engine reports "there is nothing to implement" through ShowMessage
+        // instead of through AddUnimplementedMembers (Engine-FindUnimplementedMembers.n
+        // and Engine-FindMethodsToOverride.n both take that branch), so this is the
+        // negative half of the WP-P5 round trip, not a message for the user.
+        // Consuming it here is what keeps a caret move on ordinary code from
+        // waiting out the whole delivery settle window - and from printing an
+        // engine message into the Output every time the lightbulb is polled.
+        if (messageType == MessageType.Info && message == EngineNoMembersMessage)
+        {
+            var delivery = _memberSuggestion;
+            if (delivery is not null)
+            {
+                delivery.Delivered = true;
+                return;
+            }
+        }
+
         switch (messageType)
         {
             case MessageType.Error: _log.Error($"nemerle engine: {message}"); break;
