@@ -63,9 +63,36 @@ rename → codeAction の順」)。本 WP はそのバックログ項目をそ�
 したがって新機能はすべて `ColorizeRequest` の前例(`AsyncRequestType.EmptyRequest` +
 `AsyncWorker.AddWork` + `EngineRequestBridge`)か、engine 自身の `Begin*`(worker 投入済み)を使う。
 
-**既存の `GetGoto`(definition / references)は同じハザードを持ったまま**同期呼び出しで残っている
-(`NemerleProject.cs:541` 付近、`lock (_engineOperations)` 内で `_engine.GetGotoInfo`)。rename が
-同じ経路に載るため、**WP-P3 の先頭でこの経路を worker 側へ寄せる**(§7 の P3-a)。
+**【2026-07-26 訂正】** 初版は「既存の `GetGoto`(definition / references)は同じハザードを
+持ったまま同期呼び出しで残っているので、WP-P3 の先頭で worker 側へ寄せる」と書いていたが、
+**これは誤りだったので取り消す**(WP-P2 実施中に判明、engine ソースで確認済み)。
+
+`IIdeEngine.GetGotoInfo` の実体は `Engine-GetGoToInfo.n:31` の
+
+```
+public GetGotoInfo(source, line, col, kind) : array[GotoInfo]
+{
+  def request = BeginGetGotoInfo(source, line, col, kind);  // AsyncWorker.AddWork 済み
+  _ = request.AsyncWaitHandle.WaitOne();
+  request.GotoInfos
+}
+```
+
+= **同期版は「worker へ投げて呼び出し元スレッドが待つ」だけ**であり、**型解決そのものは
+既に worker スレッドで走っている**。したがって WP-O5a の NRE ハザード(worker 外で型解決を
+走らせる)には該当しない。**WP-P3 に「経路の worker 化」は不要**。
+
+残る性質は 2 点で、いずれも別問題:
+
+1. 同期版は LSP スレッドを worker のキューが捌けるまでブロックし、**キャンセルできない**
+   (`WaitOne()` に timeout も CancellationToken も無い)。
+2. 返ってきた `GotoInfo` の遅延メンバー(`FilePath` = コンパイラーのファイル名表の読み出し)を
+   LSP スレッドで読むのは WP-P1 / WP-P2 が避けた形と同じ。フラット化は worker 側で済ませるのが望ましい。
+
+なお **worker 上で `GetGotoInfo`(同期版)を呼ぶことはできない**: 自分自身の完了を単一の worker
+スレッド上で待つことになり自己デッドロックする。`BeginGetGotoInfo`(非同期版)は
+`internal partial class Engine` のメンバーで `IIdeEngine` に無いため、server からは見えない
+= **非同期経路を使うには interface への追加 = 共有ソース改修**(§3-3 により PO 判断)。
 
 ### 3-2. 版
 
@@ -174,7 +201,7 @@ WP-P5 と共有する。
 |---|---|---|---|
 | WP-P1 | signatureHelp | — | 低 |
 | WP-P2 | documentHighlight | — | 低 |
-| WP-P3 | rename(+ `GetGoto` の worker 経路化、WorkspaceEdit 基盤) | P2 と実装共有 | 中 |
+| WP-P3 | rename(WorkspaceEdit 基盤) | P2 と実装共有 | 中 |
 | WP-P4 | formatting(評価 → go/no-go → 実装) | — | **高**(no-go あり) |
 | WP-P5 | codeAction | P3(WorkspaceEdit 基盤) | 中〜高(§4 の assert) |
 
