@@ -786,6 +786,27 @@ internal static class Program
         var multi = CodeActionMapping.Reindent("a\n  b\n", "\t");
         Equal("\ta\n\t  b\n", multi, "relative indentation inside a member is preserved");
 
+        // The engine emits one TAB per level inside a generated member (a
+        // property's get, a method body).  Prefixing that with spaces gave
+        // "    " + "\t" - mixed indentation whose depth depends on the reader's
+        // tab width, which a hands-on check of WP-P5 rejected.  Each leading tab
+        // becomes one step of the target's own kind.
+        Equal(
+            "    public Name : string\n    {\n      get{ throw X() }\n    }\n",
+            CodeActionMapping.Reindent("public Name : string\n{\n\tget{ throw X() }\n}\n", "    "),
+            "the engine's tabs become spaces in a space-indented file");
+        Equal(
+            "\t\tpublic Name : string\n\t\t{\n\t\t\tget{ throw X() }\n\t\t}\n",
+            CodeActionMapping.Reindent("public Name : string\n{\n\tget{ throw X() }\n}\n", "\t\t"),
+            "a tab-indented file keeps tabs");
+        Equal(
+            "  a\n      b\n",
+            CodeActionMapping.Reindent("a\n\t\tb\n", "  "),
+            "two levels of engine nesting become two steps");
+        // Nothing in the output mixes the two.
+        var mixedProbe = CodeActionMapping.Reindent("a\n\tb\n", "    ");
+        True(!mixedProbe.Contains('\t'), $"no tab survives into a space-indented insertion: {mixedProbe.Replace("\t", "<TAB>")}");
+
         // The common case: the insertion point is just before a closing brace
         // that sits at the start of its line.
         var atLineStart = new NemerleInsertionPoint(uri, 9, 0, "");
@@ -799,6 +820,7 @@ internal static class Program
         Equal(9, action.Edit.StartLine, "the edit is at the insertion line");
         Equal(action.Edit.StartLine, action.Edit.EndLine, "the edit is an insertion");
         Equal(action.Edit.StartCharacter, action.Edit.EndCharacter, "the edit has an empty range");
+        Equal(0, action.Edit.StartCharacter, "an insertion point preceded only by whitespace starts at column 0");
         Equal("  public Draw() : void{ }\n  public Stop() : void{ }\n", action.Edit.NewText,
             "both members are inserted, indented, with the brace left at column 0");
 
@@ -811,26 +833,40 @@ internal static class Program
         Equal("Implement IWidget (1 member)", single!.Title, "a single member is not pluralized");
 
         // A one-line `class Foo { }`: the insertion point is mid-line, so the
-        // members have to start on a fresh line, and the text that preceded them
-        // is put back so the brace keeps its place.
+        // members start on a fresh line and whatever follows the caret continues
+        // on its own.  Only the line's *whitespace* is re-emitted - re-emitting
+        // the code before the caret would duplicate it, which an earlier version
+        // of this test wrongly asserted.
         var midLine = new NemerleInsertionPoint(uri, 3, 12, "class Foo { ");
         var wrapped = CodeActionMapping.ToCodeAction(
             new NemerleMemberGeneration("IWidget", 1, "public Draw() : void{ }\n"),
             midLine,
             "  ",
             "Implement {0} ({1} {2})");
-        Equal("\n  public Draw() : void{ }\nclass Foo { ", wrapped!.Edit.NewText,
-            "a mid-line insertion opens with a newline and restores what preceded it");
+        Equal(12, wrapped!.Edit.StartCharacter, "a mid-line insertion stays at the caret");
+        Equal("\n  public Draw() : void{ }\n", wrapped.Edit.NewText,
+            "a mid-line insertion opens with a newline and does not repeat the code before it");
 
-        // An indented brace: its own indentation is restored after the members.
+        // An indented closing brace - the real shape, and the one that was wrong:
+        // the edit must start at column 0, or the line's own indentation is added
+        // on top of the members' and the first member sits deeper than the rest.
         var indentedBrace = new NemerleInsertionPoint(uri, 7, 2, "  ");
         var nested = CodeActionMapping.ToCodeAction(
             new NemerleMemberGeneration("IWidget", 1, "public Draw() : void{ }\n"),
             indentedBrace,
             "    ",
             "Implement {0} ({1} {2})");
-        Equal("    public Draw() : void{ }\n  ", nested!.Edit.NewText,
-            "the nested brace's indentation is put back after the members");
+        Equal(0, nested!.Edit.StartCharacter, "the edit starts at the line's beginning");
+        Equal("    public Draw() : void{ }\n", nested.Edit.NewText,
+            "the member is at the members' indentation; the brace line follows untouched");
+
+        // The whole point, as a client would see it: applying the edit to that
+        // line leaves every generated line at one column and the brace at its own.
+        var braceLine = "  }";
+        var applied = braceLine[..nested.Edit.StartCharacter] + nested.Edit.NewText +
+            braceLine[nested.Edit.StartCharacter..];
+        Equal("    public Draw() : void{ }\n  }", applied,
+            "the applied result is the member at 4 columns and the brace back at 2");
 
         // Nothing to insert is not an action.
         True(CodeActionMapping.ToCodeAction(

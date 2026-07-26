@@ -2938,6 +2938,30 @@ internal static class Program
                     $"the generated source did not contain '{required}':\n{implement.NewText}");
         }
 
+        // Indentation, which a hands-on check of WP-P5 found wrong twice: the
+        // engine emits a tab per level inside a member, and the edit used to be
+        // placed after the brace line's own indentation so the first member landed
+        // deeper than the rest.  Both are only visible once the text is put in a
+        // file, so assert on the file's shape, not on the fragment.
+        if (implement.NewText.Contains('\t'))
+            throw new InvalidDataException(
+                "the generated members mix tabs into a space-indented document:\n" +
+                implement.NewText.Replace("\t", "<TAB>"));
+
+        var members = implement.NewText.Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.TrimStart().StartsWith("public ", StringComparison.Ordinal))
+            .ToArray();
+        if (members.Length != 2)
+            throw new InvalidDataException(
+                $"expected two generated member declarations, got {members.Length}:\n{implement.NewText}");
+        foreach (var member in members)
+        {
+            var indent = member.Length - member.TrimStart().Length;
+            if (indent != 2)
+                throw new InvalidDataException(
+                    $"a generated member is at column {indent}, not at the class body's 2: '{member}'");
+        }
+
         // Apply the edit and let the server re-analyze: the interface error must
         // be gone, and no new error may take its place.
         var patched = ApplyEdit(CodeActionProbeSource, implement);

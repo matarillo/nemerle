@@ -53,26 +53,41 @@ public static class CodeActionMapping
             return null;
 
         var builder = new StringBuilder();
-        // Only whitespace before the insertion point means the caller placed it
-        // at the start of a line (typically just before the closing brace), so
-        // the members can start right there.
-        if (!IsBlank(insertion.LinePrefix))
+        var onOwnLine = IsBlank(insertion.LinePrefix);
+        // Where the edit actually goes.  When the insertion point is preceded only
+        // by whitespace - the usual case, a closing brace on its own line - the
+        // edit starts at column 0 and re-emits that whitespace after the members.
+        // Inserting *at* the caret instead would add the line's indentation on top
+        // of the members' own, which put the first member two columns deeper than
+        // the rest (found by a hands-on check of WP-P5; the unit tests only
+        // covered a brace at column 0, where the two are the same thing).
+        var character = onOwnLine ? 0 : insertion.Character;
+
+        if (!onOwnLine)
+        {
+            // A one-line `class Foo { }`: break after the code that is already
+            // there, and let what follows the caret continue on its own line.
             builder.Append('\n');
+        }
 
         builder.Append(body);
         if (!body.EndsWith('\n'))
             builder.Append('\n');
 
-        // Put back what stood before the insertion point on that line (the
-        // closing brace's own indentation), so it is not left flush left.
-        builder.Append(insertion.LinePrefix);
+        // Nothing is re-emitted in the common case: the edit went in at column 0,
+        // so the original line - its indentation and its closing brace - simply
+        // follows the inserted members untouched.  Only a mid-line insertion has
+        // to hand back the line's indentation, because there the caret is already
+        // past it.
+        if (!onOwnLine)
+            builder.Append(LeadingWhitespace(insertion.LinePrefix));
 
         var edit = new NemerleTextEdit(
             insertion.Uri,
             insertion.Line,
-            insertion.Character,
+            character,
             insertion.Line,
-            insertion.Character,
+            character,
             builder.ToString());
 
         var title = string.Format(
@@ -85,14 +100,28 @@ public static class CodeActionMapping
 
     /// <summary>
     /// Re-indents generated source to <paramref name="indent"/>: every non-empty
-    /// line keeps its own relative indentation and gains the target prefix, and
-    /// line endings are normalized to <c>\n</c> (the client re-applies the
-    /// document's own convention when it inserts).
+    /// line keeps its own relative nesting and gains the target prefix, and line
+    /// endings are normalized to <c>\n</c> (the client re-applies the document's
+    /// own convention when it inserts).
+    ///
+    /// <para><b>The engine's own nesting is re-expressed in the target's unit.</b>
+    /// <c>SourceGenerator</c> emits one <em>tab</em> per level inside a member it
+    /// generates (a property's <c>get</c>, a method body).  Prefixing that with
+    /// spaces produced lines like <c>"    " + "\t"</c>: mixed indentation whose
+    /// depth then depends on the reader's tab width, which is what a hands-on
+    /// check of WP-P5 rejected.  Each leading tab is therefore replaced by one
+    /// indentation step of the same kind as <paramref name="indent"/> - so a
+    /// space-indented file gets spaces, and a tab-indented one keeps tabs.</para>
     /// </summary>
     public static string Reindent(string generated, string indent)
     {
         if (string.IsNullOrWhiteSpace(generated))
             return string.Empty;
+
+        // One nesting step, in the same currency as the insertion point's own
+        // indentation.  Two spaces is the step IndentFor uses when it has no tabs
+        // to go on, and is what the Nemerle sources in this repository use.
+        var step = indent.Length > 0 && indent.All(c => c == '\t') ? "\t" : "  ";
 
         var builder = new StringBuilder(generated.Length + 32);
         foreach (var raw in generated.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
@@ -106,7 +135,16 @@ public static class CodeActionMapping
                 continue;
             }
 
-            builder.Append(indent).Append(line).Append('\n');
+            builder.Append(indent);
+
+            var content = 0;
+            while (content < line.Length && (line[content] == ' ' || line[content] == '\t'))
+            {
+                builder.Append(line[content] == '\t' ? step : " ");
+                content++;
+            }
+
+            builder.Append(line, content, line.Length - content).Append('\n');
         }
 
         // Blank lines *between* members are kept; the ones the generator leaves at
@@ -141,4 +179,12 @@ public static class CodeActionMapping
     }
 
     private static bool IsBlank(string text) => text.All(char.IsWhiteSpace);
+
+    private static string LeadingWhitespace(string text)
+    {
+        var i = 0;
+        while (i < text.Length && (text[i] == ' ' || text[i] == '\t'))
+            i++;
+        return text[..i];
+    }
 }
