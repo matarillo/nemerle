@@ -40,6 +40,37 @@ suite('Nemerle extension', () => {
     await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
   });
 
+  test('VS Code recognizes identifiers as words (the word pattern compiles with u)', async () => {
+    // Not a formality: VS Code asks a document-highlight provider only when
+    // getWordAtPosition finds a word under the caret.  The manifest's wordPattern
+    // uses \p{L}, which is a character class only under the "u" flag - as a bare
+    // string VS Code compiles it with "g" alone and `counter` stops being a word,
+    // so textDocument/documentHighlight is never requested at all (hover and code
+    // actions still work, which is what made this hard to see).  This asserts the
+    // whole chain through VS Code's own word definition, not just the regex.
+    const document = await vscode.workspace.openTextDocument({
+      language: 'nemerle',
+      content: 'module Words\n{\n  Run() : void\n  {\n    mutable counter = 0;\n    counter = counter + 1;\n  }\n}\n',
+    });
+    await vscode.window.showTextDocument(document);
+
+    const line = 4;
+    const start = document.lineAt(line).text.indexOf('counter');
+    assert.ok(start > 0);
+
+    // Every column inside the identifier resolves to the whole identifier.
+    for (const offset of [0, 3, 'counter'.length]) {
+      const range = document.getWordRangeAtPosition(new vscode.Position(line, start + offset));
+      assert.ok(range, `no word at column ${start + offset}`);
+      assert.equal(document.getText(range), 'counter', `at column ${start + offset}`);
+    }
+
+    // Whitespace is still not a word.
+    assert.equal(document.getWordRangeAtPosition(new vscode.Position(line, 0)), undefined);
+
+    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+  });
+
   test('applies auto-closing, auto-surrounding, and brace indentation', async () => {
     const document = await vscode.workspace.openTextDocument({ language: 'nemerle', content: '' });
     const editor = await vscode.window.showTextDocument(document);

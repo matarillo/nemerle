@@ -110,6 +110,33 @@ test('language configuration provides comments, brackets, closing, surrounding, 
   assert.equal(typeof configuration.indentationRules.decreaseIndentPattern, 'string');
 });
 
+test('the word pattern carries the unicode flag and matches ordinary identifiers', () => {
+  const configuration = readJson<Record<string, any>>('language-configuration.json');
+  const wordPattern = configuration.wordPattern;
+
+  // The pattern uses \p{L} / \p{N}, which are only character classes when the
+  // regex is compiled with "u".  As a bare string VS Code compiles it with "g"
+  // alone, and then \p{L} degrades to the literal set {p,{,L,}} - so `counter`
+  // stops being a word.  Everything keyed off the word definition breaks with
+  // it, silently: double-click selection, Ctrl+D, word-wise cursor movement,
+  // and - the way this was found - textDocument/documentHighlight, which VS Code
+  // never even requests when there is no word under the caret.
+  assert.equal(typeof wordPattern, 'object', 'wordPattern must be the {pattern, flags} form');
+  assert.equal(typeof wordPattern.pattern, 'string');
+  assert.ok(wordPattern.flags.includes('u'), `wordPattern needs the u flag, got "${wordPattern.flags}"`);
+
+  const regex = new RegExp(wordPattern.pattern, wordPattern.flags);
+  for (const identifier of ['counter', 'GridPoint', 'Run', '_x1', "value'", 'Ünïcode']) {
+    regex.lastIndex = 0;
+    const match = regex.exec(identifier);
+    assert.equal(match?.[0], identifier, `the whole identifier must be one word: ${identifier}`);
+  }
+
+  // The operator alternative still works (Nemerle names operators).
+  regex.lastIndex = 0;
+  assert.equal(regex.exec('<=>')?.[0], '<=>');
+});
+
 function readJson<T>(relativePath: string): T {
   return JSON.parse(fs.readFileSync(path.join(extensionRoot, relativePath), 'utf8')) as T;
 }

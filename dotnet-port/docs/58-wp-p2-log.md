@@ -358,3 +358,63 @@ worker から呼ぶとデッドロックする(§設計-1)。取り得るのは:
   `AddResponse` 直後の `assert(false)` は別問題として先に実測すること。
 - **engine 結果オブジェクトの読み出しを worker に載せる型は 3 例目**(WP-O5a `ColorizeRequest`、
   WP-P1 `MethodTipDescriptionRequest`、本 WP は `SetHighlights` がそもそも worker 上)。
+
+## 追記(2026-07-26): 実機で「反応しない」ように見えた原因は拡張の `wordPattern`
+
+WP-P 系列の実機確認(WSL + VS Code)で「識別子をクリックしてもハイライトされない」という報告が
+あり、追跡した結果 **本 WP の実装ではなく `vscode-nemerle` の言語設定の欠陥**だった。記録しておく。
+
+### 症状と切り分け
+
+Output に `nemerle hover computed ...` と `nemerle code actions: none ...` は出るのに、
+**`nemerle document highlight ...` が 1 行も出ない**。ハンドラーは空振りでも必ずログするので、
+「クライアントが要求していない」ことが確定する。サーバー側は次を実測して除外した:
+
+- リロード直後(engine リビルド 2 回 + `semanticTokens/refresh` 3 回)に同位置へ 60 回連射 →
+  **60/60 が正しく応答、空ゼロ**。
+- `semanticTokens/full` と応答を待たずに重ねて 25 往復 → **25/25** 正常。
+  = semantic tokens との干渉も無い。
+- 単語内の全列 + 前後 1 列を走査 → **単語内と終端直後はすべて応答**、前後は 0。
+- `initialize` 応答で `documentHighlightProvider` を広告、`dynamicRegistration: true` の
+  クライアント(= VS Code と同じ)には `client/registerCapability` で
+  `textDocument/documentHighlight` を登録済み。
+
+### 原因
+
+`vscode-nemerle/language-configuration.json` の
+
+```
+"wordPattern": "(@?[\p{L}_][\p{L}\p{N}_']*|@?[=<>@^&+|*/$%!?.:?#\`~-]+)"
+```
+
+は **文字列形式**だったため VS Code が `new RegExp(pattern, "g")` で組む。JavaScript の
+`\p{...}` は **`u` フラグが無いと文字クラスにならない**(identity escape になり、
+`[\p{L}_]` は「`p` `{` `L` `}` `_` のいずれか」という集合に化ける)。実測:
+
+| flags | `counter` | `GridPoint` | `_x` |
+|---|---|---|---|
+| `g`(修正前の実効値) | **NO MATCH** | **NO MATCH** | `"_"` だけ |
+| `gu` | `"counter"` | `"GridPoint"` | `"_x"` |
+
+**VS Code の word highlighter は `getWordAtPosition` が単語を返さない位置ではサーバーに要求を
+出さない**。一方 hover(マウス位置)と code action(キャレット位置)は単語かどうかに依存しない。
+報告されたログの非対称は、まさにこの形だった。
+
+影響は documentHighlight だけではない: ダブルクリックの単語選択・`Ctrl+D`・単語単位のカーソル移動・
+rename の既定文字列など、**単語定義に依存する機能すべて**が壊れていた。WP-L 期からの潜在欠陥で、
+WP-P2 が可視化した。
+
+### 修正
+
+VS Code のスキーマは `wordPattern` に `{pattern, flags}` 形式を許し、flags は `^([gimuy]+)$`。
+オブジェクト形式にして `"flags": "gu"` を与えた(Unicode 識別子のサポートを保ったまま直す唯一の形)。
+
+検証: **実 VS Code の統合テストに `getWordRangeAtPosition` を叩くケースを追加**し、A/B で
+「文字列形式に戻すと `no word at column 12` で落ちる / オブジェクト形式なら通る」ことを確認した
+(= このテストは実際に本欠陥を捕まえる)。拡張 unit も 1 本追加(24 本に)。
+
+### 申し送り
+
+- **サーバー無変更**。拡張側だけの修正なので、手元で確認するなら**インストール済み拡張の
+  `language-configuration.json` を直接編集して Reload Window** でも効く(VSIX 再生成不要)。
+- 公開する場合は VSIX の再生成が必要(0.10.0 は未公開のため版は据え置きでよい)。
