@@ -101,6 +101,10 @@ internal sealed class LspTestClient : IAsyncDisposable
                     // Advertise document highlight so that handler registers
                     // (WP-P2).
                     documentHighlight = new { },
+                    // Advertise rename with prepareSupport so both handlers
+                    // register and the server is asked before the editor would
+                    // open its input box (WP-P3).
+                    rename = new { prepareSupport = true },
                     // Advertise semantic tokens so that handler registers
                     // (WP-O5a).  The legend advertised here is the client's
                     // vocabulary; the server answers with its own legend in the

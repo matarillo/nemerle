@@ -14,6 +14,7 @@ internal static class Program
             SemanticTokenMappingTests();
             SignatureHelpMappingTests();
             GotoMappingTests();
+            RenameMappingTests();
             IncrementalSyncTests();
             PathNormalizerTests();
             ToolchainProvenanceTests();
@@ -596,6 +597,164 @@ internal static class Program
         Equal(0, (int)NemerleUsageType.Definition, "UsageType.Definition mirrors ordinal 0");
         Equal(1, (int)NemerleUsageType.Usage, "UsageType.Usage mirrors ordinal 1");
         Equal(5, (int)NemerleUsageType.ExternalUsage, "UsageType.ExternalUsage mirrors ordinal 5");
+    }
+
+    /// <summary>
+    /// WP-P3.  Each refusal below is a rule that exists because the alternative
+    /// quietly damages the user's code, so each one is pinned here rather than
+    /// only end to end.
+    /// </summary>
+    private static void RenameMappingTests()
+    {
+        var file = OperatingSystem.IsWindows() ? @"C:\repo\App\Program.n" : "/repo/App/Program.n";
+        var other = OperatingSystem.IsWindows() ? @"C:\repo\App\Other.n" : "/repo/App/Other.n";
+        var uri = GotoMapping.ToUri(file);
+        var otherUri = GotoMapping.ToUri(other);
+
+        // 1-based engine coordinates, end-exclusive: "value" at line 5, cols 7..12.
+        var declaration = new NemerleGotoTarget(file, 3, 5, 7, 5, 12, NemerleUsageType.Definition);
+        var use = new NemerleGotoTarget(file, 3, 9, 3, 9, 8, NemerleUsageType.Usage);
+        var crossFileUse = new NemerleGotoTarget(other, 4, 2, 1, 2, 6, NemerleUsageType.Usage);
+
+        // --- Prepare ---
+
+        Equal(NemerleRenameRefusal.NoSymbol,
+            RenameMapping.Prepare([], 3, 4, 6).Refusal,
+            "nothing resolved at the caret is refused as NoSymbol");
+
+        var external = new NemerleGotoTarget(null, 0, 0, 0, 0, 0, NemerleUsageType.Definition);
+        Equal(NemerleRenameRefusal.ExternalSymbol,
+            RenameMapping.Prepare([external], 3, 4, 6).Refusal,
+            "a metadata-only symbol has no source to rewrite");
+
+        // Uses here, declaration not in the workspace: the ProjectReference case
+        // (39-prerelease-wp-n2-log.md §7-4).  Renaming would edit the uses and
+        // leave the declaration, i.e. break the build.
+        Equal(NemerleRenameRefusal.DeclarationOutsideWorkspace,
+            RenameMapping.Prepare([use], 3, 8, 4).Refusal,
+            "a symbol declared outside this workspace is refused");
+
+        // Same shape, but the engine also reported a source-less target: that is a
+        // BCL / NuGet member, and saying "another project" would be misleading.
+        Equal(NemerleRenameRefusal.ExternalSymbol,
+            RenameMapping.Prepare([use, external], 3, 8, 4).Refusal,
+            "uses of a metadata member are refused as external, not as cross-project");
+
+        // The caret must be on an occurrence: inside a declaration but off any
+        // name, the engine answers with the enclosing type, which is a fine
+        // highlight and a destructive rename.
+        Equal(NemerleRenameRefusal.CaretNotOnSymbol,
+            RenameMapping.Prepare([declaration, use], 3, 0, 0).Refusal,
+            "a caret that no occurrence covers is refused");
+
+        var prepared = RenameMapping.Prepare([declaration, use], 3, 8, 4);
+        True(prepared.CanRename, "a caret on a use of an in-workspace symbol can be renamed");
+        Equal(8, prepared.Range!.StartLine, "the offered range is the occurrence under the caret");
+        Equal(2, prepared.Range!.StartCharacter, "the offered range is 0-based");
+        Equal(7, prepared.Range!.EndCharacter, "the offered range ends where the identifier does");
+
+        // The caret sitting immediately after the last character still counts:
+        // editors report `foo|` that way.
+        True(RenameMapping.Prepare([declaration, use], 3, 8, 7).CanRename,
+            "a caret at the trailing edge of an identifier is still on it");
+        Equal(NemerleRenameRefusal.CaretNotOnSymbol,
+            RenameMapping.Prepare([declaration, use], 3, 8, 8).Refusal,
+            "a caret past the identifier is not on it");
+
+        // The caret is matched in the requested document only.
+        Equal(NemerleRenameRefusal.CaretNotOnSymbol,
+            RenameMapping.Prepare([declaration, crossFileUse], 3, 1, 2).Refusal,
+            "an occurrence in another file does not satisfy the caret rule");
+
+        // --- New-name validation ---
+
+        var keywords = new HashSet<string>(StringComparer.Ordinal) { "def", "surroundwith" };
+        Equal(NemerleRenameRefusal.None, RenameMapping.ValidateNewName("total", keywords), "a plain identifier is accepted");
+        Equal(NemerleRenameRefusal.None, RenameMapping.ValidateNewName("_x1'", keywords), "underscore, digits and a prime are identifier characters");
+        Equal(NemerleRenameRefusal.InvalidNewName, RenameMapping.ValidateNewName("1counter", keywords), "an identifier cannot start with a digit");
+        Equal(NemerleRenameRefusal.InvalidNewName, RenameMapping.ValidateNewName("a-b", keywords), "an operator character is not an identifier");
+        Equal(NemerleRenameRefusal.InvalidNewName, RenameMapping.ValidateNewName("", keywords), "an empty name is refused");
+        Equal(NemerleRenameRefusal.InvalidNewName, RenameMapping.ValidateNewName(null, keywords), "a missing name is refused");
+        Equal(NemerleRenameRefusal.NewNameIsKeyword, RenameMapping.ValidateNewName("def", keywords), "a base keyword is refused");
+        // The set is this file's environment, so a macro-introduced keyword is
+        // refused exactly where the macro is in scope (the WP-O5a distinction).
+        Equal(NemerleRenameRefusal.NewNameIsKeyword, RenameMapping.ValidateNewName("surroundwith", keywords), "a macro-introduced keyword is refused");
+        Equal(NemerleRenameRefusal.None, RenameMapping.ValidateNewName("surroundwith", new HashSet<string>(StringComparer.Ordinal)), "the same word is fine where the macro is not in scope");
+
+        // --- Occurrence verification ---
+
+        var here = new NemerleGotoLocation(uri, 4, 6, 4, 11);
+        var alsoHere = new NemerleGotoLocation(uri, 8, 2, 8, 7);
+        Equal(NemerleRenameRefusal.None,
+            RenameMapping.CheckOccurrences(
+                [new NemerleRenameOccurrence(here, "value"), new NemerleRenameOccurrence(alsoHere, "value")],
+                "value"),
+            "occurrences whose text is the symbol's name are accepted");
+        Equal(NemerleRenameRefusal.InconsistentOccurrences,
+            RenameMapping.CheckOccurrences(
+                [new NemerleRenameOccurrence(here, "value"), new NemerleRenameOccurrence(alsoHere, "other")],
+                "value"),
+            "an occurrence whose text is not the symbol's name stops the rename");
+        Equal(NemerleRenameRefusal.InconsistentOccurrences,
+            RenameMapping.CheckOccurrences(
+                [new NemerleRenameOccurrence(here, "value"), new NemerleRenameOccurrence(alsoHere, null)],
+                "value"),
+            "an occurrence the server has no buffer for is a refusal, not permission");
+
+        // --- Workspace edit assembly ---
+
+        var edit = RenameMapping.ToWorkspaceEdit(
+            [
+                new NemerleRenameOccurrence(alsoHere, "value"),
+                new NemerleRenameOccurrence(here, "value"),
+                new NemerleRenameOccurrence(new NemerleGotoLocation(otherUri, 1, 0, 1, 5), "value"),
+            ],
+            "total");
+        True(edit.IsUsable, "a well-formed rename assembles");
+        Equal(2, edit.Edit!.DocumentCount, "edits are grouped per document");
+        Equal(3, edit.Edit!.EditCount, "every occurrence became an edit");
+        // Documents come out ordered by URI, so address the one under test by name.
+        var edited = edit.Edit!.Documents.Single(document => document.Uri == uri);
+        Equal(4, edited.Edits[0].StartLine, "edits within a document are ordered by position");
+        Equal(8, edited.Edits[1].StartLine, "the later occurrence follows it");
+        Equal("total", edited.Edits[0].NewText, "each edit inserts the new name");
+
+        // Exact duplicates collapse (the engine can report one location twice),
+        // but two different replacements for one span are a real disagreement.
+        var duplicated = WorkspaceEditMapping.Build(
+            [
+                new NemerleTextEdit(uri, 4, 6, 4, 11, "total"),
+                new NemerleTextEdit(uri, 4, 6, 4, 11, "total"),
+            ]);
+        Equal(1, duplicated.Edit!.EditCount, "an exactly duplicated edit collapses");
+        var contradictory = WorkspaceEditMapping.Build(
+            [
+                new NemerleTextEdit(uri, 4, 6, 4, 11, "total"),
+                new NemerleTextEdit(uri, 4, 6, 4, 11, "sum"),
+            ]);
+        True(!contradictory.IsUsable, "two different replacements for one span are a conflict");
+
+        // Overlap is refused rather than repaired: LSP applies a document's edits
+        // against its original text and forbids overlapping ranges.
+        var overlapping = WorkspaceEditMapping.Build(
+            [
+                new NemerleTextEdit(uri, 4, 6, 4, 11, "total"),
+                new NemerleTextEdit(uri, 4, 9, 4, 14, "total"),
+            ]);
+        True(!overlapping.IsUsable, "overlapping edits are refused");
+        True(overlapping.Conflict is not null, "the conflict says which ranges collided");
+
+        // Touching ranges do not overlap, and neither do two insertions at one
+        // point - WP-P5 will emit those for generated members.
+        var touching = WorkspaceEditMapping.Build(
+            [
+                new NemerleTextEdit(uri, 4, 6, 4, 11, "total"),
+                new NemerleTextEdit(uri, 4, 11, 4, 16, "total"),
+                new NemerleTextEdit(uri, 6, 0, 6, 0, "  Added() : void { }\n"),
+                new NemerleTextEdit(uri, 6, 0, 6, 0, "  AlsoAdded() : void { }\n"),
+            ]);
+        True(touching.IsUsable, "touching ranges and insertions at one point are not overlaps");
+        Equal(4, touching.Edit!.EditCount, "all four edits survive");
     }
 
     private static void IncrementalSyncTests()

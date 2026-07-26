@@ -73,6 +73,24 @@ internal sealed record EngineGotoResult(IReadOnlyList<NemerleGotoLocation> Locat
 }
 
 /// <summary>
+/// A rename result (WP-P3): the workspace edit, or the reason the rename was
+/// refused.  <see cref="Conflict"/> carries the detail of an edit that could not
+/// be assembled (overlapping or contradictory edits);  <see cref="OldName"/> is
+/// the symbol's current text, for the log line.
+/// </summary>
+internal sealed record EngineRenameResult(
+    NemerleWorkspaceEdit? Edit,
+    NemerleRenameRefusal Refusal,
+    string? Conflict,
+    string? OldName)
+{
+    public bool IsUsable => Edit is not null && Refusal == NemerleRenameRefusal.None;
+
+    public static EngineRenameResult Refused(NemerleRenameRefusal refusal) =>
+        new(null, refusal, null, null);
+}
+
+/// <summary>
 /// One semantic token, already in LSP coordinates (0-based line and UTF-16
 /// character, length in UTF-16 code units) and classified into the legend of
 /// <see cref="SemanticTokenMapping"/>.  Tokens never span lines: the engine
@@ -783,12 +801,14 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
     ///
     /// <para>Shared by the highlight callback - where it runs on the worker, as it
     /// should, because <c>GotoInfo.FilePath</c> reads the compiler's process-wide
-    /// file-name list - and by the still-synchronous definition/references path,
-    /// where it does not.  Keeping one flattening means WP-P3, whose first step is
-    /// moving <see cref="GetGoto"/> onto the worker
-    /// (<c>56-wp-p-plan.md</c> §3-1), only has to change where the call is made
-    /// from; see that WP's note about <c>BeginGetGotoInfo</c> not being on
-    /// <c>IIdeEngine</c>.</para>
+    /// file-name list - and by the definition/references/rename path, which calls
+    /// the synchronous <c>GetGotoInfo</c> and flattens on the LSP thread.  That
+    /// asymmetry is deliberate and bounded: <c>GetGotoInfo</c> is itself
+    /// <c>BeginGetGotoInfo</c> plus <c>AsyncWaitHandle.WaitOne()</c>, so the
+    /// resolution runs on the worker and only this last read does not
+    /// (<c>56-wp-p-plan.md</c> §3-1, which retracts the plan's original claim that
+    /// the whole path ran off-worker).  Moving the read as well would need
+    /// <c>BeginGetGotoInfo</c> on <c>IIdeEngine</c>, which it is not.</para>
     /// </summary>
     private static NemerleGotoTarget[] FlattenGotoInfos(IEnumerable<GotoInfo> infos)
     {
@@ -806,6 +826,293 @@ internal sealed class NemerleProject : IIdeProject, IAsyncDisposable
         }
 
         return [.. targets];
+    }
+
+    /// <summary>
+    /// Collects the engine's usage set (declaration included) for a position in an
+    /// open document, plus the document itself.  The source is null when the
+    /// document is not open; an empty target array means the engine resolved
+    /// nothing there.  Same route as <see cref="GetReferences"/> - deliberately,
+    /// so what rename rewrites is exactly what references lists and what
+    /// documentHighlight paints.
+    /// </summary>
+    private (NemerleGotoTarget[] Targets, InMemoryNemerleSource? Source) CollectUsages(
+        string uri,
+        int lspLine,
+        int lspCharacter)
+    {
+        lock (_engineOperations)
+        {
+            InMemoryNemerleSource source;
+            lock (_gate)
+            {
+                if (_disposed ||
+                    !_openUriToPath.TryGetValue(uri, out var path) ||
+                    !_documentsByPath.TryGetValue(path, out var state))
+                    return ([], null);
+                source = state.Source;
+            }
+
+            // Engine coordinates are 1-based; the LSP character is a UTF-16 code
+            // unit offset, matching the source's .NET string indexing.
+            var infos = _engine.GetGotoInfo(source, lspLine + 1, lspCharacter + 1, GotoKind.Usages);
+            return (infos is null ? [] : FlattenGotoInfos(infos), source);
+        }
+    }
+
+    /// <summary>
+    /// Answers <c>textDocument/prepareRename</c>: the range of the name under the
+    /// caret, or the reason it cannot be renamed.  The rules live in the pure
+    /// <see cref="RenameMapping.Prepare"/>; this only supplies the usage set.
+    /// </summary>
+    public NemerleRenamePreparation PrepareRename(string uri, int lspLine, int lspCharacter)
+    {
+        var (targets, source) = CollectUsages(uri, lspLine, lspCharacter);
+        return source is null
+            ? new NemerleRenamePreparation(null, NemerleRenameRefusal.DocumentNotOpen)
+            : RenameMapping.Prepare(targets, source.FileIndex, lspLine, lspCharacter);
+    }
+
+    /// <summary>
+    /// Computes the <c>WorkspaceEdit</c> for <c>textDocument/rename</c>, or the
+    /// refusal that stopped it.
+    ///
+    /// <para><b>Every step can refuse, and refusing is the safe outcome.</b>  A
+    /// rename that misses an occurrence, or rewrites something that was not the
+    /// symbol, breaks the user's build in a way they will blame on their own
+    /// edit.  So: the symbol must be declared inside this engine workspace
+    /// (<see cref="RenameMapping.Prepare"/>, which is where
+    /// <c>39-prerelease-wp-n2-log.md</c> §7-4's cross-project rule is enforced),
+    /// the new name must be a legal identifier that is not a keyword in this
+    /// file's environment, every occurrence's current text must still be the
+    /// symbol's own name, and the resulting edits must not overlap.</para>
+    /// </summary>
+    public async Task<EngineRenameResult> GetRenameEditsAsync(
+        string uri,
+        int lspLine,
+        int lspCharacter,
+        string newName,
+        CancellationToken token)
+    {
+        var (targets, source) = CollectUsages(uri, lspLine, lspCharacter);
+        if (source is null)
+            return EngineRenameResult.Refused(NemerleRenameRefusal.DocumentNotOpen);
+
+        var preparation = RenameMapping.Prepare(targets, source.FileIndex, lspLine, lspCharacter);
+        if (preparation.Range is not { } caretRange)
+            return EngineRenameResult.Refused(preparation.Refusal);
+
+        var keywords = await GetContextKeywordsAsync(source, lspLine + 1, token).ConfigureAwait(false);
+        var nameRefusal = RenameMapping.ValidateNewName(newName, keywords);
+        if (nameRefusal != NemerleRenameRefusal.None)
+            return EngineRenameResult.Refused(nameRefusal);
+
+        var occurrences = ReadOccurrences(targets);
+        var expected = FindOccurrenceText(occurrences, caretRange);
+        if (expected is null)
+            return EngineRenameResult.Refused(NemerleRenameRefusal.InconsistentOccurrences);
+
+        var occurrenceRefusal = RenameMapping.CheckOccurrences(occurrences, expected);
+        if (occurrenceRefusal != NemerleRenameRefusal.None)
+            return EngineRenameResult.Refused(occurrenceRefusal);
+
+        var edit = RenameMapping.ToWorkspaceEdit(occurrences, newName);
+        return edit.IsUsable
+            ? new EngineRenameResult(edit.Edit, NemerleRenameRefusal.None, null, expected)
+            : new EngineRenameResult(null, NemerleRenameRefusal.InconsistentOccurrences, edit.Conflict, expected);
+    }
+
+    /// <summary>
+    /// Reads the current source text of every navigable occurrence.  The text
+    /// comes from the server's own buffers (project sources are registered as
+    /// documents even when no editor has them open), so an occurrence in a file
+    /// the server does not have is reported as a null text, which
+    /// <see cref="RenameMapping.CheckOccurrences"/> treats as a refusal rather
+    /// than as permission to rewrite it unseen.
+    /// </summary>
+    private List<NemerleRenameOccurrence> ReadOccurrences(NemerleGotoTarget[] targets)
+    {
+        var occurrences = new List<NemerleRenameOccurrence>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var target in targets)
+        {
+            var locations = GotoMapping.ToLocations([target], includeDeclaration: true);
+            if (locations.Count == 0)
+                continue;
+
+            var location = locations[0];
+            var key = $"{location.Uri}|{location.StartLine}|{location.StartCharacter}|" +
+                $"{location.EndLine}|{location.EndCharacter}";
+            if (!seen.Add(key))
+                continue;
+
+            occurrences.Add(new NemerleRenameOccurrence(location, ReadRegion(target)));
+        }
+
+        return occurrences;
+    }
+
+    /// <summary>
+    /// The text an engine target currently spans, or null when the server has no
+    /// buffer for that document or the range no longer fits it.  Reads the
+    /// document's own text state (guarded by the source's gate), not engine
+    /// state, so it does not need the worker.
+    /// </summary>
+    private string? ReadRegion(NemerleGotoTarget target)
+    {
+        InMemoryNemerleSource source;
+        lock (_gate)
+        {
+            if (!_documentsByFileIndex.TryGetValue(target.FileIndex, out var state))
+                return null;
+            source = state.Source;
+        }
+
+        try
+        {
+            // The target keeps the engine's 1-based, end-exclusive coordinates,
+            // which is exactly what GetRegion takes.
+            return source.GetRegion(target.Line, target.Column, target.EndLine, target.EndColumn);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    private static string? FindOccurrenceText(
+        List<NemerleRenameOccurrence> occurrences,
+        NemerleGotoLocation caretRange)
+    {
+        foreach (var occurrence in occurrences)
+        {
+            if (occurrence.Location == caretRange)
+                return occurrence.Text;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The words that are keywords for the edited line: the core environment's
+    /// set plus whatever a syntax macro added through this file's <c>using</c>s
+    /// (the WP-O5a distinction, read the same way the colorizer reads it).
+    ///
+    /// <para>Runs on the AsyncWorker thread - <c>GetActiveEnv</c> walks the
+    /// declaration tree, which is engine state.  If the engine cannot answer
+    /// (not initialized yet, request superseded, timed out), this falls back to
+    /// the lexer's static <c>BaseKeywords</c> rather than refusing the rename:
+    /// the failure that lets through is "the user chose a macro keyword as a
+    /// name", which the compiler reports immediately on the next build, whereas
+    /// refusing would block a legitimate rename over a transient engine state.
+    /// The fallback is logged.</para>
+    /// </summary>
+    private async Task<IReadOnlySet<string>> GetContextKeywordsAsync(
+        InMemoryNemerleSource source,
+        int engineLine,
+        CancellationToken token)
+    {
+        var keywords = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var keyword in LexerBase.BaseKeywords)
+            keywords.Add(keyword);
+
+        Task<EngineRequestBridge.RequestResult<HashSet<string>?>> pending;
+        lock (_engineOperations)
+        {
+            int expectedVersion;
+            lock (_gate)
+            {
+                if (_disposed)
+                    return keywords;
+                expectedVersion = source.CurrentVersion;
+            }
+
+            pending = _bridge.RunAsync<HashSet<string>?>(
+                () => BeginProbeKeywords(source, engineLine),
+                () => source.CurrentVersion,
+                expectedVersion,
+                static request => ((KeywordProbeRequest)request).Keywords,
+                token);
+        }
+
+        var result = await pending.ConfigureAwait(false);
+        if (!result.IsUsable || result.Value is null)
+        {
+            _log.Log(
+                "nemerle rename: could not read this file's keyword environment " +
+                $"(engine request {result.Outcome}); using the base keyword set only");
+            return keywords;
+        }
+
+        foreach (var keyword in result.Value)
+            keywords.Add(keyword);
+
+        return keywords;
+    }
+
+    /// <summary>
+    /// The work item that reads the keyword environment on the worker.  Borrows
+    /// <c>AsyncRequestType.EmptyRequest</c> like <see cref="ColorizeRequest"/> and
+    /// the signature-help flattening, rather than adding a kind to the shared
+    /// <c>AsyncRequestType</c>.
+    /// </summary>
+    private sealed class KeywordProbeRequest(
+        IIdeEngine engine,
+        IIdeSource source,
+        int line,
+        Action<AsyncRequest> work)
+        : AsyncRequest(AsyncRequestType.EmptyRequest, engine, source, work)
+    {
+        public int Line { get; } = line;
+
+        public HashSet<string>? Keywords { get; set; }
+    }
+
+    private AsyncRequest BeginProbeKeywords(InMemoryNemerleSource source, int engineLine)
+    {
+        var request = new KeywordProbeRequest(_engine, source, engineLine, RunProbeKeywords);
+        AsyncWorker.AddWork(request);
+        return request;
+    }
+
+    /// <summary>Runs on the AsyncWorker thread.</summary>
+    private void RunProbeKeywords(AsyncRequest request)
+    {
+        var probe = (KeywordProbeRequest)request;
+        try
+        {
+            if (request.Stop || _disposed)
+                return;
+
+            if (!_engine.RequestOnInitEngine() ||
+                _engine is not ManagerClass manager ||
+                manager.CoreEnv is null)
+                return;
+
+            var keywords = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var keyword in manager.CoreEnv.Keywords)
+                keywords.Add(keyword);
+
+            var active = _engine.GetActiveEnv(((InMemoryNemerleSource)request.Source).FileIndex, probe.Line);
+            if (active.Field0 is not null)
+            {
+                foreach (var keyword in active.Field0.Keywords)
+                    keywords.Add(keyword);
+            }
+
+            probe.Keywords = keywords;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"nemerle rename keyword probe failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            // The worker only completes a request itself when the work threw
+            // (AsyncWorker.ThreadProc), so the success path must complete it.
+            request.MarkAsCompleted();
+        }
     }
 
     /// <summary>

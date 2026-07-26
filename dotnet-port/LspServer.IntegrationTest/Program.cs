@@ -107,6 +107,18 @@ internal static class Program
                 "Document highlight: a non-symbol position answers null and logs it; warm timing",
                 DocumentHighlightEmptyAndTimingAsync);
             await RunScenarioAsync(
+                "Rename: a local, prepareRename's range, and edits equal to the references set",
+                RenameLocalAsync);
+            await RunScenarioAsync(
+                "Rename: a cross-source type rewrites every source, ordered and non-overlapping",
+                RenameCrossSourceAsync);
+            await RunScenarioAsync(
+                "Rename: refusals (external member, non-symbol position, invalid name, keyword)",
+                RenameRefusalsAsync);
+            await RunScenarioAsync(
+                "Rename: a macro-introduced keyword is refused, and allowed once its using is gone",
+                RenameMacroKeywordAsync);
+            await RunScenarioAsync(
                 "Signature help: overloads, active signature/parameter, label parameter offsets",
                 SignatureHelpOverloadsAsync);
             await RunScenarioAsync(
@@ -2466,6 +2478,368 @@ internal static class Program
                 var name = kind switch { LspHighlightWrite => "W", LspHighlightRead => "R", _ => "T" };
                 return $"{line + 1}:{character + 1}-{endCharacter + 1}{name}";
             }));
+
+    // ----- Rename (WP-P3) -----
+
+    private const string RenameProbeSource = """
+        using Nemerle.Surround;
+
+        module RenameProbe
+        {
+          Twice(value : int) : int
+          {
+            value + value
+          }
+
+          Run() : void
+          {
+            def counter = 1;
+            System.Console.WriteLine(counter);
+            System.Console.WriteLine(Twice(counter));
+          }
+        }
+
+        // nothing is declared on this line
+        """;
+
+    /// <summary>
+    /// The core of the feature: <c>prepareRename</c> offers exactly the identifier
+    /// under the caret, and <c>rename</c> answers with one edit per occurrence -
+    /// the same occurrences <c>textDocument/references</c> reports, which is what
+    /// makes "what the editor highlighted is what gets rewritten" a measured
+    /// property rather than an assumption.
+    /// </summary>
+    private static async Task RenameLocalAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("rename-local"), "rename.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, RenameProbeSource);
+
+        var (declLine, declChar) = LocateUtf16(RenameProbeSource, "counter", 1);
+        var (useLine, useChar) = LocateUtf16(RenameProbeSource, "counter", 2);
+
+        // prepareRename offers the identifier itself, not the enclosing
+        // declaration: the range must be exactly as wide as the name.
+        var prepared = await PrepareRenameAsync(client, uri, useLine, useChar);
+        if (prepared is null)
+            throw new InvalidDataException("prepareRename refused a local variable.");
+        var range = prepared.Value;
+        if (range.Line != useLine || range.Character != useChar)
+            throw new InvalidDataException(
+                $"prepareRename offered {range.Line}:{range.Character}, not the caret's identifier " +
+                $"at {useLine}:{useChar}.");
+        if (range.EndLine != range.Line || range.EndCharacter - range.Character != "counter".Length)
+            throw new InvalidDataException(
+                $"prepareRename offered a range {range.EndCharacter - range.Character} wide, " +
+                $"not {"counter".Length}.");
+
+        var mark = client.Mark();
+        var edits = await RenameAsync(client, uri, useLine, useChar, "total");
+        Console.WriteLine(
+            $"    RENAME counter -> total: {edits.Sum(d => d.Edits.Length)} edit(s) in {edits.Length} document(s)");
+
+        if (edits.Length != 1)
+            throw new InvalidDataException($"expected edits in exactly one document, got {edits.Length}.");
+        if (!AreEquivalentDocumentUris(edits[0].Uri, uri))
+            throw new InvalidDataException($"the edits addressed {edits[0].Uri}, not {uri}.");
+
+        // Every edit replaces an identifier-wide range with the new name.
+        foreach (var edit in edits[0].Edits)
+        {
+            if (edit.NewText != "total")
+                throw new InvalidDataException($"an edit inserted '{edit.NewText}' rather than the new name.");
+            if (edit.EndLine != edit.Line || edit.EndCharacter - edit.Character != "counter".Length)
+                throw new InvalidDataException(
+                    $"an edit at {edit.Line}:{edit.Character} spanned " +
+                    $"{edit.EndCharacter - edit.Character} characters, not {"counter".Length}.");
+        }
+
+        // The edit set is the reference set.
+        var references = await ReferencesAtAsync(client, uri, useLine, useChar, includeDeclaration: true);
+        var referenceStarts = references.Select(r =>
+        {
+            var (_, line, character) = LocationAt(r);
+            return (line, character);
+        }).ToHashSet();
+        var editStarts = edits[0].Edits.Select(e => (e.Line, e.Character)).ToHashSet();
+        if (!referenceStarts.SetEquals(editStarts))
+            throw new InvalidDataException(
+                "the rename edits and references disagreed: " +
+                $"references={string.Join(",", referenceStarts)} edits={string.Join(",", editStarts)}");
+        if (!editStarts.Contains((declLine, declChar)))
+            throw new InvalidDataException("the declaration was not among the rename edits.");
+
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "nemerle rename computed", out _),
+            mark,
+            "the 'rename computed' log line");
+
+        // Renaming from the declaration produces the same edits as renaming from
+        // a use.
+        var fromDeclaration = await RenameAsync(client, uri, declLine, declChar, "total");
+        var declarationStarts = fromDeclaration.SelectMany(d => d.Edits)
+            .Select(e => (e.Line, e.Character)).ToHashSet();
+        if (!declarationStarts.SetEquals(editStarts))
+            throw new InvalidDataException(
+                "renaming from the declaration and from a use produced different edit sets.");
+    }
+
+    /// <summary>
+    /// A type used across five sources: the edits must cover every source, and
+    /// exactly the occurrences references reports project-wide (Sokoban's
+    /// <c>SMap</c>, pinned at 55 by the WP-N2 references probe).  This is the case
+    /// where a missed occurrence would break the user's build, so the assertion is
+    /// set equality against the other route rather than a count.
+    /// </summary>
+    private static async Task RenameCrossSourceAsync(LspTestClient client)
+    {
+        var sokobanProject = Sample("Sokoban", "Sokoban", "Sokoban.nproj");
+        var sokobanSource = Sample("Sokoban", "Sokoban", "sokoban.n");
+        var sokobanUri = new Uri(sokobanSource).AbsoluteUri;
+        var sokobanText = await File.ReadAllTextAsync(sokobanSource);
+
+        var mark = client.Mark();
+        var result = await LoadProjectAsync(client, sokobanProject);
+        AssertLoadedAndApplied(result, expectedSources: 5);
+        await DidOpenAsync(client, sokobanUri, sokobanText, 1);
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, sokobanUri, out var p) && VersionOf(p) == 1 && !HasError(p),
+            mark,
+            "error-free sokoban.n before renaming a cross-source type");
+
+        // The SMap class declaration (occurrence 5 - the origin the WP-N2
+        // references probe and the WP-P2 highlight scenario both use).
+        var (declLine, declChar) = LocateUtf16(sokobanText, "SMap", 5);
+
+        var references = await ReferencesAtAsync(client, sokobanUri, declLine, declChar, includeDeclaration: true);
+        var edits = await RenameAsync(client, sokobanUri, declLine, declChar, "SortedMap");
+        Console.WriteLine(
+            $"    RENAME SMap -> SortedMap: {edits.Sum(d => d.Edits.Length)} edit(s) in " +
+            $"{edits.Length} document(s); references reported {references.Length}");
+
+        if (edits.Length < 2)
+            throw new InvalidDataException(
+                $"a type used across five sources produced edits in {edits.Length} document(s).");
+
+        var referenceKeys = references.Select(r =>
+        {
+            var (locationUri, line, character) = LocationAt(r);
+            return (NormalizeDocumentUri(locationUri), line, character);
+        }).ToHashSet();
+        var editKeys = edits.SelectMany(d => d.Edits.Select(e => (NormalizeDocumentUri(d.Uri), e.Line, e.Character)))
+            .ToHashSet();
+        if (!referenceKeys.SetEquals(editKeys))
+            throw new InvalidDataException(
+                $"the rename edits did not match the references set (references={referenceKeys.Count}, " +
+                $"edits={editKeys.Count}; missing={string.Join(",", referenceKeys.Except(editKeys))} " +
+                $"extra={string.Join(",", editKeys.Except(referenceKeys))}).");
+
+        // Per document, the edits are ordered and non-overlapping: LSP applies
+        // them against the original text and forbids overlap in one array.
+        foreach (var document in edits)
+        {
+            for (var i = 1; i < document.Edits.Length; i++)
+            {
+                var previous = document.Edits[i - 1];
+                var current = document.Edits[i];
+                var ordered = current.Line > previous.EndLine ||
+                    (current.Line == previous.EndLine && current.Character >= previous.EndCharacter);
+                if (!ordered)
+                    throw new InvalidDataException(
+                        $"edits in {document.Uri} are out of order or overlap at " +
+                        $"{previous.Line}:{previous.Character} / {current.Line}:{current.Character}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The refusals.  Each one exists because the alternative silently damages the
+    /// user's code (or their expectations): a symbol with no source here, a name
+    /// that is not an identifier, and a position that is not on a name at all.
+    /// </summary>
+    private static async Task RenameRefusalsAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("rename-refusals"), "rename.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, RenameProbeSource);
+
+        // An external (BCL) member has no source in this workspace to rewrite.
+        var (writeLineLine, writeLineChar) = LocateUtf16(RenameProbeSource, "WriteLine", 1);
+        var mark = client.Mark();
+        if (await PrepareRenameAsync(client, uri, writeLineLine, writeLineChar) is { } offered)
+            throw new InvalidDataException(
+                $"prepareRename offered to rename a BCL member at {offered.Line}:{offered.Character}.");
+        _ = await client.WaitForAsync(
+            message => LspTestClient.IsLogMessageContaining(message, "nemerle rename not offered", out _),
+            mark,
+            "the 'rename not offered' log line for an external member");
+
+        var externalError = await RenameErrorAsync(client, uri, writeLineLine, writeLineChar, "Print");
+        Console.WriteLine($"    REFUSED external member: {externalError}");
+
+        // The comment line is outside every declaration: nothing to rename.
+        var (commentLine, commentCharacter) = LocateUtf16(RenameProbeSource, "// nothing is declared", 1);
+        if (await PrepareRenameAsync(client, uri, commentLine, commentCharacter) is { } offeredComment)
+            throw new InvalidDataException(
+                $"prepareRename offered a range on a comment line at " +
+                $"{offeredComment.Line}:{offeredComment.Character}.");
+
+        // An illegal identifier, and a base language keyword: both are refused
+        // before any edit is produced.
+        var (useLine, useChar) = LocateUtf16(RenameProbeSource, "counter", 2);
+        var invalidError = await RenameErrorAsync(client, uri, useLine, useChar, "1counter");
+        Console.WriteLine($"    REFUSED invalid identifier: {invalidError}");
+        if (!invalidError.Contains("identifier", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"the refusal did not explain the invalid name: {invalidError}");
+
+        var keywordError = await RenameErrorAsync(client, uri, useLine, useChar, "def");
+        Console.WriteLine($"    REFUSED base keyword: {keywordError}");
+        if (!keywordError.Contains("keyword", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"the refusal did not explain the keyword clash: {keywordError}");
+
+        // The refusals produced no edits at all: the local is still renameable
+        // afterwards, with the same edit set as before.
+        var edits = await RenameAsync(client, uri, useLine, useChar, "total");
+        if (edits.Length != 1 || edits[0].Edits.Length == 0)
+            throw new InvalidDataException("a legal rename after the refusals produced no edits.");
+    }
+
+    /// <summary>
+    /// The keyword check reads <em>this file's</em> environment, not a fixed list:
+    /// <c>surroundwith</c> is a keyword only because <c>using Nemerle.Surround;</c>
+    /// loaded the syntax macro that introduces it (the same distinction WP-O5a
+    /// colors as <c>macro</c>).  Renaming a value to it must be refused, and the
+    /// refusal must disappear when the <c>using</c> does - which is what proves the
+    /// check is not a hardcoded table.
+    /// </summary>
+    private static async Task RenameMacroKeywordAsync(LspTestClient client)
+    {
+        var uri = new Uri(Path.Combine(CreateTempDirectory("rename-macro-keyword"), "rename.n")).AbsoluteUri;
+        await OpenAndAwaitAnalysisAsync(client, uri, RenameProbeSource);
+
+        var (useLine, useChar) = LocateUtf16(RenameProbeSource, "counter", 2);
+        var refused = await RenameErrorAsync(client, uri, useLine, useChar, "surroundwith");
+        Console.WriteLine($"    REFUSED macro-introduced keyword: {refused}");
+        if (!refused.Contains("keyword", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(
+                $"'surroundwith' was not refused as a keyword: {refused}");
+
+        // Drop the using: the word is an ordinary identifier again, so the same
+        // rename is now allowed.
+        var withoutUsing = RenameProbeSource.Replace("using Nemerle.Surround;\r\n", "")
+            .Replace("using Nemerle.Surround;\n", "");
+        if (withoutUsing == RenameProbeSource)
+            throw new InvalidDataException("the fixture's using line was not removed.");
+
+        await client.NotifyAsync("textDocument/didChange", new
+        {
+            textDocument = new { uri, version = 2 },
+            contentChanges = new object[] { new { text = withoutUsing } },
+        });
+        _ = await client.WaitForAsync(
+            message => IsPublishFor(message, uri, out var p) && VersionOf(p) == 2,
+            client.Mark(),
+            "diagnostics for the fixture without its using");
+
+        var (movedLine, movedChar) = LocateUtf16(withoutUsing, "counter", 2);
+        var edits = await RenameAsync(client, uri, movedLine, movedChar, "surroundwith");
+        Console.WriteLine(
+            $"    ALLOWED after the using was removed: {edits.Sum(d => d.Edits.Length)} edit(s)");
+        if (edits.Length != 1 || edits[0].Edits.Length == 0)
+            throw new InvalidDataException(
+                "'surroundwith' was still refused after the using that makes it a keyword was removed.");
+    }
+
+    private readonly record struct RenameRange(int Line, int Character, int EndLine, int EndCharacter);
+
+    private readonly record struct RenameEdit(int Line, int Character, int EndLine, int EndCharacter, string NewText);
+
+    private readonly record struct RenameDocumentEdits(string Uri, RenameEdit[] Edits);
+
+    private static async Task<RenameRange?> PrepareRenameAsync(
+        LspTestClient client, string uri, int line, int character)
+    {
+        var response = await client.RequestAsync("textDocument/prepareRename", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException("prepareRename request failed: " + error);
+
+        var result = response.GetProperty("result");
+        if (result.ValueKind != JsonValueKind.Object)
+            return null;
+
+        // Either a Range or { range, placeholder }; the server answers with the
+        // plain Range form.
+        var range = result.TryGetProperty("range", out var nested) ? nested : result;
+        var start = range.GetProperty("start");
+        var end = range.GetProperty("end");
+        return new RenameRange(
+            start.GetProperty("line").GetInt32(),
+            start.GetProperty("character").GetInt32(),
+            end.GetProperty("line").GetInt32(),
+            end.GetProperty("character").GetInt32());
+    }
+
+    private static async Task<RenameDocumentEdits[]> RenameAsync(
+        LspTestClient client, string uri, int line, int character, string newName)
+    {
+        var response = await client.RequestAsync("textDocument/rename", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+            newName,
+        });
+        if (response.TryGetProperty("error", out var error))
+            throw new InvalidDataException($"rename to '{newName}' failed: " + error);
+
+        var result = response.GetProperty("result");
+        if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("changes", out var changes))
+            return [];
+
+        var documents = new List<RenameDocumentEdits>();
+        foreach (var document in changes.EnumerateObject())
+        {
+            var edits = document.Value.EnumerateArray().Select(edit =>
+            {
+                var range = edit.GetProperty("range");
+                var start = range.GetProperty("start");
+                var end = range.GetProperty("end");
+                return new RenameEdit(
+                    start.GetProperty("line").GetInt32(),
+                    start.GetProperty("character").GetInt32(),
+                    end.GetProperty("line").GetInt32(),
+                    end.GetProperty("character").GetInt32(),
+                    edit.GetProperty("newText").GetString() ?? "");
+            }).ToArray();
+            documents.Add(new RenameDocumentEdits(document.Name, edits));
+        }
+
+        return [.. documents];
+    }
+
+    /// <summary>Asserts that a rename is refused, and returns the error message.</summary>
+    private static async Task<string> RenameErrorAsync(
+        LspTestClient client, string uri, int line, int character, string newName)
+    {
+        var response = await client.RequestAsync("textDocument/rename", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+            newName,
+        });
+        if (!response.TryGetProperty("error", out var error))
+            throw new InvalidDataException(
+                $"rename to '{newName}' was expected to be refused, but answered: " +
+                response.GetProperty("result"));
+
+        return error.TryGetProperty("message", out var message) ? message.GetString() ?? "" : error.ToString();
+    }
+
+    private static string NormalizeDocumentUri(string uri) =>
+        Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
+            ? parsed.LocalPath.Replace('\\', '/').ToLowerInvariant()
+            : uri.ToLowerInvariant();
 
     // ----- Signature help (WP-P1) -----
 
