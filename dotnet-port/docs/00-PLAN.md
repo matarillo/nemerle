@@ -300,4 +300,22 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   formatting の range / on-type)と、実機確認で判明した別項目(B7 engine formatter の衝突バグ、
   E12 word highlight の消失、拡張 `wordPattern` の `u` フラグ欠落 = 修正済み)は
   **`56-wp-p-plan.md` §8 に E1 視点で集約**、バックログ本体は `36-*` §10 に追加した。
-  **成果物はまだ未公開**(VSIX / server は 0.10.0 のまま。発行の可否は判断待ち)。
+  ~~**成果物はまだ未公開**(VSIX / server は 0.10.0 のまま。発行の可否は判断待ち)。~~
+  → **2026-07-27 に `release/1.2.635-preview.3` として発行**(下記)。
+- 2026-07-27: **リリース `release/1.2.635-preview.3` 発行**。WP-O5a + WP-P の成果(VSIX 0.10.0)を
+  配布。**PO 判断は「残課題を抱えたままでよい。ただしリリースノートに 0.10.0 でできることと
+  既知の挙動を一覧で書けるなら」**という条件付き GO で、その条件を満たす形で発行した。
+  コンパイラー側は preview.2 から**無変更**(`ncc` / `lib` / `macros` / `msbuild` / `packaging` /
+  `Nemerle.Tool` の diff ゼロ、`1.2.0.635` のまま)で、動いたのは拡張とサーバーのみ。
+  部分リリースの器が無く、公開済みリリースは不変に保つ規約なので**一式を N=3 で再発行**した。
+  発行前に**同梱 README 2 本が 0.9.0 の機能記述のままである**ことが判明し修正(commit
+  `745e8148b`): 拡張 README は VSIX の説明ページ、`packaging/README.md` はリリース asset で、
+  どちらも「hover / 補完 / 定義へ移動」止まり + 「signature help は次の WP」と書かれていた。
+  6 機能それぞれの説明と制約、E12 の回避策を追記した(リリースノートと同じ内容の恒久版)。
+  手順は preview.2 と同じく手作業アップロードなし: タグ(lightweight、`745e8148b`)を手で push →
+  release workflow を `build-smoke`(dry run、2m25s green)→ **notes 入り draft を先に作成** →
+  `build-smoke-release` が `--clobber` で asset を載せる → draft を公開。この順にしたのは
+  workflow の既定 notes が定型文 1 行のため(preview.2 はそれで公開されている)。
+  asset 7 点、`release-info.json` の commit `745e8148b` / seed generation `0cab66afe` /
+  `nemerleAssemblyVersion 1.2.0.635` を照合済み。preview.1 / preview.2 は残置。
+  → https://github.com/matarillo/nemerle/releases/tag/release/1.2.635-preview.3
