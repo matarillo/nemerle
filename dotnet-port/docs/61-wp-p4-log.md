@@ -171,8 +171,15 @@ worker ループは壊さない。ユーザーから見ると「Format Document 
 - **WP-P(バックログ E1 の残り 5 機能)はこれで全て完了**: signatureHelp(57)/
   documentHighlight(58)/ rename(59)/ codeAction(60)/ formatting(61)。
   raw LSP スイートは **34 → 49 シナリオ**になった。
-- **系列完了時の手動ゲートが残っている**: 実 VS Code(`npm run test:integration`)と
-  `npm test` / `check-types` / `lint`、および 5 機能の実機確認。**まだ実施していない**。
-- `00-PLAN.md` の WP 表・作業ログと `36-prerelease-quality-plan.md` §2.2 の E1 記述の更新は
-  **PO 合意後**(`56-*` 冒頭のドラフト規約)。
+- **ただし「WP 完了」と「課題 E1 の完成」は別**である。本書を含む 57〜61 は各 WP が計画どおり
+  実施できたかを記録しており、**E1 として何が残ったかは 1 か所にまとまっていない**。
+  その集約は **`56-wp-p-plan.md` §8**(意図的な縮小 2 点、E1 の残りではない別項目、
+  リリース判断が未了であること)。E1 の状態を知りたいときは各ログではなくそちらを見ること。
+- **系列完了時の手動ゲートは実施済み(2026-07-26)**: `npm run check-types` / `lint` /
+  `test`(24)/ `test:integration`(実 VS Code 6 + 1 PASS)、および **PO による 5 機能の実機確認
+  (WSL + VS Code)**。実機確認で 3 件の欠陥が出て、いずれも修正済み — 拡張 `wordPattern` の
+  `u` フラグ欠落(58 追記1)、code action の毎回 750 ms 待ち + Output のノイズ、
+  code action が挿入するコードのインデント 2 件(60 追記)。
+- `00-PLAN.md` の WP 表・作業ログと `36-prerelease-quality-plan.md` §2.2 / §10 は
+  **PO 合意のうえ 2026-07-26 に反映済み**。E1 の残課題の集約は `56-*` §8。
 - engine formatter のバグ(`sokoban.n`)は upstream 相当の共有ソース側の課題としてバックログへ。

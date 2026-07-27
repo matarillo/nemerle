@@ -141,6 +141,7 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
 | WP-M | 開発環境2: language features(hover/completion/definition)+ incremental rebuild + Nemerle.Sdk NuGet 化 | —(計画後) | **WP-M1〜M6 完了(2026-07-15)= WP-M 完了** | 29-devenv2-plan.md / 30-devenv2-wp-m1-log.md / 31-devenv2-wp-m2-log.md / 32-devenv2-wp-m3-log.md / 33-devenv2-wp-m4-log.md / 34-devenv2-wp-m5-log.md / 35-devenv2-wp-m6-log.md |
 | WP-N | 公開前の品質固めと既知制約の解消(ビルド再現性・engine 品質・Nemerle.Linq/testsuite・Linux 実地・版タグ契約 + GitHub Release・版ピン留め・最小 CI) | —(計画後) | **完了(2026-07-22)**(N1〜N5 完了、N7 = 部分 GO で case 1 実装済み、N6 = CI/release workflow 稼働) | 36-prerelease-quality-plan.md / 37-prerelease-wp-n1-log.md / 38-prerelease-wp-n2-log.md / 39-prerelease-wp-n2-log.md / 40-prerelease-wp-n3-log.md / 41-prerelease-wp-n4-log.md / 42-prerelease-wp-n5-log.md / 43-boot-net10-log.md / 44-prerelease-wp-n7-log.md / 45-boot-4.0-refresh-log.md / 46-prerelease-wp-n6-log.md |
 | WP-O | 保存・配布フェーズ(入口の現代化・保存/再現性の確定・runtime package 根治・配布の器の判断・showcase) | —(計画後) | **完了(2026-07-26)**(O1〜O4 完了 2026-07-23、O5a = semantic tokens 完了 2026-07-25、O5b = 試遊サンプルの受け入れ基準を充足 2026-07-26。以後のサンプル追加は CI ゲートが基準を維持) | 47-wp-o-plan.md / 48-preservation-wp-o1-log.md / 49-preservation-wp-o2-log.md / 50-wp-o3-log.md / 51-wp-o4-log.md / 53-wp-o5-log.md / 54-wp-o5b-log.md |
+| WP-P | エディター機能第2弾(バックログ E1 の残り 5 機能: signatureHelp / documentHighlight / rename / codeAction / formatting) | —(計画後) | **WP-P1〜P5 完了(2026-07-26)= WP-P 完了**(意図的な縮小 2 点は 56 §8) | 56-wp-p-plan.md / 57-wp-p1-log.md / 58-wp-p2-log.md / 59-wp-p3-log.md / 60-wp-p5-log.md / 61-wp-p4-log.md |
 
 ## 作業ログ
 
@@ -289,3 +290,14 @@ WP-A2・WP-A3・WP-K・WP-L はブートストラップ計画(フェーズ0〜6�
   `samples/` 配下の全 `.nproj` の分類を強制するため、以後サンプルを足しても基準は維持される。
   併せて WP-O5a の実機不具合(colorize が engine の worker スレッド外で走り、本体型付けが
   NRE になる)を修正。詳細は `54-wp-o5b-log.md`(WP-O5a の修正は `53-wp-o5-log.md`)。
+- 2026-07-26: **WP-P(エディター機能第2弾)完了**。`36-*` の課題 **E1** が列挙した未実装 LSP 機能の
+  残り 5 つ — signatureHelp / documentHighlight / rename / codeAction / formatting — を実装した。
+  **共有ソース無改造 = Stage リビルド不要**(`1.2.0.635` のまま)。raw LSP スイートは 34 → **49
+  シナリオ**。実装順は「確実に価値が出る 4 機能を先に確定させ、no-go を含む formatting の判断を
+  後ろに置く」ため WP 番号順ではなく、**文書番号は作成順**(57 = P1 / 58 = P2 / 59 = P3 /
+  60 = P5 / 61 = P4)。formatting は評価先行方式で samples 21 本を実測して **go** と判定
+  (エラーを増やしたファイル 0、13 本は無変更)。**意図的な縮小 2 点**(codeAction の override 生成、
+  formatting の range / on-type)と、実機確認で判明した別項目(B7 engine formatter の衝突バグ、
+  E12 word highlight の消失、拡張 `wordPattern` の `u` フラグ欠落 = 修正済み)は
+  **`56-wp-p-plan.md` §8 に E1 視点で集約**、バックログ本体は `36-*` §10 に追加した。
+  **成果物はまだ未公開**(VSIX / server は 0.10.0 のまま。発行の可否は判断待ち)。

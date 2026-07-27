@@ -54,7 +54,10 @@ ID は本文書内の参照用。影響度は [高/中/低]。
 **B. フロントエンド**: B1 C# パーサープラグイン未移植(testsuite 8 件)[中] /
 B2 `[Resource]` マクロ core で hard-error(最小 resx パーサーで代替可)[低] /
 B3 codedom 除外・B4 マルチモジュール廃止[当面] / B5 overload tie-break の外部+ユーザー混在ケース未対応[低] /
-B6 マクロ定義本体内 hover 不可(ncc 改修 + Stage リビルド要)[中]。
+B6 マクロ定義本体内 hover 不可(ncc 改修 + Stage リビルド要)[中] /
+**B7 engine formatter が自分の生成した変更同士の衝突で例外を投げる**(`samples/Sokoban` の
+`sokoban.n` で再現。LSP からは編集ゼロ + ログで安全に失敗する。共有ソース
+`CodeIndentationStage2` 側の欠陥で、WP-P4 では直していない。`61-wp-p4-log.md`)[低]。
 
 **C. testsuite 残 35 失敗の内訳**: 補助ライブラリ未ビルド 8+1 件(Nemerle.Linq/.Unsafe/.WPF)/
 C# パーサー未登録 8 件 / 共有フレームワーク外 BCL 面 6 件 / BCL 差の期待値ずれ ~9 件
@@ -66,13 +69,17 @@ C# パーサー未登録 8 件 / 共有フレームワーク外 BCL 面 6 件 / 
 D3 `.nproj` 必須[当面] / D5 版据え置き再パックの非伝播 / D6 Nemerle.Tool の 2 段起動 /
 D7 auto-ref 化後のレガシー rsp 整理未実施[以上、低]。
 
-**E. LSP/VS Code**: E1 未実装機能(~~semantic tokens~~ / signatureHelp / documentHighlight /
-formatting / rename / codeAction — engine API は実在)[中。**semantic tokens は WP-O5a で実装済み
-(2026-07-25、`53-wp-o5-log.md`)**、残りは未着手]/ E2 multi-root 非対応[中] /
+**E. LSP/VS Code**: **E1 未実装機能 → 実装済み**(semantic tokens = WP-O5a 2026-07-25 /
+signatureHelp・documentHighlight・rename・codeAction・formatting = **WP-P 2026-07-26**、
+`56-wp-p-plan.md` §8)。**意図的な縮小 2 点が残る**: codeAction の override メンバー生成が無い
+(60 §設計-4)、formatting は全文のみで range / on-type 非提供(61 §設計-4)。
+両者は §10 バックログへ / E2 multi-root 非対応[中。**cross-project rename の可否はここに依存**] /
 **E7 hover の engine 特性の穴・E8 references が型宣言スコープ限定**[中 → WP-N2 で解消] /
 E3 incremental escape hatch が環境変数のみ / E4 relocation は単一 range change 限定 /
 E5 relocation 失敗経路の fault injection 未テスト / E9 completion/hover 表示の細部 /
-E10 ConsoleTest 期待値ずれ 6 件 / E11 nunit.framework.dll 手動コピー[以上、低]。
+E10 ConsoleTest 期待値ずれ 6 件 / E11 nunit.framework.dll 手動コピー /
+**E12 word highlight がまれに一瞬で消える**(リロード直後・Output パネル表示時。サーバー側は
+実測で除外済み、クライアント側で**原因未確定**。`58-wp-p2-log.md` 追記2)[以上、低]。
 
 さらに **PO 報告(2026-07-16)**: hover で一部の主要 BCL 型が表示されない、
 プロジェクトで定義した型も表示されないことがある。**事象自体がまだ正確に捉えられて
@@ -542,12 +549,19 @@ WP-O(公開フェーズ)を最優先とし、その後は以下:
 1. 最小 CI の本格化(WP-N6 を no-go とした場合はここが起点)。testsuite ハーネス
    (`Nemerle.Compiler.Test.exe`、CLR4 実行ファイル)の core 移植もここ —
    Linux CI で testsuite 全数を回す前提(42 §8 の申し送り)。
-2. エディター機能第2弾: ~~semantic tokens(マクロ拡張キーワードの動的彩色は TextMate では
-   原理的に不可能で価値明確)~~ → **WP-O5a で実装済み(2026-07-25、`53-wp-o5-log.md`)** /
-   signatureHelp / documentHighlight / formatting(E1 の残り)。
-3. rename / codeAction(E1 の残り): WP-N2 の E8 解消を前提に、WorkspaceEdit 基盤を
-   共有して rename → codeAction(未実装メンバー生成)の順で実装。
+2. ~~エディター機能第2弾: semantic tokens / signatureHelp / documentHighlight / formatting~~
+   → **完了**(semantic tokens = WP-O5a 2026-07-25、残り = WP-P 2026-07-26)。
+3. ~~rename / codeAction(E1 の残り)~~ → **完了**(WP-P3 / WP-P5、2026-07-26)。
    engine 品質の残りは B6 マクロ定義本体内 hover(WP-N2 の調査結果次第で優先度を再評価)。
+3a. **codeAction の override メンバー生成**(E1 の意図的縮小 1): 配線は動くが、engine が返す
+   候補は base を持たない class では `System.Object` の virtual 4 個。member ごとのアクション +
+   専用 fixture が要る(`60-wp-p5-log.md` §設計-4)。
+3b. **formatting の range / on-type**(E1 の意図的縮小 2): range は engine API があるが未評価、
+   on-type は失敗時の害が大きい(`61-wp-p4-log.md` §設計-4)。
+3c. **B7 engine formatter の衝突バグ**: 共有ソース修正 = Stage リビルドの連鎖に入るため、
+   着手時は §5-5 の共有ソース影響確認の手順から。
+3d. **E12 word highlight の消失**: クライアント側・原因未確定。再開するなら
+   「ハーネスで Output パネルを開いて F7 が死ぬか」から(`58-wp-p2-log.md` 追記2)。
 4. upstream 貢献: dotnet/runtime へ A10/A11 の報告、rsdn/nemerle への還元検討。
 5. SourceLink / embedded PDB(A5)、`-compile-to-memory` + `-debug` 検証(A7)。
 6. Nemerle.Unsafe / Nemerle.WPF の core ビルド(testsuite 分類 A の残り。
@@ -556,7 +570,7 @@ WP-O(公開フェーズ)を最優先とし、その後は以下:
 7. C# パーサープラグイン(B1、testsuite 8 件)、nemish REPL / Nemerle.Evaluation(A7 依存)。
 8. `[Resource]` マクロの core 対応(B2、最小 resx パーサー)。
 9. multi-root / 複数 project(E2。project ごとの server process 分離を優先比較)。
-10. その他小粒: A4 / A6 / B5 / D5 / D6 / E3 / E4 / E5 / E9 / E10 / E11 / F4、
+10. その他小粒: A4 / A6 / B5 / D5 / D6 / E3 / E4 / E5 / E9 / E10 / E11 / E12 / F4、
     Statechart 等の追加ライブラリ評価、macOS 実地検証。
     Peg / ComputationExpressions の評価と移植もここ(WP-N には含めない。着手する場合は
     §5-3 の評価先行方式を適用する)。
