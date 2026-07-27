@@ -1,11 +1,12 @@
-# Nemerle for VS Code (developer preview, WP-M6 build)
+# Nemerle for VS Code (developer preview)
 
 Language support for Nemerle on .NET 10: `.n` language registration, syntax
-highlighting, editing configuration, and project-aware diagnostics from the
-bundled .NET 10 language server. The `.nproj` MSBuild snapshot (sources,
-references, macro references, options) is applied to the analysis engine, so
-diagnostics cover the whole selected project, with unsaved editor buffers
-overriding disk content.
+highlighting, editing configuration, and project-aware diagnostics, hover,
+completion, navigation, semantic coloring, signature help, rename, formatting,
+and one code action — all from the bundled .NET 10 language server. The `.nproj`
+MSBuild snapshot (sources, references, macro references, options) is applied to
+the analysis engine, so everything the editor shows comes from the whole
+selected project, with unsaved editor buffers overriding disk content.
 
 ## Requirements
 
@@ -126,13 +127,67 @@ the server asks the editor to re-query once a project rebuild finishes (macro
 keywords are only knowable after the macros are loaded). Turn it off per-language
 with `"[nemerle]": { "editor.semanticHighlighting.enabled": false }`.
 
+**Signature help** (`textDocument/signatureHelp`, triggered by `(` and `,`) is
+available: with the caret inside a call's parentheses the overloads are listed
+and the parameter you are on is marked, using the same overload resolution the
+compiler performs. Documentation is shown for members of referenced assemblies
+only — the engine does not read `///` comments from the project's own sources,
+which hover and completion share. The hint appears inside method bodies; attribute
+arguments and type-argument lists are not covered.
+
+**Occurrence highlighting** (`textDocument/documentHighlight`) is available:
+putting the caret on a symbol outlines its occurrences in the current file. The
+occurrences come from the same query that answers find-all-references, narrowed
+to the file, so what is outlined is what a rename would rewrite here. The
+declaration is reported as a write and everything else as a read — "write" means
+the declaration, not an assignment, so storing into a `mutable` variable is
+reported as a read. With the caret inside a declaration but not on a name (a
+brace, a blank line between members), the enclosing declaration's name is
+highlighted; go-to-definition behaves the same way.
+
+**Rename** (`textDocument/rename`, with `prepareRename` so the input box does not
+open where a rename is impossible) is available: it rewrites the declaration and
+every usage across the project's sources as one workspace edit. Renames that
+cannot be done correctly are refused with a reason rather than half-applied:
+symbols declared outside the current project (a referenced project, or a BCL or
+NuGet member — there is no source to edit), positions that are not a name, and
+new names that are not identifiers or that are keywords in *that* file. The
+keyword check uses the file's own environment, so a word a syntax macro turned
+into a keyword (`surroundwith` under `using Nemerle.Surround;`) is rejected there
+and accepted in a file that does not open that namespace. Renaming a symbol
+shared with a referenced project is not enabled in this release.
+
+**Implement interface members** (`textDocument/codeAction`) is available: with
+the caret anywhere in a type declaration that leaves an interface unimplemented,
+the lightbulb offers one action per unimplemented interface. The members are
+produced by the compiler's own generator — the same one the legacy Visual Studio
+integration used — and re-indented to match the file. Members are inserted into
+the part of a `partial` type that is in the current file. Generating overridable
+members is not offered in this release, and the action is driven by the caret's
+declaration rather than by a diagnostic, so it is available wherever a type
+declaration is, not only on an error line.
+
+**Formatting** (`textDocument/formatting`) is available for the whole document:
+it makes nesting consistent and removes trailing whitespace, using the engine's
+formatter. It does not move line breaks. Before being enabled it was measured
+over the port's 21 sample sources: no file gained a diagnostic, 13 were left
+untouched, 7 were improved, and one made the engine's formatter detect a
+conflict in its own output — in that case the server returns no edits at all and
+logs the reason, so a document is never left damaged. Range formatting and
+on-type formatting are not provided.
+
 **Incremental rebuild** is enabled by default: editing inside a method body
 re-types just that method (a relocation) instead of reloading the whole project,
 so diagnostics update faster while typing. Edits that change a source's structure
 (adding/removing a member, a `using`, or a type) automatically fall back to a
 full types-tree rebuild. To restore the previous behavior (a full reload on
 every change) set the `NEMERLE_INCREMENTAL_UPDATE` environment variable to `0`
-for the server process. Signature help is the next work package.
+for the server process.
+
+Per-request logging is off by default. Hover, signature help, occurrence
+highlighting, and code actions are polled as the caret moves, so their log lines
+are sent only when `nemerle.server.trace` is on; project loads, rebuilds,
+renames, formatting, and every warning and error are always logged.
 
 ## Troubleshooting
 
@@ -159,6 +214,12 @@ for the server process. Signature help is the next work package.
   `dist/ncc`, or `tools/ncc/` inside `Nemerle.Sdk.Unofficial`) records its own.
   The server logs both at startup and on every project load, so the output
   channel shows them even when they agree.
+- **Occurrence highlights flash and vanish** — a known behavior whose cause is
+  not yet established. It has been seen only with the `Nemerle Language Server`
+  output channel visible, mostly in the first moments after a project loads.
+  The server is not withdrawing them (it is not asked again, and its answers are
+  correct when it is); VS Code discards the decorations on its side. Closing the
+  output panel restores normal behavior for the rest of the session.
 - **Nothing starts** — check that the workspace is trusted and open the
   `Nemerle Language Server` output channel (`Nemerle: Show Output`).
 

@@ -18,7 +18,7 @@ use them.
 | `Nemerle.Runtime.Unofficial.<version>.nupkg` | The Nemerle runtime assemblies your compiled program binds against. Pulled in automatically by the SDK (so the program's `deps.json` lists its runtime closure); you never reference it directly, but it must be in the same feed. |
 | `Nemerle.Templates.Unofficial.<version>.nupkg` | `dotnet new` templates (`nemerle-console`, `nemerle-classlib`). Convenience only — you can write the project file by hand instead. |
 | `Nemerle.Linq.Unofficial.<version>.nupkg` | The Nemerle LINQ macro library (`linq <# … #>` query syntax, `ToExpression`, lambda-to-expression-tree conversion). Optional; add as an ordinary `PackageReference`. |
-| `vscode-nemerle-<version>.vsix` | VS Code support (optional): highlighting plus project-aware diagnostics, hover, completion, go-to-definition. |
+| `vscode-nemerle-<version>.vsix` | VS Code support (optional): highlighting plus project-aware diagnostics, hover, completion, navigation, compiler-driven coloring, signature help, rename, formatting, and interface-member generation. |
 | `release-info.json` | Records the commit every artifact here was built from, and their versions. |
 
 There is no need to clone this repository to use any of them.
@@ -252,8 +252,12 @@ so an existing project that lists its sources keeps working as-is when converted
 
 ## 4. Editor support (optional)
 
-`vscode-nemerle-<version>.vsix` adds `.n` syntax highlighting plus project-aware diagnostics,
-hover, completion, and go-to-definition in VS Code:
+`vscode-nemerle-<version>.vsix` adds `.n` syntax highlighting to VS Code, plus a bundled language
+server that gives project-aware diagnostics, hover, completion, go-to-definition and
+find-all-references, compiler-driven semantic coloring (including the keywords your syntax macros
+introduce), signature help, occurrence highlighting, rename, whole-document formatting, and a code
+action that implements unimplemented interface members. The extension's own README documents each
+one and its limits:
 
 ```console
 code --install-extension vscode-nemerle-__NEMERLE_VSIX_VERSION__.vsix
